@@ -25,6 +25,23 @@ func TestRecordUsage_Unit(t *testing.T) {
 	assert.Equal(t, int64(10), attrs[InputTokensKey].AsInt64())
 	assert.Equal(t, int64(20), attrs[OutputTokensKey].AsInt64())
 	assert.InDelta(t, 0.001, attrs[CostUSDKey].AsFloat64(), 1e-9)
+	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString(), "RecordUsage defaults to PurposeGeneration")
+}
+
+func TestRecordUsageWithPurpose_SetsPurposeOnSpan(t *testing.T) {
+	attrs := make(map[attribute.Key]attribute.Value)
+	rec := &recordingSpan{attrs: attrs}
+	RecordUsageWithPurpose(context.Background(), rec, 5, 10, 0.002, PurposeGuardEvaluation)
+	assert.Equal(t, PurposeGuardEvaluation, attrs[OperationPurposeKey].AsString())
+	assert.Equal(t, int64(5), attrs[InputTokensKey].AsInt64())
+	assert.Equal(t, int64(10), attrs[OutputTokensKey].AsInt64())
+}
+
+func TestRecordUsageWithPurpose_EmptyPurpose_WritesGenerationOnSpan(t *testing.T) {
+	attrs := make(map[attribute.Key]attribute.Value)
+	rec := &recordingSpan{attrs: attrs}
+	RecordUsageWithPurpose(context.Background(), rec, 1, 2, 0.001, "")
+	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString(), "empty purpose should normalize to PurposeGeneration")
 }
 
 func TestRecordToolCall_SetsAttributes(t *testing.T) {

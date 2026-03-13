@@ -66,7 +66,7 @@ func TestInit_ZeroTraceRatio(t *testing.T) {
 	ctx := context.Background()
 	opts := Options{
 		ServiceName: "test-svc",
-		TraceRatio:  Float64(0), // 0% sampling (NeverSample)
+		TraceRatio:  new(float64(0)), // 0% sampling (NeverSample)
 	}
 
 	shutdown, err := Init(ctx, opts)

@@ -13,7 +13,7 @@
 
 - **Zero-Boilerplate Init** — Configure Tracer, Meter, and W3C propagators in a single call. No OTel SDK setup boilerplate.
 - **100% Vendor-Agnostic (OTLP First)** — Works out of the box with Jaeger, Grafana Tempo, Langfuse, Phoenix, Datadog. Swap the backend by changing one line.
-- **OpenLLMetry Semantic Conventions** — Built-in typed constants and helpers for token usage, cost, and prompts (`gen_ai.system`, `gen_ai.usage`, etc.).
+- **OpenLLMetry Semantic Conventions** — Built-in typed constants and helpers for token usage, cost, and prompts (`gen_ai.system`, `gen_ai.usage`, etc.). Future-proof design allows transparent migration to official OTel GenAI semconv when they mature.
 - **Plug-and-Play Middlewares** — Ready-made wrappers for `net/http` and gRPC to create root spans and propagate `trace_id`.
 
 ## Architecture
@@ -165,6 +165,43 @@ if err != nil {
 
 // Downstream (any service receiving the context):
 id := metry.BaggageValue(ctx, "patient_id") // "p-123"
+```
+
+## Security Observability
+
+Use the `security` package to record security interventions (e.g. PII masking, LLM judges, shadow mode) as span events and to tag spans with `ai.security.*` attributes for dashboards.
+
+```go
+import "github.com/skosovsky/metry/security"
+
+// Record an intervention as an event on the current span (e.g. from middleware):
+security.RecordSecurityEvent(ctx, security.ActionBlock, "pii_masking", "PII detected in prompt", false)
+
+// Tag the whole security pipeline span (e.g. for Grafana):
+span.SetAttributes(
+	security.ShadowModeKey.Bool(true),
+	security.ValidatorKey.String("llm_judge"),
+	security.ActionKey.String(security.ActionPass),
+)
+```
+
+| Attribute | Description |
+|-----------|-------------|
+| `ai.security.tier` | Protection tier (e.g. 1, 2, 3). |
+| `ai.security.validator` | Name of the filter (e.g. `pii_masking`, `llm_judge`, `vector_firewall`). |
+| `ai.security.action` | Decision: `pass`, `block`, `redact`. Use `security.ActionPass`, `security.ActionBlock`, `security.ActionRedact`. |
+| `ai.security.shadow_mode` | If `true`, blocking was virtual (shadow mode). |
+| `ai.security.score` | Confidence or cosine distance for semantic checks. |
+| `ai.security.reason` | Human-readable reason for block or mutation. |
+
+To separate guard-evaluation cost from user-facing generation in billing and dashboards, record usage with an explicit purpose so it is written to both span attributes and metric data points. Use `genai.RecordUsage` (defaults to `genai.PurposeGeneration`) for normal user-facing calls, and `genai.RecordUsageWithPurpose(..., genai.PurposeGuardEvaluation)` for LLM-judge or other guard calls:
+
+```go
+// Normal reply to the user (purpose = "generation"):
+genai.RecordUsage(ctx, span, 150, 50, 0.002)
+
+// LLM-judge / guard evaluation (purpose = "guard_evaluation") — same metrics, split by purpose:
+genai.RecordUsageWithPurpose(ctx, span, 20, 5, 0.0003, genai.PurposeGuardEvaluation)
 ```
 
 ## HTTP and gRPC

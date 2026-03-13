@@ -6,6 +6,14 @@ import "go.opentelemetry.io/otel/attribute"
 
 // OpenLLMetry semantic convention attribute keys.
 // See https://openllmetry.io/ and OpenTelemetry GenAI semantic conventions.
+//
+// Note on OpenTelemetry standard evolution:
+// Currently, metry defines its own semantic conventions for GenAI (e.g. CostUSD = "gen_ai.usage.cost")
+// tracking the OpenLLMetry project. The OpenTelemetry project is actively standardizing
+// GenAI semantic conventions (semconv). When official OTel GenAI semconv mature and are
+// included in the standard Go OTel packages (e.g., > 1.42), these constants should
+// be updated to alias the official ones to ensure long-term ecosystem compatibility
+// without breaking the public `metry/genai` API.
 const (
 	System        = "gen_ai.system"
 	RequestModel  = "gen_ai.request.model"
@@ -31,6 +39,9 @@ const (
 	AgentRole    = "gen_ai.agent.role"
 	WorkflowStep = "gen_ai.workflow.step"
 	PromptType   = "gen_ai.prompt.type"
+
+	// Operation purpose for cost tracking (e.g. generation vs guard evaluation).
+	OperationPurpose = "ai.operation.purpose"
 )
 
 // Attribute keys as attribute.Key for type-safe span recording.
@@ -56,4 +67,14 @@ var (
 	AgentRoleKey    = attribute.Key(AgentRole)
 	WorkflowStepKey = attribute.Key(WorkflowStep)
 	PromptTypeKey   = attribute.Key(PromptType)
+
+	// Operation purpose for cost tracking (e.g. generation vs guard evaluation).
+	OperationPurposeKey = attribute.Key(OperationPurpose)
+)
+
+// Standard values for OperationPurpose.
+const (
+	PurposeGeneration        = "generation"
+	PurposeGuardEvaluation   = "guard_evaluation"
+	PurposeQualityEvaluation = "quality_evaluation"
 )

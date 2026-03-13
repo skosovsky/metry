@@ -4,26 +4,40 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // RecordUsage sets token usage and cost attributes on the span and increments
-// OTel counters if genai.Init was called (OpenLLMetry conventions).
+// OTel counters if genai.Init was called, with purpose defaulting to PurposeGeneration.
 // Use for LLM request/response usage so backends (e.g. Langfuse, Phoenix) can show cost and token counts.
 func RecordUsage(ctx context.Context, span trace.Span, inTokens, outTokens int, costUSD float64) {
+	RecordUsageWithPurpose(ctx, span, inTokens, outTokens, costUSD, PurposeGeneration)
+}
+
+// RecordUsageWithPurpose records usage with an explicit purpose so metrics can be
+// split by generation vs guard_evaluation vs quality_evaluation (billing, dashboards).
+// Writes purpose to both span attributes and metric data points.
+// Empty purpose is normalized to PurposeGeneration per task2 semantics.
+func RecordUsageWithPurpose(ctx context.Context, span trace.Span, inTokens, outTokens int, costUSD float64, purpose string) {
+	if purpose == "" {
+		purpose = PurposeGeneration
+	}
 	span.SetAttributes(
 		attribute.Int(InputTokens, inTokens),
 		attribute.Int(OutputTokens, outTokens),
 		attribute.Float64(CostUSD, costUSD),
+		OperationPurposeKey.String(purpose),
 	)
+	opts := metric.WithAttributes(OperationPurposeKey.String(purpose))
 	if inputTokensCounter != nil {
-		inputTokensCounter.Add(ctx, int64(inTokens))
+		inputTokensCounter.Add(ctx, int64(inTokens), opts)
 	}
 	if outputTokensCounter != nil {
-		outputTokensCounter.Add(ctx, int64(outTokens))
+		outputTokensCounter.Add(ctx, int64(outTokens), opts)
 	}
 	if costCounter != nil {
-		costCounter.Add(ctx, costUSD)
+		costCounter.Add(ctx, costUSD, opts)
 	}
 }
 
