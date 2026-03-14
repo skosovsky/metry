@@ -75,14 +75,12 @@ import (
 func main() {
 	ctx := context.Background()
 
-	te, me := metry.OTLPGRPC("localhost:4317", true)
-	shutdown, err := metry.Init(ctx, metry.Options{
-		ServiceName:    "my-ai-service",
-		Environment:    "production",
-		TraceExporter:  te,
-		MetricExporter: me,
-		TraceRatio:     metry.Float64(1.0),
-	})
+	shutdown, err := metry.Init(ctx,
+		metry.WithServiceName("my-ai-service"),
+		metry.WithEnvironment("production"),
+		metry.WithOTLPGRPC("localhost:4317", true),
+		metry.WithTraceRatio(1.0),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -99,20 +97,13 @@ func main() {
 
 ## Semantic Conventions (LLMOps)
 
-Record token usage and cost on the current span so backends like Langfuse or Phoenix can show agent trees and costs. To also emit OTel counters for token usage and cost (e.g. for Grafana), call `genai.Init` once after `metry.Init`:
+Record token usage and cost on the current span so backends like Langfuse or Phoenix can show agent trees and costs. When you call `metry.Init` with a metric exporter, GenAI counters (tokens, cost, TTFT) are registered automatically.
 
 ```go
 import (
-	"log"
-
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/genai"
 )
-
-// After metry.Init, enable GenAI metric counters (optional; RecordUsage still sets span attributes without this):
-if err := genai.Init(metry.GlobalMeter()); err != nil {
-	log.Fatal(err)
-}
 
 // Inside your LLM call handler:
 ctx, span := metry.GlobalTracer().Start(ctx, "llm-call")
@@ -123,34 +114,37 @@ genai.RecordUsage(ctx, span, 150, 50, 0.002)  // input tokens, output tokens, co
 genai.RecordInteraction(span, "Summarize this", "Here is the summary...")
 ```
 
-Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends for dashboards and agent traces.
+Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends. Long prompt/completion strings are truncated to 16 KB to protect OTLP export pipelines. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). The test suite validates the lifecycle `Init -> shutdown -> Init` by asserting that TTFT and usage datapoints are actually exported after the second Init.
 
 ## Agentic & RAG Tracing
 
-Tag tool calls and cache hits on spans so backends can show tool usage and RAG behavior:
+Tag tool calls and cache hits on spans so backends can show tool usage and RAG behavior. Use **events** for agent steps so ReAct loops (Thought -> Action -> Observation) appear as a chronological list in Jaeger/Tempo:
 
 ```go
 // Before executing a tool (e.g. inside toolsy):
 genai.RecordToolCall(span, "search", "call-1", `{"q":"weather"}`)
 
+// After the tool returns (e.g. result or error):
+genai.RecordToolResult(span, "search", `{"temp":22}`, false)
+
 // After checking semantic cache in RAG layer:
 genai.RecordCacheHit(span, true, "pgvector_cache")
 
-// When transitioning workflow steps (e.g. in flowy):
-genai.RecordAgentState(span, "cardiologist", "specialist", "step-2")
+// When transitioning workflow steps (e.g. in flowy); each call adds an event (no overwrite):
+genai.RecordAgentStep(span, "cardiologist", "specialist", "step-2")
 ```
 
 ## Streaming & UX Metrics
 
-Record Time To First Token (TTFT) for streaming LLM responses. Requires `genai.Init(metry.GlobalMeter())` to be called first:
+Record Time To First Token (TTFT) for streaming LLM responses. Pass the model name so dashboards can show latency per LLM (e.g. gpt-4o vs claude-3-5):
 
 ```go
 start := time.Now()
 // ... start streaming, receive first token ...
-genai.RecordTTFT(ctx, time.Since(start).Seconds())
+genai.RecordTTFT(ctx, time.Since(start).Seconds(), "gpt-4o")
 ```
 
-The `gen_ai.client.ttft` histogram (unit: seconds) is exported with the rest of your OTel metrics for dashboards and SLOs.
+The `gen_ai.client.ttft` histogram (unit: seconds) is exported with a `gen_ai.request.model` dimension when you call `metry.Init` with a metric exporter.
 
 ## Context Propagation (Baggage)
 

@@ -3,11 +3,13 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/skosovsky/metry"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -42,16 +44,18 @@ func (e *InMemoryTraceExporter) Len() int {
 }
 
 // TraceExporter returns a metry.TraceExporter that sends spans to this in-memory store.
-// Use it in metry.Options when calling metry.Init.
+// Use with metry.WithTraceExporter or metry.WithMetricExporter when calling metry.Init.
 func (e *InMemoryTraceExporter) TraceExporter() *metry.TraceExporter {
 	return metry.NewTraceExporterFromSpanExporter(e.ex)
 }
 
-// InMemoryMetricExporter stores the count of Export calls for test assertions.
-// It implements sdkmetric.Exporter so it can be used with metry.Init.
+// InMemoryMetricExporter stores the count of Export calls and the last ResourceMetrics
+// for test assertions (e.g. lifecycle tests that need to assert on datapoints).
+// Contract: unsupported aggregation types (e.g. Gauge) cause panic in Export (fail-fast by design).
 type InMemoryMetricExporter struct {
-	mu    sync.Mutex
-	count int
+	mu     sync.Mutex
+	count  int
+	lastRM *metricdata.ResourceMetrics
 }
 
 // NewInMemoryMetricExporter returns a new in-memory metric exporter.
@@ -69,12 +73,25 @@ func (e *InMemoryMetricExporter) Aggregation(k sdkmetric.InstrumentKind) sdkmetr
 	return sdkmetric.DefaultAggregationSelector(k)
 }
 
-// Export implements sdkmetric.Exporter and increments the export count.
-func (e *InMemoryMetricExporter) Export(_ context.Context, _ *metricdata.ResourceMetrics) error {
+// Export implements sdkmetric.Exporter; it increments the export count and stores a deep copy of the payload.
+// A snapshot is required because the SDK may reuse the same *ResourceMetrics buffer across export cycles.
+func (e *InMemoryMetricExporter) Export(_ context.Context, rm *metricdata.ResourceMetrics) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.count++
+	e.lastRM = deepCopyResourceMetrics(rm)
 	return nil
+}
+
+// LastResourceMetrics returns a deep copy of the last ResourceMetrics passed to Export, or nil.
+// Safe to call after shutdown; returned value is independent of SDK buffers.
+func (e *InMemoryMetricExporter) LastResourceMetrics() *metricdata.ResourceMetrics {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.lastRM == nil {
+		return nil
+	}
+	return deepCopyResourceMetrics(e.lastRM)
 }
 
 // ForceFlush implements sdkmetric.Exporter.
@@ -90,11 +107,12 @@ func (e *InMemoryMetricExporter) GetMetrics() int {
 	return e.count
 }
 
-// Reset clears the export count.
+// Reset clears the export count and the last snapshot so tests do not see stale data.
 func (e *InMemoryMetricExporter) Reset() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.count = 0
+	e.lastRM = nil
 }
 
 // Len returns the number of Export calls received.
@@ -107,6 +125,159 @@ func (e *InMemoryMetricExporter) Len() int {
 // MetricExporter returns a metry.MetricExporter that sends metrics to this in-memory store.
 func (e *InMemoryMetricExporter) MetricExporter() *metry.MetricExporter {
 	return metry.NewMetricExporterFromExporter(e)
+}
+
+// deepCopyResourceMetrics returns an independent copy of rm so SDK buffer reuse cannot affect tests.
+func deepCopyResourceMetrics(rm *metricdata.ResourceMetrics) *metricdata.ResourceMetrics {
+	if rm == nil {
+		return nil
+	}
+	out := &metricdata.ResourceMetrics{
+		Resource:     rm.Resource,
+		ScopeMetrics: make([]metricdata.ScopeMetrics, len(rm.ScopeMetrics)),
+	}
+	for i := range rm.ScopeMetrics {
+		out.ScopeMetrics[i] = deepCopyScopeMetrics(rm.ScopeMetrics[i])
+	}
+	return out
+}
+
+func deepCopyScopeMetrics(sm metricdata.ScopeMetrics) metricdata.ScopeMetrics {
+	out := metricdata.ScopeMetrics{
+		Scope:   sm.Scope,
+		Metrics: make([]metricdata.Metrics, len(sm.Metrics)),
+	}
+	for i := range sm.Metrics {
+		out.Metrics[i] = deepCopyMetrics(sm.Metrics[i])
+	}
+	return out
+}
+
+// deepCopyMetrics returns an independent copy of the metric. Unsupported aggregation types
+// (e.g. Gauge) cause panic by design (fail-fast contract for testutil).
+func deepCopyMetrics(m metricdata.Metrics) metricdata.Metrics {
+	out := metricdata.Metrics{
+		Name:        m.Name,
+		Description: m.Description,
+		Unit:        m.Unit,
+	}
+	switch d := m.Data.(type) {
+	case metricdata.Sum[int64]:
+		out.Data = deepCopySumInt64(d)
+	case metricdata.Sum[float64]:
+		out.Data = deepCopySumFloat64(d)
+	case metricdata.Histogram[float64]:
+		out.Data = deepCopyHistogramFloat64(d)
+	default:
+		panic(fmt.Sprintf("testutil: deepCopyMetrics does not support aggregation type %T", d))
+	}
+	return out
+}
+
+func deepCopyExemplar[N int64 | float64](ex metricdata.Exemplar[N]) metricdata.Exemplar[N] {
+	exCopy := metricdata.Exemplar[N]{
+		Time:  ex.Time,
+		Value: ex.Value,
+	}
+	if len(ex.FilteredAttributes) > 0 {
+		exCopy.FilteredAttributes = make([]attribute.KeyValue, len(ex.FilteredAttributes))
+		copy(exCopy.FilteredAttributes, ex.FilteredAttributes)
+	}
+	if len(ex.SpanID) > 0 {
+		exCopy.SpanID = append([]byte(nil), ex.SpanID...)
+	}
+	if len(ex.TraceID) > 0 {
+		exCopy.TraceID = append([]byte(nil), ex.TraceID...)
+	}
+	return exCopy
+}
+
+func deepCopyDataPointInt64(dp metricdata.DataPoint[int64]) metricdata.DataPoint[int64] {
+	out := metricdata.DataPoint[int64]{
+		Attributes: dp.Attributes,
+		StartTime:  dp.StartTime,
+		Time:       dp.Time,
+		Value:      dp.Value,
+	}
+	if len(dp.Exemplars) > 0 {
+		out.Exemplars = make([]metricdata.Exemplar[int64], len(dp.Exemplars))
+		for i := range dp.Exemplars {
+			out.Exemplars[i] = deepCopyExemplar(dp.Exemplars[i])
+		}
+	}
+	return out
+}
+
+func deepCopyDataPointFloat64(dp metricdata.DataPoint[float64]) metricdata.DataPoint[float64] {
+	out := metricdata.DataPoint[float64]{
+		Attributes: dp.Attributes,
+		StartTime:  dp.StartTime,
+		Time:       dp.Time,
+		Value:      dp.Value,
+	}
+	if len(dp.Exemplars) > 0 {
+		out.Exemplars = make([]metricdata.Exemplar[float64], len(dp.Exemplars))
+		for i := range dp.Exemplars {
+			out.Exemplars[i] = deepCopyExemplar(dp.Exemplars[i])
+		}
+	}
+	return out
+}
+
+func deepCopySumInt64(s metricdata.Sum[int64]) metricdata.Sum[int64] {
+	out := metricdata.Sum[int64]{
+		DataPoints:  make([]metricdata.DataPoint[int64], len(s.DataPoints)),
+		Temporality: s.Temporality,
+		IsMonotonic: s.IsMonotonic,
+	}
+	for i := range s.DataPoints {
+		out.DataPoints[i] = deepCopyDataPointInt64(s.DataPoints[i])
+	}
+	return out
+}
+
+func deepCopySumFloat64(s metricdata.Sum[float64]) metricdata.Sum[float64] {
+	out := metricdata.Sum[float64]{
+		DataPoints:  make([]metricdata.DataPoint[float64], len(s.DataPoints)),
+		Temporality: s.Temporality,
+		IsMonotonic: s.IsMonotonic,
+	}
+	for i := range s.DataPoints {
+		out.DataPoints[i] = deepCopyDataPointFloat64(s.DataPoints[i])
+	}
+	return out
+}
+
+func deepCopyHistogramDataPointFloat64(dp metricdata.HistogramDataPoint[float64]) metricdata.HistogramDataPoint[float64] {
+	out := metricdata.HistogramDataPoint[float64]{
+		Attributes:   dp.Attributes,
+		StartTime:    dp.StartTime,
+		Time:         dp.Time,
+		Count:        dp.Count,
+		Bounds:       append([]float64(nil), dp.Bounds...),
+		BucketCounts: append([]uint64(nil), dp.BucketCounts...),
+		Min:          dp.Min,
+		Max:          dp.Max,
+		Sum:          dp.Sum,
+	}
+	if len(dp.Exemplars) > 0 {
+		out.Exemplars = make([]metricdata.Exemplar[float64], len(dp.Exemplars))
+		for i := range dp.Exemplars {
+			out.Exemplars[i] = deepCopyExemplar(dp.Exemplars[i])
+		}
+	}
+	return out
+}
+
+func deepCopyHistogramFloat64(h metricdata.Histogram[float64]) metricdata.Histogram[float64] {
+	out := metricdata.Histogram[float64]{
+		DataPoints:  make([]metricdata.HistogramDataPoint[float64], len(h.DataPoints)),
+		Temporality: h.Temporality,
+	}
+	for i := range h.DataPoints {
+		out.DataPoints[i] = deepCopyHistogramDataPointFloat64(h.DataPoints[i])
+	}
+	return out
 }
 
 // SetupTestTracing configures the global tracer with an in-memory exporter using

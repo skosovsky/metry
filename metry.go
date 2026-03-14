@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/skosovsky/metry/genai"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -29,37 +30,45 @@ var (
 )
 
 // Init configures global OTel providers and returns a shutdown function.
-// Resource includes service.name, service.version, deployment.environment and
-// telemetry.sdk.* attributes (e.g. telemetry.sdk.language=go) for backend dashboards.
-func Init(ctx context.Context, opts Options) (shutdown func(context.Context) error, err error) {
-	if opts.ServiceName == "" {
+// Uses resource.Default() merged with service attributes for host/PID/OS and service identity.
+// On partial failure, already-created providers are shut down and global otel state is
+// restored to the previous tracer/meter (atomic "all or nothing" for global provider state).
+func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) error, err error) {
+	prevTracer := otel.GetTracerProvider()
+	prevMeter := otel.GetMeterProvider()
+
+	cfg := newConfig()
+	for _, o := range opts {
+		o(cfg)
+	}
+	if cfg.ServiceName == "" {
 		return nil, ErrServiceNameRequired
 	}
-	traceRatio := 1.0
-	if opts.TraceRatio != nil {
-		traceRatio = *opts.TraceRatio
-	}
 
-	// Build resource with service attributes and SDK semconv (e.g. telemetry.sdk.language=go).
-	// Omit empty optional attributes so backends do not show empty values in UI.
-	attrs := []attribute.KeyValue{
-		semconv.ServiceName(opts.ServiceName),
+	// Custom resource with service attributes; merge with default (host, PID, OS).
+	customAttrs := []attribute.KeyValue{
+		semconv.ServiceName(cfg.ServiceName),
 		semconv.TelemetrySDKLanguageGo,
 	}
-	if opts.ServiceVersion != "" {
-		attrs = append(attrs, semconv.ServiceVersion(opts.ServiceVersion))
+	if cfg.ServiceVersion != "" {
+		customAttrs = append(customAttrs, semconv.ServiceVersion(cfg.ServiceVersion))
 	}
-	if opts.Environment != "" {
-		attrs = append(attrs, semconv.DeploymentEnvironmentName(opts.Environment))
+	if cfg.Environment != "" {
+		customAttrs = append(customAttrs, semconv.DeploymentEnvironmentName(cfg.Environment))
 	}
-	res := resource.NewWithAttributes(semconv.SchemaURL, attrs...)
+	customRes := resource.NewWithAttributes(semconv.SchemaURL, customAttrs...)
+	defRes := resource.Default()
+	res, err := resource.Merge(defRes, customRes)
+	if err != nil {
+		return nil, fmt.Errorf("metry: merge resource: %w", err)
+	}
 
 	// Trace provider.
 	var tp *sdktrace.TracerProvider
 	{
 		var exp sdktrace.SpanExporter
-		if opts.TraceExporter != nil && opts.TraceExporter.create != nil {
-			exp, err = opts.TraceExporter.create(ctx, res)
+		if cfg.TraceExporter != nil && cfg.TraceExporter.create != nil {
+			exp, err = cfg.TraceExporter.create(ctx, res)
 			if err != nil {
 				return nil, fmt.Errorf("metry: create trace exporter: %w", err)
 			}
@@ -69,24 +78,41 @@ func Init(ctx context.Context, opts Options) (shutdown func(context.Context) err
 		tp = sdktrace.NewTracerProvider(
 			sdktrace.WithResource(res),
 			sdktrace.WithBatcher(exp),
-			sdktrace.WithSampler(sdktrace.TraceIDRatioBased(traceRatio)),
+			sdktrace.WithSampler(sdktrace.TraceIDRatioBased(cfg.TraceRatio)),
 		)
 		otel.SetTracerProvider(tp)
 	}
 
-	// Metric provider (only if exporter provided).
+	// Metric provider (only if exporter provided). On failure, rollback trace provider and restore globals.
 	var mp *sdkmetric.MeterProvider
-	if opts.MetricExporter != nil && opts.MetricExporter.create != nil {
-		exp, err := opts.MetricExporter.create(ctx, res)
-		if err != nil {
+	var cleanupGenAI func()
+	if cfg.MetricExporter != nil && cfg.MetricExporter.create != nil {
+		exp, createErr := cfg.MetricExporter.create(ctx, res)
+		if createErr != nil {
 			_ = tp.Shutdown(ctx)
-			return nil, fmt.Errorf("metry: create metric exporter: %w", err)
+			otel.SetTracerProvider(prevTracer)
+			return nil, errors.Join(fmt.Errorf("metry: create metric exporter: %w", createErr))
 		}
 		mp = sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
 			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)),
 		)
 		otel.SetMeterProvider(mp)
+		var regErr error
+		cleanupGenAI, regErr = genai.RegisterMetrics(otel.Meter(meterName))
+		if regErr != nil {
+			errs := []error{fmt.Errorf("metry: register genai metrics: %w", regErr)}
+			cleanupGenAI()
+			if e := tp.Shutdown(ctx); e != nil {
+				errs = append(errs, e)
+			}
+			if e := mp.Shutdown(ctx); e != nil {
+				errs = append(errs, e)
+			}
+			otel.SetTracerProvider(prevTracer)
+			otel.SetMeterProvider(prevMeter)
+			return nil, errors.Join(errs...)
+		}
 	}
 
 	// W3C Trace Context and Baggage propagation.
@@ -103,6 +129,9 @@ func Init(ctx context.Context, opts Options) (shutdown func(context.Context) err
 			errs = append(errs, fmt.Errorf("tracer shutdown: %w", err))
 		}
 		if mp != nil {
+			if cleanupGenAI != nil {
+				cleanupGenAI()
+			}
 			if err := mp.Shutdown(ctx); err != nil {
 				errs = append(errs, fmt.Errorf("meter shutdown: %w", err))
 			}

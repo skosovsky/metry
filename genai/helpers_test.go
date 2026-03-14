@@ -2,20 +2,61 @@ package genai
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestRecordInteraction_SetsAttributes(t *testing.T) {
-	// Use a simple span recorder to capture attributes without async export
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
 	RecordInteraction(rec, "What is 2+2?", "4")
 	assert.Equal(t, "What is 2+2?", attrs[PromptKey].AsString())
 	assert.Equal(t, "4", attrs[CompletionKey].AsString())
+}
+
+func TestRecordInteraction_TruncatesLongStrings(t *testing.T) {
+	attrs := make(map[attribute.Key]attribute.Value)
+	rec := &recordingSpan{attrs: attrs}
+	long := strings.Repeat("a", MaxContextLength+100)
+	RecordInteraction(rec, long, "short")
+	prompt := attrs[PromptKey].AsString()
+	assert.LessOrEqual(t, len(prompt), MaxContextLength)
+	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "prompt should end with truncation suffix")
+	assert.Equal(t, "short", attrs[CompletionKey].AsString())
+}
+
+// TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic proves DoD: a 1MB prompt does not
+// cause panic or OOM; RecordInteraction truncates to MaxContextLength and appends truncation suffix.
+func TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic(t *testing.T) {
+	attrs := make(map[attribute.Key]attribute.Value)
+	rec := &recordingSpan{attrs: attrs}
+	prompt1MB := strings.Repeat("a", 1_000_000)
+	completion := "ok"
+	RecordInteraction(rec, prompt1MB, completion)
+	prompt := attrs[PromptKey].AsString()
+	assert.LessOrEqual(t, len(prompt), MaxContextLength, "prompt must be truncated to MaxContextLength")
+	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "truncated prompt must end with ... [TRUNCATED]")
+	assert.Equal(t, completion, attrs[CompletionKey].AsString())
+}
+
+func TestTruncateContext_UTF8Safe(t *testing.T) {
+	// Multi-byte rune in the middle: cut at 3 bytes would break the rune.
+	s := "a\u00e9b" // a + e-acute + b = 1+2+1 = 4 bytes
+	out := truncateContext(s, 3)
+	assert.True(t, strings.HasSuffix(out, truncationSuffix))
+	assert.LessOrEqual(t, len(out), 3+len(truncationSuffix))
+	// Result must be valid UTF-8 so backends (Jaeger/Tempo) do not fail on JSON/Protobuf.
+	require.True(t, utf8.ValidString(out), "truncated string must be valid UTF-8")
 }
 
 func TestRecordUsage_Unit(t *testing.T) {
@@ -61,23 +102,96 @@ func TestRecordCacheHit_SetsAttributes(t *testing.T) {
 	assert.Equal(t, "pgvector_cache", attrs[RetrievalSourceKey].AsString())
 }
 
-func TestRecordAgentState_SetsAttributes(t *testing.T) {
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordAgentState(rec, "cardiologist", "specialist", "step-2")
-	assert.Equal(t, "cardiologist", attrs[AgentNameKey].AsString())
-	assert.Equal(t, "specialist", attrs[AgentRoleKey].AsString())
-	assert.Equal(t, "step-2", attrs[WorkflowStepKey].AsString())
+func TestRecordAgentStep_AddsEvent(t *testing.T) {
+	rec := &recordingSpan{events: make([]recordedEvent, 0)}
+	RecordAgentStep(rec, "cardiologist", "specialist", "step-2")
+	require.Len(t, rec.events, 1)
+	assert.Equal(t, "agent_step", rec.events[0].name)
 }
 
-// recordingSpan implements trace.Span and records SetAttributes for tests.
-type recordingSpan struct {
-	noop.Span
+func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	otel.SetTracerProvider(tp)
+	_, span := otel.Tracer("genai-test").Start(context.Background(), "op")
+	RecordAgentStep(span, "cardiologist", "specialist", "step-2")
+	span.End()
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	require.Len(t, spans[0].Events, 1)
+	evt := spans[0].Events[0]
+	assert.Equal(t, "agent_step", evt.Name)
+	attrs := attribute.NewSet(evt.Attributes...)
+	nameVal, ok := attrs.Value(AgentNameKey)
+	require.True(t, ok)
+	assert.Equal(t, "cardiologist", nameVal.AsString())
+	roleVal, ok := attrs.Value(AgentRoleKey)
+	require.True(t, ok)
+	assert.Equal(t, "specialist", roleVal.AsString())
+	stepVal, ok := attrs.Value(WorkflowStepKey)
+	require.True(t, ok)
+	assert.Equal(t, "step-2", stepVal.AsString())
+}
+
+func TestRecordToolResult_AddsEvent(t *testing.T) {
+	rec := &recordingSpan{events: make([]recordedEvent, 0)}
+	RecordToolResult(rec, "search", `{"results":["a","b"]}`, false)
+	require.Len(t, rec.events, 1)
+	assert.Equal(t, "tool_result", rec.events[0].name)
+}
+
+func TestRecordToolResult_EventAttributesAndTruncation_RealSpan(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	otel.SetTracerProvider(tp)
+	_, span := otel.Tracer("genai-test").Start(context.Background(), "op")
+	longResult := strings.Repeat("x", MaxContextLength+50)
+	RecordToolResult(span, "big", longResult, true)
+	span.End()
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	require.Len(t, spans[0].Events, 1)
+	evt := spans[0].Events[0]
+	assert.Equal(t, "tool_result", evt.Name)
+	attrs := attribute.NewSet(evt.Attributes...)
+	resultVal, ok := attrs.Value(ToolResultKey)
+	require.True(t, ok)
+	result := resultVal.AsString()
+	assert.True(t, strings.HasSuffix(result, truncationSuffix))
+	assert.LessOrEqual(t, len(result), MaxContextLength)
+	errVal, ok := attrs.Value(ToolErrorKey)
+	require.True(t, ok)
+	assert.True(t, errVal.AsBool())
+}
+
+type recordedEvent struct {
+	name  string
 	attrs map[attribute.Key]attribute.Value
 }
 
+// recordingSpan implements trace.Span and records SetAttributes and AddEvent for tests.
+type recordingSpan struct {
+	noop.Span
+	attrs  map[attribute.Key]attribute.Value
+	events []recordedEvent
+}
+
 func (r *recordingSpan) SetAttributes(kv ...attribute.KeyValue) {
+	if r.attrs == nil {
+		r.attrs = make(map[attribute.Key]attribute.Value)
+	}
 	for _, a := range kv {
 		r.attrs[a.Key] = a.Value
 	}
+}
+
+func (r *recordingSpan) AddEvent(name string, _ ...trace.EventOption) {
+	if r.events == nil {
+		r.events = make([]recordedEvent, 0)
+	}
+	// EventOption from otel/trace cannot be unwrapped here; record name only for unit tests.
+	// Use TestRecordAgentStep_EventAttributes_RealSpan for full attribute checks.
+	r.events = append(r.events, recordedEvent{name: name, attrs: nil})
 }

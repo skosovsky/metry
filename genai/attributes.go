@@ -25,9 +25,11 @@ const (
 	CostUSD       = "gen_ai.usage.cost"
 
 	// Tool Calling (toolsy).
-	ToolName = "gen_ai.tool.name"
-	ToolID   = "gen_ai.tool.id"
-	ToolArgs = "gen_ai.tool.args" // Expected JSON string.
+	ToolName   = "gen_ai.tool.name"
+	ToolID     = "gen_ai.tool.id"
+	ToolArgs   = "gen_ai.tool.args"   // Expected JSON string.
+	ToolResult = "gen_ai.tool.result" // Tool output (truncated if over MaxContextLength).
+	ToolError  = "gen_ai.tool.error"  // True if the tool call failed.
 
 	// RAG and Semantic Cache.
 	RetrievalSource = "gen_ai.retrieval.source"
@@ -55,9 +57,11 @@ var (
 	OutputTokensKey  = attribute.Key(OutputTokens)
 	CostUSDKey       = attribute.Key(CostUSD)
 
-	ToolNameKey = attribute.Key(ToolName)
-	ToolIDKey   = attribute.Key(ToolID)
-	ToolArgsKey = attribute.Key(ToolArgs)
+	ToolNameKey   = attribute.Key(ToolName)
+	ToolIDKey     = attribute.Key(ToolID)
+	ToolArgsKey   = attribute.Key(ToolArgs)
+	ToolResultKey = attribute.Key(ToolResult)
+	ToolErrorKey  = attribute.Key(ToolError)
 
 	RetrievalSourceKey = attribute.Key(RetrievalSource)
 	CacheHitKey        = attribute.Key(CacheHit)

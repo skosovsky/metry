@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/skosovsky/metry/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -12,34 +11,30 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-func TestInit_NilMeter_ReturnsError(t *testing.T) {
-	err := Init(nil)
+func TestRegisterMetrics_NilMeter_ReturnsError(t *testing.T) {
+	cleanup, err := RegisterMetrics(nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "meter must not be nil")
+	cleanup() // no-op when nil meter
 }
 
-func TestInit_IsIdempotentAndThreadSafe(t *testing.T) {
+func TestRegisterMetrics_IsIdempotentAndThreadSafe(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
 	meter := mp.Meter("genai-test-idempotent")
 
-	// Call Init multiple times to verify idempotency
-	err1 := Init(meter)
+	cleanup1, err1 := RegisterMetrics(meter)
 	require.NoError(t, err1)
+	t.Cleanup(cleanup1)
 
-	err2 := Init(meter)
+	cleanup2, err2 := RegisterMetrics(meter)
 	require.NoError(t, err2)
+	t.Cleanup(cleanup2)
 
-	// Ensure metrics are recorded properly after multiple inits
+	// Second call replaces holder; metrics still work (last holder wins)
 	ctx := context.Background()
-	RecordTTFT(ctx, 1.5)
+	RecordTTFT(ctx, 1.5, "test-model")
 
 	var rm metricdata.ResourceMetrics
 	err := reader.Collect(ctx, &rm)
@@ -49,84 +44,135 @@ func TestInit_IsIdempotentAndThreadSafe(t *testing.T) {
 	assert.Equal(t, uint64(1), ttftCount, "Histogram should be recorded successfully after multiple inits")
 }
 
-func TestInit_ConcurrentCalls(t *testing.T) {
+func TestRegisterMetrics_ConcurrentCalls(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
 	meter := mp.Meter("genai-test-concurrent")
 
-	// Call Init concurrently from multiple goroutines
+	// Call RegisterMetrics concurrently from multiple goroutines
 	const numGoroutines = 10
-	errCh := make(chan error, numGoroutines)
-
+	type result struct {
+		cleanup func()
+		err     error
+	}
+	resCh := make(chan result, numGoroutines)
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
-			errCh <- Init(meter)
+			c, e := RegisterMetrics(meter)
+			resCh <- result{c, e}
 		}()
 	}
-
+	var lastCleanup func()
 	for i := 0; i < numGoroutines; i++ {
-		err := <-errCh
-		require.NoError(t, err)
+		res := <-resCh
+		require.NoError(t, res.err)
+		lastCleanup = res.cleanup
 	}
+	t.Cleanup(lastCleanup)
 
-	// Verify it actually initialized
-	assert.NotNil(t, inputTokensCounter)
-	assert.NotNil(t, outputTokensCounter)
-	assert.NotNil(t, costCounter)
-	assert.NotNil(t, ttftHistogram)
+	// Verify it actually initialized (lock-free read via atomic)
+	holder := globalMetrics.Load()
+	require.NotNil(t, holder, "globalMetrics should be set")
+	assert.NotNil(t, holder.inputTokens)
+	assert.NotNil(t, holder.outputTokens)
+	assert.NotNil(t, holder.cost)
+	assert.NotNil(t, holder.ttft)
 }
 
-func TestInit_PartialInitializationDoesNotCorruptGlobals(t *testing.T) {
-	// Setup partial failure condition if possible (though OpenTelemetry meter normally doesn't fail).
-	// But we can verify that failing with nil meter doesn't clear already initialized globals.
+func TestRegisterMetrics_PartialInitializationDoesNotCorruptGlobals(t *testing.T) {
+	// Verify that failing with nil meter doesn't clear already initialized globals.
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
 	meter := mp.Meter("genai-test-partial")
 
-	// Successful init
-	err := Init(meter)
+	cleanup, err := RegisterMetrics(meter)
 	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
 	// Verify globals are set
-	assert.NotNil(t, inputTokensCounter)
-	assert.NotNil(t, outputTokensCounter)
+	holder := globalMetrics.Load()
+	require.NotNil(t, holder)
+	assert.NotNil(t, holder.inputTokens)
+	assert.NotNil(t, holder.outputTokens)
 
-	// Attempt bad init
-	err = Init(nil)
+	// Attempt bad registration (returns no-op cleanup and error)
+	_, err = RegisterMetrics(nil)
 	require.Error(t, err)
 
 	// Verify globals are STILL set and not overwritten with nil/bad state
-	assert.NotNil(t, inputTokensCounter)
-	assert.NotNil(t, outputTokensCounter)
+	holder = globalMetrics.Load()
+	require.NotNil(t, holder)
+	assert.NotNil(t, holder.inputTokens)
+	assert.NotNil(t, holder.outputTokens)
 }
 
-func TestInit_RecordUsage_IncrementsCounters(t *testing.T) {
+// TestRegisterMetrics_LifecycleAfterCleanup verifies that after cleanup(), a new RegisterMetrics
+// registers a fresh holder and metrics are recorded again (Init -> shutdown -> Init scenario).
+func TestRegisterMetrics_LifecycleAfterCleanup(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
-	meter := mp.Meter("genai-test")
-	err := Init(meter)
+	meter := mp.Meter("genai-test-lifecycle")
+
+	cleanup1, err := RegisterMetrics(meter)
 	require.NoError(t, err)
+	cleanup1()
+	require.Nil(t, globalMetrics.Load(), "after cleanup globalMetrics should be nil")
+
+	cleanup2, err := RegisterMetrics(meter)
+	require.NoError(t, err)
+	t.Cleanup(cleanup2)
+
+	ctx := context.Background()
+	RecordTTFT(ctx, 0.1, "model-v2")
+	var rm metricdata.ResourceMetrics
+	err = reader.Collect(ctx, &rm)
+	require.NoError(t, err)
+	count, sum := getHistogramFloat64(t, rm, ttftHistogramName)
+	require.Equal(t, uint64(1), count)
+	require.InDelta(t, 0.1, sum, 1e-9)
+}
+
+// TestRegisterMetrics_CleanupOwnerSafe_DoesNotClearNewHolder verifies that calling the first
+// cleanup after a second RegisterMetrics does not clear the new holder (CAS semantics).
+func TestRegisterMetrics_CleanupOwnerSafe_DoesNotClearNewHolder(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	meter := mp.Meter("genai-test-owner-safe")
+
+	cleanupA, err := RegisterMetrics(meter)
+	require.NoError(t, err)
+	// Replace with B without calling cleanupA yet
+	cleanupB, err := RegisterMetrics(meter)
+	require.NoError(t, err)
+	t.Cleanup(cleanupB)
+
+	// Old cleanup from A must not clear B's holder (CompareAndSwap(holderA, nil) fails)
+	cleanupA()
+	require.NotNil(t, globalMetrics.Load(), "cleanup from first holder must not clear second holder")
+
+	// Recording must still work (B's holder is active)
+	ctx := context.Background()
+	RecordTTFT(ctx, 0.5, "model-b")
+	var rm metricdata.ResourceMetrics
+	err = reader.Collect(ctx, &rm)
+	require.NoError(t, err)
+	count, sum := getHistogramFloat64(t, rm, ttftHistogramName)
+	require.Equal(t, uint64(1), count)
+	require.InDelta(t, 0.5, sum, 1e-9)
+}
+
+func TestRecordUsage_AfterRegisterMetrics_IncrementsCounters(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	meter := mp.Meter("genai-test")
+	cleanup, err := RegisterMetrics(meter)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
 	ctx := context.Background()
 	span := noop.Span{}
@@ -146,15 +192,13 @@ func TestInit_RecordUsage_IncrementsCounters(t *testing.T) {
 }
 
 func TestRecordUsageWithPurpose_RecordsMetricsWithPurposeAttribute(t *testing.T) {
-	reader, meter := testutil.SetupTestMetrics(t)
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
-	err := Init(meter)
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	meter := mp.Meter("genai-test")
+	cleanup, err := RegisterMetrics(meter)
 	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
 	ctx := context.Background()
 	span := noop.Span{}
@@ -190,15 +234,13 @@ func TestRecordUsageWithPurpose_RecordsMetricsWithPurposeAttribute(t *testing.T)
 }
 
 func TestRecordUsageWithPurpose_EmptyPurpose_AggregatesAsGeneration(t *testing.T) {
-	reader, meter := testutil.SetupTestMetrics(t)
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
-	err := Init(meter)
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	meter := mp.Meter("genai-test")
+	cleanup, err := RegisterMetrics(meter)
 	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
 	ctx := context.Background()
 	span := noop.Span{}
@@ -262,18 +304,17 @@ func getSumFloat64ByPurpose(t *testing.T, rm metricdata.ResourceMetrics, name, p
 }
 
 func TestRecordTTFT_RecordsHistogram(t *testing.T) {
-	reader, meter := testutil.SetupTestMetrics(t)
-	t.Cleanup(func() {
-		inputTokensCounter = nil
-		outputTokensCounter = nil
-		costCounter = nil
-		ttftHistogram = nil
-	})
-	err := Init(meter)
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	meter := mp.Meter("genai-test")
+	cleanup, err := RegisterMetrics(meter)
 	require.NoError(t, err)
+	t.Cleanup(cleanup)
 
 	ctx := context.Background()
-	RecordTTFT(ctx, 0.42)
+	const testModel = "gpt-4o"
+	RecordTTFT(ctx, 0.42, testModel)
 
 	var rm metricdata.ResourceMetrics
 	err = reader.Collect(ctx, &rm)
@@ -282,6 +323,11 @@ func TestRecordTTFT_RecordsHistogram(t *testing.T) {
 	count, sum := getHistogramFloat64(t, rm, ttftHistogramName)
 	require.Equal(t, uint64(1), count, "histogram count")
 	require.InDelta(t, 0.42, sum, 1e-9, "histogram sum")
+
+	// DoD: modelName must reach the exporter as gen_ai.request.model attribute.
+	modelVal, ok := getHistogramDatapointModel(t, rm, ttftHistogramName)
+	require.True(t, ok, "TTFT datapoint must have %s attribute", RequestModelKey)
+	assert.Equal(t, testModel, modelVal, "TTFT recorded with wrong model label")
 }
 
 func getHistogramFloat64(t *testing.T, rm metricdata.ResourceMetrics, name string) (count uint64, sum float64) {
@@ -300,6 +346,29 @@ func getHistogramFloat64(t *testing.T, rm metricdata.ResourceMetrics, name strin
 	}
 	t.Fatalf("metric %q not found", name)
 	return 0, 0
+}
+
+// getHistogramDatapointModel returns the gen_ai.request.model attribute from the first datapoint of the named histogram.
+func getHistogramDatapointModel(t *testing.T, rm metricdata.ResourceMetrics, name string) (model string, ok bool) {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			if !ok || len(hist.DataPoints) == 0 {
+				return "", false
+			}
+			v, ok := hist.DataPoints[0].Attributes.Value(RequestModelKey)
+			if !ok {
+				return "", false
+			}
+			return v.AsString(), true
+		}
+	}
+	t.Fatalf("metric %q not found", name)
+	return "", false
 }
 
 func getSumInt64(t *testing.T, rm metricdata.ResourceMetrics, name string) int64 {

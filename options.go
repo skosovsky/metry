@@ -9,6 +9,92 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
+// Option configures Init. Use WithServiceName, WithTraceRatio, etc.
+type Option func(*config)
+
+// config holds Init options with defaults applied.
+type config struct {
+	ServiceName    string
+	ServiceVersion string
+	Environment    string
+	TraceRatio     float64
+	TraceExporter  *TraceExporter
+	MetricExporter *MetricExporter
+}
+
+// newConfig returns config with defaults (e.g. TraceRatio = 1.0).
+func newConfig() *config {
+	return &config{
+		TraceRatio: 1.0,
+	}
+}
+
+// WithServiceName sets the service name (required).
+func WithServiceName(name string) Option {
+	return func(c *config) { c.ServiceName = name }
+}
+
+// WithServiceVersion sets the service version (optional).
+func WithServiceVersion(version string) Option {
+	return func(c *config) { c.ServiceVersion = version }
+}
+
+// WithEnvironment sets the deployment environment (e.g. "production", "staging").
+func WithEnvironment(env string) Option {
+	return func(c *config) { c.Environment = env }
+}
+
+// WithTraceRatio sets the fraction of traces to sample (1.0 = 100%, 0.0 = disable).
+func WithTraceRatio(ratio float64) Option {
+	return func(c *config) { c.TraceRatio = ratio }
+}
+
+// WithTraceExporter sets the trace exporter. If not set, a no-op exporter is used.
+func WithTraceExporter(te *TraceExporter) Option {
+	return func(c *config) { c.TraceExporter = te }
+}
+
+// WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
+func WithMetricExporter(me *MetricExporter) Option {
+	return func(c *config) { c.MetricExporter = me }
+}
+
+// WithOTLPGRPC sets trace and metric exporters for OTLP over gRPC (e.g. "localhost:4317").
+func WithOTLPGRPC(endpoint string, insecure bool) Option {
+	te, me := OTLPGRPC(endpoint, insecure)
+	return func(c *config) {
+		c.TraceExporter = te
+		c.MetricExporter = me
+	}
+}
+
+// WithOTLPHTTP sets trace and metric exporters for OTLP over HTTP (e.g. "localhost:4318").
+func WithOTLPHTTP(endpoint string, headers map[string]string) Option {
+	te, me := OTLPHTTP(endpoint, headers)
+	return func(c *config) {
+		c.TraceExporter = te
+		c.MetricExporter = me
+	}
+}
+
+// WithConsole sets trace and metric exporters that write to stdout (for local dev).
+func WithConsole() Option {
+	te, me := Console()
+	return func(c *config) {
+		c.TraceExporter = te
+		c.MetricExporter = me
+	}
+}
+
+// WithNoop sets no-op trace and metric exporters (disable telemetry or tests).
+func WithNoop() Option {
+	te, me := Noop()
+	return func(c *config) {
+		c.TraceExporter = te
+		c.MetricExporter = me
+	}
+}
+
 // TraceExporter is an opaque type that produces an OTel trace exporter.
 // Create it via OTLPGRPC, OTLPHTTP, Console, Noop, or testutil.
 type TraceExporter struct {
@@ -24,33 +110,6 @@ type MetricExporter struct {
 }
 
 type metricExporterFactory func(ctx context.Context, res *resource.Resource) (metric.Exporter, error)
-
-// Options configures the full OTel stack for a service.
-type Options struct {
-	// ServiceName is the name of the service (required).
-	ServiceName string
-	// ServiceVersion is the release version (optional).
-	ServiceVersion string
-	// Environment is the deployment environment, e.g. "production", "staging", "local".
-	Environment string
-
-	// TraceExporter exports trace spans. If nil, a no-op exporter is used.
-	TraceExporter *TraceExporter
-	// MetricExporter exports metrics. If nil, a no-op exporter is used.
-	MetricExporter *MetricExporter
-
-	// TraceRatio is the fraction of traces to sample (1.0 = 100%, 0.1 = 10%).
-	// If nil, 1.0 is used. Use Float64(0) to disable tracing (0% sampling).
-	TraceRatio *float64
-}
-
-// Float64 returns a pointer to v. Use for Options.TraceRatio to distinguish
-// nil (default 1.0) from explicit 0.0 (disable sampling).
-//
-//go:fix inline
-func Float64(v float64) *float64 {
-	return new(v)
-}
 
 // NewTraceExporterFromSpanExporter wraps an existing sdktrace.SpanExporter as a TraceExporter.
 // Used by testutil and other packages that need to plug in a custom exporter instance.
