@@ -28,7 +28,7 @@ const (
 	ToolName   = "gen_ai.tool.name"
 	ToolID     = "gen_ai.tool.id"
 	ToolArgs   = "gen_ai.tool.args"   // Expected JSON string.
-	ToolResult = "gen_ai.tool.result" // Tool output (truncated if over MaxContextLength).
+	ToolResult = "gen_ai.tool.result" // Tool output (truncated if over internal limit).
 	ToolError  = "gen_ai.tool.error"  // True if the tool call failed.
 
 	// RAG and Semantic Cache.

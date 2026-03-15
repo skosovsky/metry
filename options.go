@@ -55,8 +55,12 @@ func WithTraceExporter(te *TraceExporter) Option {
 }
 
 // WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
-func WithMetricExporter(me *MetricExporter) Option {
-	return func(c *config) { c.MetricExporter = me }
+// Accepts value to avoid mutability after Init (clean-break contract).
+func WithMetricExporter(me MetricExporter) Option {
+	return func(c *config) {
+		meCopy := me
+		c.MetricExporter = &meCopy
+	}
 }
 
 // WithOTLPGRPC sets trace and metric exporters for OTLP over gRPC (e.g. "localhost:4317").

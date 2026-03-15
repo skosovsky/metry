@@ -98,7 +98,7 @@ func TestInit_MetricExporterFailure_RollbackTraceProvider(t *testing.T) {
 				return noopSpanExporter{}, nil
 			},
 		}),
-		WithMetricExporter(&MetricExporter{
+		WithMetricExporter(MetricExporter{
 			create: func(_ context.Context, _ *resource.Resource) (sdkmetric.Exporter, error) {
 				return nil, primaryErr
 			},

@@ -30,7 +30,7 @@ func TestInit_Shutdown_Init_GenAIMetricsWork(t *testing.T) {
 	shutdown1, err := metry.Init(ctx,
 		metry.WithServiceName("test-svc"),
 		metry.WithTraceExporter(tr.TraceExporter()),
-		metry.WithMetricExporter(mem.MetricExporter()),
+		metry.WithMetricExporter(*mem.MetricExporter()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, shutdown1)
@@ -40,7 +40,7 @@ func TestInit_Shutdown_Init_GenAIMetricsWork(t *testing.T) {
 	shutdown2, err := metry.Init(ctx,
 		metry.WithServiceName("test-svc"),
 		metry.WithTraceExporter(tr.TraceExporter()),
-		metry.WithMetricExporter(mem.MetricExporter()),
+		metry.WithMetricExporter(*mem.MetricExporter()),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, shutdown2)

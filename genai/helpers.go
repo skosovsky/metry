@@ -4,27 +4,28 @@ import (
 	"context"
 	"unicode/utf8"
 
+	"github.com/skosovsky/metry/internal/genaimetrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// MaxContextLength is the maximum byte length for prompt, completion, and tool result
-// strings before truncation. Truncation protects OTLP export from oversized payloads (e.g. 4MB gRPC limit).
-const MaxContextLength = 16384
+// maxContextLength is the maximum byte length for prompt, completion, and tool result
+// strings before truncation. Not exported so callers cannot weaken OOM protection.
+const maxContextLength = 16384
 
 const truncationSuffix = "... [TRUNCATED]"
 
-// truncateContext returns s if len(s) <= maxLen; otherwise returns a UTF-8-safe
+// truncateContext returns s if len(s) <= maxContextLength; otherwise returns a UTF-8-safe
 // prefix of s (plus truncationSuffix) so the result does not cut a rune in half.
-func truncateContext(s string, maxLen int) string {
-	if maxLen <= 0 {
+func truncateContext(s string) string {
+	if maxContextLength <= 0 {
 		return ""
 	}
-	if len(s) <= maxLen {
+	if len(s) <= maxContextLength {
 		return s
 	}
-	maxContent := maxLen - len(truncationSuffix)
+	maxContent := maxContextLength - len(truncationSuffix)
 	if maxContent <= 0 {
 		return truncationSuffix
 	}
@@ -54,26 +55,26 @@ func RecordUsageWithPurpose(ctx context.Context, span trace.Span, inTokens, outT
 		OperationPurposeKey.String(purpose),
 	)
 	opts := metric.WithAttributes(OperationPurposeKey.String(purpose))
-	holder := globalMetrics.Load()
+	holder := genaimetrics.Holder()
 	if holder != nil {
-		if holder.inputTokens != nil {
-			holder.inputTokens.Add(ctx, int64(inTokens), opts)
+		if holder.InputTokens != nil {
+			holder.InputTokens.Add(ctx, int64(inTokens), opts)
 		}
-		if holder.outputTokens != nil {
-			holder.outputTokens.Add(ctx, int64(outTokens), opts)
+		if holder.OutputTokens != nil {
+			holder.OutputTokens.Add(ctx, int64(outTokens), opts)
 		}
-		if holder.cost != nil {
-			holder.cost.Add(ctx, costUSD, opts)
+		if holder.Cost != nil {
+			holder.Cost.Add(ctx, costUSD, opts)
 		}
 	}
 }
 
 // RecordInteraction sets prompt and completion attributes on the span (OpenLLMetry conventions).
-// Long strings are truncated to MaxContextLength to protect export pipelines.
+// Long strings are truncated to maxContextLength to protect export pipelines.
 func RecordInteraction(span trace.Span, prompt, completion string) {
 	span.SetAttributes(
-		attribute.String(Prompt, truncateContext(prompt, MaxContextLength)),
-		attribute.String(Completion, truncateContext(completion, MaxContextLength)),
+		attribute.String(Prompt, truncateContext(prompt)),
+		attribute.String(Completion, truncateContext(completion)),
 	)
 }
 
@@ -82,16 +83,17 @@ func RecordToolCall(span trace.Span, name, id, argsJSON string) {
 	span.SetAttributes(
 		attribute.String(ToolName, name),
 		attribute.String(ToolID, id),
-		attribute.String(ToolArgs, truncateContext(argsJSON, MaxContextLength)),
+		attribute.String(ToolArgs, truncateContext(argsJSON)),
 	)
 }
 
 // RecordToolResult records the result of a tool call (e.g. for agent loops).
-// result is truncated to MaxContextLength; isError marks a failed tool invocation.
-func RecordToolResult(span trace.Span, toolName string, result string, isError bool) {
-	span.AddEvent("tool_result", trace.WithAttributes(
+// resultJSON is truncated to maxContextLength; isError marks a failed tool invocation.
+// Event name gen_ai.tool.result follows OTel GenAI semantic conventions for dashboards.
+func RecordToolResult(span trace.Span, toolName string, resultJSON string, isError bool) {
+	span.AddEvent("gen_ai.tool.result", trace.WithAttributes(
 		ToolNameKey.String(toolName),
-		ToolResultKey.String(truncateContext(result, MaxContextLength)),
+		ToolResultKey.String(truncateContext(resultJSON)),
 		ToolErrorKey.Bool(isError),
 	))
 }
@@ -105,10 +107,10 @@ func RecordCacheHit(span trace.Span, hit bool, source string) {
 }
 
 // RecordAgentStep records one agent step as a span event (ReAct loops: Thought -> Action -> Observation).
-// Step name is set as gen_ai.workflow.step per OTel GenAI semantic conventions for dashboard compatibility.
+// Event name gen_ai.agent.step and attributes follow OTel GenAI semantic conventions for dashboards.
 // Call from flowy on each state transition; multiple calls on the same span produce a chronological event list.
 func RecordAgentStep(span trace.Span, agentName, agentRole, step string) {
-	span.AddEvent("agent_step", trace.WithAttributes(
+	span.AddEvent("gen_ai.agent.step", trace.WithAttributes(
 		AgentNameKey.String(agentName),
 		AgentRoleKey.String(agentRole),
 		WorkflowStepKey.String(step),

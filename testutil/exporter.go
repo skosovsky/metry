@@ -75,12 +75,31 @@ func (e *InMemoryMetricExporter) Aggregation(k sdkmetric.InstrumentKind) sdkmetr
 
 // Export implements sdkmetric.Exporter; it increments the export count and stores a deep copy of the payload.
 // A snapshot is required because the SDK may reuse the same *ResourceMetrics buffer across export cycles.
+// Unsupported aggregation types (e.g. Gauge) cause panic before copy (fail-fast contract).
 func (e *InMemoryMetricExporter) Export(_ context.Context, rm *metricdata.ResourceMetrics) error {
+	checkSupportedAggregations(rm)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.count++
 	e.lastRM = deepCopyResourceMetrics(rm)
 	return nil
+}
+
+// checkSupportedAggregations panics if rm contains any aggregation type not supported by deepCopyMetrics.
+func checkSupportedAggregations(rm *metricdata.ResourceMetrics) {
+	if rm == nil {
+		return
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch m.Data.(type) {
+			case metricdata.Sum[int64], metricdata.Sum[float64], metricdata.Histogram[float64]:
+				continue
+			default:
+				panic(fmt.Sprintf("testutil: Export does not support aggregation type %T (e.g. Gauge)", m.Data))
+			}
+		}
+	}
 }
 
 // LastResourceMetrics returns a deep copy of the last ResourceMetrics passed to Export, or nil.

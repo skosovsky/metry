@@ -24,19 +24,21 @@ func TestRecordInteraction_SetsAttributes(t *testing.T) {
 	assert.Equal(t, "4", attrs[CompletionKey].AsString())
 }
 
+const testContextLimit = 16384 // must match genai.maxContextLength for truncation tests
+
 func TestRecordInteraction_TruncatesLongStrings(t *testing.T) {
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
-	long := strings.Repeat("a", MaxContextLength+100)
+	long := strings.Repeat("a", testContextLimit+100)
 	RecordInteraction(rec, long, "short")
 	prompt := attrs[PromptKey].AsString()
-	assert.LessOrEqual(t, len(prompt), MaxContextLength)
+	assert.LessOrEqual(t, len(prompt), testContextLimit)
 	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "prompt should end with truncation suffix")
 	assert.Equal(t, "short", attrs[CompletionKey].AsString())
 }
 
 // TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic proves DoD: a 1MB prompt does not
-// cause panic or OOM; RecordInteraction truncates to MaxContextLength and appends truncation suffix.
+// cause panic or OOM; RecordInteraction truncates to maxContextLength and appends truncation suffix.
 func TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic(t *testing.T) {
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
@@ -44,19 +46,22 @@ func TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic(t *testing.T)
 	completion := "ok"
 	RecordInteraction(rec, prompt1MB, completion)
 	prompt := attrs[PromptKey].AsString()
-	assert.LessOrEqual(t, len(prompt), MaxContextLength, "prompt must be truncated to MaxContextLength")
+	assert.LessOrEqual(t, len(prompt), testContextLimit, "prompt must be truncated to maxContextLength")
 	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "truncated prompt must end with ... [TRUNCATED]")
 	assert.Equal(t, completion, attrs[CompletionKey].AsString())
+	require.True(t, utf8.ValidString(prompt), "truncated output must remain valid UTF-8 for export")
 }
 
 func TestTruncateContext_UTF8Safe(t *testing.T) {
-	// Multi-byte rune in the middle: cut at 3 bytes would break the rune.
-	s := "a\u00e9b" // a + e-acute + b = 1+2+1 = 4 bytes
-	out := truncateContext(s, 3)
+	// Build a string longer than maxContextLength with a multi-byte rune near the cut point
+	// so that truncation does not cut the rune in half (UTF-8 safe).
+	// a + e-acute + b = 1+2+1 = 4 bytes; repeat to exceed limit then add rune near boundary.
+	base := "a\u00e9b"
+	s := strings.Repeat(base, 5000) // 20000 bytes > 16384
+	out := truncateContext(s)
 	assert.True(t, strings.HasSuffix(out, truncationSuffix))
-	assert.LessOrEqual(t, len(out), 3+len(truncationSuffix))
-	// Result must be valid UTF-8 so backends (Jaeger/Tempo) do not fail on JSON/Protobuf.
-	require.True(t, utf8.ValidString(out), "truncated string must be valid UTF-8")
+	assert.LessOrEqual(t, len(out), testContextLimit, "truncated result including suffix must be <= maxContextLength (16384) for transport limits")
+	require.True(t, utf8.ValidString(out), "truncated string must be valid UTF-8 for export")
 }
 
 func TestRecordUsage_Unit(t *testing.T) {
@@ -106,7 +111,7 @@ func TestRecordAgentStep_AddsEvent(t *testing.T) {
 	rec := &recordingSpan{events: make([]recordedEvent, 0)}
 	RecordAgentStep(rec, "cardiologist", "specialist", "step-2")
 	require.Len(t, rec.events, 1)
-	assert.Equal(t, "agent_step", rec.events[0].name)
+	assert.Equal(t, "gen_ai.agent.step", rec.events[0].name)
 }
 
 func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
@@ -121,7 +126,7 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 	require.Len(t, spans[0].Events, 1)
 	evt := spans[0].Events[0]
-	assert.Equal(t, "agent_step", evt.Name)
+	assert.Equal(t, "gen_ai.agent.step", evt.Name)
 	attrs := attribute.NewSet(evt.Attributes...)
 	nameVal, ok := attrs.Value(AgentNameKey)
 	require.True(t, ok)
@@ -138,7 +143,7 @@ func TestRecordToolResult_AddsEvent(t *testing.T) {
 	rec := &recordingSpan{events: make([]recordedEvent, 0)}
 	RecordToolResult(rec, "search", `{"results":["a","b"]}`, false)
 	require.Len(t, rec.events, 1)
-	assert.Equal(t, "tool_result", rec.events[0].name)
+	assert.Equal(t, "gen_ai.tool.result", rec.events[0].name)
 }
 
 func TestRecordToolResult_EventAttributesAndTruncation_RealSpan(t *testing.T) {
@@ -147,20 +152,24 @@ func TestRecordToolResult_EventAttributesAndTruncation_RealSpan(t *testing.T) {
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	otel.SetTracerProvider(tp)
 	_, span := otel.Tracer("genai-test").Start(context.Background(), "op")
-	longResult := strings.Repeat("x", MaxContextLength+50)
+	longResult := strings.Repeat("x", testContextLimit+50)
 	RecordToolResult(span, "big", longResult, true)
 	span.End()
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	require.Len(t, spans[0].Events, 1)
 	evt := spans[0].Events[0]
-	assert.Equal(t, "tool_result", evt.Name)
+	assert.Equal(t, "gen_ai.tool.result", evt.Name)
 	attrs := attribute.NewSet(evt.Attributes...)
+	toolNameVal, ok := attrs.Value(ToolNameKey)
+	require.True(t, ok)
+	assert.Equal(t, "big", toolNameVal.AsString(), "event must include tool name for dashboards")
 	resultVal, ok := attrs.Value(ToolResultKey)
 	require.True(t, ok)
 	result := resultVal.AsString()
 	assert.True(t, strings.HasSuffix(result, truncationSuffix))
-	assert.LessOrEqual(t, len(result), MaxContextLength)
+	assert.LessOrEqual(t, len(result), testContextLimit)
+	require.True(t, utf8.ValidString(result), "truncated result must remain valid UTF-8")
 	errVal, ok := attrs.Value(ToolErrorKey)
 	require.True(t, ok)
 	assert.True(t, errVal.AsBool())

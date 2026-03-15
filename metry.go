@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/skosovsky/metry/genai"
+	"github.com/skosovsky/metry/internal/genaimetrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -57,6 +57,7 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		customAttrs = append(customAttrs, semconv.DeploymentEnvironmentName(cfg.Environment))
 	}
 	customRes := resource.NewWithAttributes(semconv.SchemaURL, customAttrs...)
+	// Use resource.Default() until SDK provides resource.New(ctx, resource.WithDefault()) for context-aware init.
 	defRes := resource.Default()
 	res, err := resource.Merge(defRes, customRes)
 	if err != nil {
@@ -99,10 +100,12 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		)
 		otel.SetMeterProvider(mp)
 		var regErr error
-		cleanupGenAI, regErr = genai.RegisterMetrics(otel.Meter(meterName))
+		cleanupGenAI, regErr = genaimetrics.RegisterMetrics(otel.Meter(meterName))
 		if regErr != nil {
 			errs := []error{fmt.Errorf("metry: register genai metrics: %w", regErr)}
-			cleanupGenAI()
+			if cleanupGenAI != nil {
+				cleanupGenAI()
+			}
 			if e := tp.Shutdown(ctx); e != nil {
 				errs = append(errs, e)
 			}

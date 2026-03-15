@@ -263,9 +263,9 @@ func makeRMWithHistogramAndExemplar(histSum float64, exemplarValue float64) *met
 				Name: "histogram.with.exemplar",
 				Data: metricdata.Histogram[float64]{
 					DataPoints: []metricdata.HistogramDataPoint[float64]{{
-						Count:  1,
-						Sum:    histSum,
-						Bounds: []float64{1, 10},
+						Count:        1,
+						Sum:          histSum,
+						Bounds:       []float64{1, 10},
 						BucketCounts: []uint64{0, 1},
 						Exemplars: []metricdata.Exemplar[float64]{{
 							Value:              exemplarValue,
@@ -365,11 +365,12 @@ func TestInMemoryMetricExporter_ExportPanicsForUnsupportedAggregationType(t *tes
 			}},
 		}},
 	}
-	var panicVal interface{}
-	require.Panics(t, func() {
+	var panicVal any
+	func() {
 		defer func() { panicVal = recover() }()
 		_ = mem.Export(ctx, rm)
-	}, "Export must panic for unsupported aggregation type")
+	}()
+	require.NotNil(t, panicVal, "Export must panic for unsupported aggregation type")
 	msg, ok := panicVal.(string)
 	require.True(t, ok, "panic value must be string")
 	assert.Contains(t, msg, "does not support", "panic message must describe unsupported type")

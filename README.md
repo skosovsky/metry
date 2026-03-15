@@ -114,7 +114,7 @@ genai.RecordUsage(ctx, span, 150, 50, 0.002)  // input tokens, output tokens, co
 genai.RecordInteraction(span, "Summarize this", "Here is the summary...")
 ```
 
-Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends. Long prompt/completion strings are truncated to 16 KB to protect OTLP export pipelines. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). The test suite validates the lifecycle `Init -> shutdown -> Init` by asserting that TTFT and usage datapoints are actually exported after the second Init.
+Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends. Long prompt/completion strings are truncated to 16 KB (maxContextLength) with UTF-8-safe truncation. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). Before calling `metry.Init` again, call the returned `shutdown` so metrics can be re-registered; the test suite validates the lifecycle `Init -> shutdown -> Init`.
 
 ## Agentic & RAG Tracing
 
@@ -130,7 +130,8 @@ genai.RecordToolResult(span, "search", `{"temp":22}`, false)
 // After checking semantic cache in RAG layer:
 genai.RecordCacheHit(span, true, "pgvector_cache")
 
-// When transitioning workflow steps (e.g. in flowy); each call adds an event (no overwrite):
+// When transitioning workflow steps (e.g. in flowy); each call adds an event (no overwrite).
+// Event names gen_ai.agent.step and gen_ai.tool.result follow OTel GenAI semantic conventions.
 genai.RecordAgentStep(span, "cardiologist", "specialist", "step-2")
 ```
 
