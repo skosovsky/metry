@@ -8,17 +8,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestContextWithBaggage_InjectsValue(t *testing.T) {
+func TestSetBaggageValue_InjectsValue(t *testing.T) {
 	ctx := context.Background()
-	ctx, err := ContextWithBaggage(ctx, "patient_id", "p-123")
+	ctx, err := SetBaggageValue(ctx, "patient_id", "p-123")
 	require.NoError(t, err)
 	assert.Equal(t, "p-123", BaggageValue(ctx, "patient_id"))
 }
 
-func TestContextWithBaggage_InvalidKey_ReturnsError(t *testing.T) {
+func TestSetBaggageValue_InvalidKey_ReturnsError(t *testing.T) {
 	ctx := context.Background()
-	_, err := ContextWithBaggage(ctx, "invalid key /", "value")
+	_, err := SetBaggageValue(ctx, "invalid key /", "value")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "metry:")
+	assert.Contains(t, err.Error(), "W3C")
 }
 
 func TestBaggageValue_MissingKey_ReturnsEmpty(t *testing.T) {

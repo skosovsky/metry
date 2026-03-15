@@ -2,37 +2,57 @@ package genai
 
 import (
 	"context"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/skosovsky/metry/internal/genaimetrics"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// maxContextLength is the maximum byte length for prompt, completion, and tool result
-// strings before truncation. Not exported so callers cannot weaken OOM protection.
-const maxContextLength = 16384
+// tracerName ties tool spans to the main provider set by metry.Init.
+const tracerName = "metry"
+
+func getTracer() trace.Tracer { return otel.Tracer(tracerName) }
+
+var maxContextLength atomic.Int32
 
 const truncationSuffix = "... [TRUNCATED]"
 
-// truncateContext returns s if len(s) <= maxContextLength; otherwise returns a UTF-8-safe
-// prefix of s (plus truncationSuffix) so the result does not cut a rune in half.
+func init() {
+	maxContextLength.Store(16384)
+}
+
+// SetMaxContextLength is an internal API. DO NOT use directly; configure via metry.WithMaxGenAIContextLength.
+func SetMaxContextLength(limit int32) {
+	maxContextLength.Store(limit)
+}
+
+// truncateContext returns s if len(s) <= limit; otherwise returns a UTF-8-safe
+// prefix of s so that len(out) <= limit. If limit allows, appends truncationSuffix; otherwise returns prefix only.
 func truncateContext(s string) string {
-	if maxContextLength <= 0 {
+	limit := int(maxContextLength.Load())
+	if limit <= 0 {
 		return ""
 	}
-	if len(s) <= maxContextLength {
+	if len(s) <= limit {
 		return s
 	}
-	maxContent := maxContextLength - len(truncationSuffix)
-	if maxContent <= 0 {
-		return truncationSuffix
+	// Edge case: limit is smaller than suffix — return UTF-8-safe prefix only (no suffix).
+	if limit <= len(truncationSuffix) {
+		for limit > 0 && !utf8.ValidString(s[:limit]) {
+			limit--
+		}
+		return s[:limit]
 	}
-	trunc := s[:maxContent]
-	for len(trunc) > 0 && !utf8.ValidString(trunc) {
-		trunc = trunc[:len(trunc)-1]
+	cutLimit := limit - len(truncationSuffix)
+	for cutLimit > 0 && !utf8.ValidString(s[:cutLimit]) {
+		cutLimit--
 	}
+	trunc := s[:cutLimit]
 	return trunc + truncationSuffix
 }
 
@@ -78,24 +98,27 @@ func RecordInteraction(span trace.Span, prompt, completion string) {
 	)
 }
 
-// RecordToolCall sets tool call attributes on the span. Call from toolsy before executing a tool.
-func RecordToolCall(span trace.Span, name, id, argsJSON string) {
+// StartToolSpan creates a child span for a tool invocation. Caller MUST call span.End() (e.g. via defer).
+// Use for parallel tool calls so each has its own span and timing.
+func StartToolSpan(ctx context.Context, toolName, toolID, argsJSON string) (context.Context, trace.Span) {
+	ctx, span := getTracer().Start(ctx, "tool: "+toolName)
 	span.SetAttributes(
-		attribute.String(ToolName, name),
-		attribute.String(ToolID, id),
-		attribute.String(ToolArgs, truncateContext(argsJSON)),
+		ToolNameKey.String(toolName),
+		ToolIDKey.String(toolID),
+		ToolArgsKey.String(truncateContext(argsJSON)),
 	)
+	return ctx, span
 }
 
-// RecordToolResult records the result of a tool call (e.g. for agent loops).
-// resultJSON is truncated to maxContextLength; isError marks a failed tool invocation.
-// Event name gen_ai.tool.result follows OTel GenAI semantic conventions for dashboards.
-func RecordToolResult(span trace.Span, toolName string, resultJSON string, isError bool) {
-	span.AddEvent("gen_ai.tool.result", trace.WithAttributes(
-		ToolNameKey.String(toolName),
-		ToolResultKey.String(truncateContext(resultJSON)),
-		ToolErrorKey.Bool(isError),
-	))
+// RecordToolResult records the result of a tool call on its own span (from StartToolSpan).
+// resultJSON is truncated; isError sets span status to Error for dashboard visibility.
+func RecordToolResult(span trace.Span, resultJSON string, isError bool) {
+	span.SetAttributes(ToolResultKey.String(truncateContext(resultJSON)))
+	if isError {
+		span.SetStatus(codes.Error, "tool execution failed")
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
 }
 
 // RecordCacheHit records cache hit and retrieval source on the span. Call from RAG layer before LLM request.

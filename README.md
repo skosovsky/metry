@@ -114,24 +114,25 @@ genai.RecordUsage(ctx, span, 150, 50, 0.002)  // input tokens, output tokens, co
 genai.RecordInteraction(span, "Summarize this", "Here is the summary...")
 ```
 
-Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends. Long prompt/completion strings are truncated to 16 KB (maxContextLength) with UTF-8-safe truncation. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). Before calling `metry.Init` again, call the returned `shutdown` so metrics can be re-registered; the test suite validates the lifecycle `Init -> shutdown -> Init`.
+Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends. Long prompt/completion/tool strings are truncated to 16 KB by default (UTF-8-safe, result length always ≤ limit); you can set a different limit with `metry.WithMaxGenAIContextLength(bytes)` in `Init`. Tool spans use `otel.Tracer("metry")` at runtime so `genai` stays independent of the `metry` package. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). Before calling `metry.Init` again, call the returned `shutdown` so metrics can be re-registered; the test suite validates the lifecycle `Init -> shutdown -> Init`.
 
 ## Agentic & RAG Tracing
 
-Tag tool calls and cache hits on spans so backends can show tool usage and RAG behavior. Use **events** for agent steps so ReAct loops (Thought -> Action -> Observation) appear as a chronological list in Jaeger/Tempo:
+Each tool call gets its own **child span** so parallel tool invocations have correct timing in Jaeger/Tempo. Start a tool span before execution and record the result on that span; use **events** for agent steps so ReAct loops (Thought -> Action -> Observation) appear as a chronological list:
 
 ```go
-// Before executing a tool (e.g. inside toolsy):
-genai.RecordToolCall(span, "search", "call-1", `{"q":"weather"}`)
+// Start a child span for the tool (caller MUST call span.End(), e.g. via defer):
+ctx, span := genai.StartToolSpan(ctx, "search", "call-1", `{"q":"weather"}`)
+defer span.End()
 
-// After the tool returns (e.g. result or error):
-genai.RecordToolResult(span, "search", `{"temp":22}`, false)
+// After the tool returns (result or error), record on the same span:
+genai.RecordToolResult(span, `{"temp":22}`, false)
 
 // After checking semantic cache in RAG layer:
 genai.RecordCacheHit(span, true, "pgvector_cache")
 
 // When transitioning workflow steps (e.g. in flowy); each call adds an event (no overwrite).
-// Event names gen_ai.agent.step and gen_ai.tool.result follow OTel GenAI semantic conventions.
+// Event name gen_ai.agent.step follows OTel GenAI semantic conventions.
 genai.RecordAgentStep(span, "cardiologist", "specialist", "step-2")
 ```
 
@@ -149,13 +150,13 @@ The `gen_ai.client.ttft` histogram (unit: seconds) is exported with a `gen_ai.re
 
 ## Context Propagation (Baggage)
 
-Propagate key-value metadata (e.g. `session_id`, `patient_id`) across HTTP and gRPC boundaries. Keys must be valid W3C baggage identifiers (no spaces or special characters like `/`).
+Propagate key-value metadata (e.g. `session_id`, `patient_id`) across HTTP and gRPC boundaries. Keys and values must comply with W3C Baggage; invalid key/value returns a wrapped error.
 
 ```go
 // At entry point (e.g. after auth):
-ctx, err := metry.ContextWithBaggage(ctx, "patient_id", "p-123")
+ctx, err := metry.SetBaggageValue(ctx, "patient_id", "p-123")
 if err != nil {
-	// invalid key
+	// invalid key/value (e.g. spaces, special chars)
 }
 
 // Downstream (any service receiving the context):

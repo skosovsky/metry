@@ -14,12 +14,13 @@ type Option func(*config)
 
 // config holds Init options with defaults applied.
 type config struct {
-	ServiceName    string
-	ServiceVersion string
-	Environment    string
-	TraceRatio     float64
-	TraceExporter  *TraceExporter
-	MetricExporter *MetricExporter
+	ServiceName           string
+	ServiceVersion        string
+	Environment           string
+	TraceRatio            float64
+	TraceExporter         *TraceExporter
+	MetricExporter        *MetricExporter
+	maxGenAIContextLength int
 }
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
@@ -61,6 +62,12 @@ func WithMetricExporter(me MetricExporter) Option {
 		meCopy := me
 		c.MetricExporter = &meCopy
 	}
+}
+
+// WithMaxGenAIContextLength sets the max byte length for prompt/completion/tool strings before truncation (default 16384).
+// Use for local dev or closed loops where full context is needed; 0 means keep default.
+func WithMaxGenAIContextLength(bytes int) Option {
+	return func(c *config) { c.maxGenAIContextLength = bytes }
 }
 
 // WithOTLPGRPC sets trace and metric exporters for OTLP over gRPC (e.g. "localhost:4317").

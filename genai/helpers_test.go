@@ -3,6 +3,7 @@ package genai
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -90,13 +92,80 @@ func TestRecordUsageWithPurpose_EmptyPurpose_WritesGenerationOnSpan(t *testing.T
 	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString(), "empty purpose should normalize to PurposeGeneration")
 }
 
-func TestRecordToolCall_SetsAttributes(t *testing.T) {
+func TestStartToolSpan_SetsAttributesAndReturnsChildSpan(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	otel.SetTracerProvider(tp)
+	_, span := StartToolSpan(context.Background(), "search", "call-1", `{"q":"test"}`)
+	span.End()
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	s := spans[0]
+	assert.Equal(t, "tool: search", s.Name)
+	attrs := attribute.NewSet(s.Attributes...)
+	toolName, _ := attrs.Value(ToolNameKey)
+	assert.Equal(t, "search", toolName.AsString())
+	toolID, _ := attrs.Value(ToolIDKey)
+	assert.Equal(t, "call-1", toolID.AsString())
+	toolArgs, _ := attrs.Value(ToolArgsKey)
+	assert.JSONEq(t, `{"q":"test"}`, toolArgs.AsString())
+}
+
+func TestRecordToolResult_SetsAttributeAndStatus(t *testing.T) {
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
-	RecordToolCall(rec, "search", "call-1", `{"q":"test"}`)
-	assert.Equal(t, "search", attrs[ToolNameKey].AsString())
-	assert.Equal(t, "call-1", attrs[ToolIDKey].AsString())
-	assert.JSONEq(t, `{"q":"test"}`, attrs[ToolArgsKey].AsString())
+	RecordToolResult(rec, `{"ok":true}`, false)
+	assert.Equal(t, `{"ok":true}`, attrs[ToolResultKey].AsString())
+	assert.Equal(t, codes.Ok, rec.statusCode)
+	rec.statusCode = 0
+	RecordToolResult(rec, `{"error":"fail"}`, true)
+	assert.Equal(t, "tool execution failed", rec.statusDesc)
+	assert.Equal(t, codes.Error, rec.statusCode)
+}
+
+func TestRecordToolResult_OnToolSpan_AttributesAndStatus(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	otel.SetTracerProvider(tp)
+	_, span := StartToolSpan(context.Background(), "big", "id-1", "{}")
+	longResult := strings.Repeat("x", testContextLimit+50)
+	RecordToolResult(span, longResult, true)
+	span.End()
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	s := spans[0]
+	attrs := attribute.NewSet(s.Attributes...)
+	resultVal, ok := attrs.Value(ToolResultKey)
+	require.True(t, ok)
+	result := resultVal.AsString()
+	assert.True(t, strings.HasSuffix(result, truncationSuffix))
+	assert.LessOrEqual(t, len(result), testContextLimit)
+	require.True(t, utf8.ValidString(result))
+	// Verify exported span has Error status set by RecordToolResult(span, _, true).
+	assert.Equal(t, codes.Error, s.Status.Code, "tool span with isError=true must export status Error")
+}
+
+func TestStartToolSpan_ConcurrentToolCalls(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	otel.SetTracerProvider(tp)
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			ctx := context.Background()
+			_, span := StartToolSpan(ctx, "tool", "id-"+strings.Repeat("x", id+1), "{}")
+			RecordToolResult(span, "ok", false)
+			span.End()
+		}(i)
+	}
+	wg.Wait()
+	spans := mem.GetSpans()
+	require.Len(t, spans, 10, "concurrent StartToolSpan -> RecordToolResult -> End must produce 10 independent spans")
 }
 
 func TestRecordCacheHit_SetsAttributes(t *testing.T) {
@@ -139,40 +208,35 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	assert.Equal(t, "step-2", stepVal.AsString())
 }
 
-func TestRecordToolResult_AddsEvent(t *testing.T) {
-	rec := &recordingSpan{events: make([]recordedEvent, 0)}
-	RecordToolResult(rec, "search", `{"results":["a","b"]}`, false)
-	require.Len(t, rec.events, 1)
-	assert.Equal(t, "gen_ai.tool.result", rec.events[0].name)
+func TestTruncateContext_ConfigurableLimit(t *testing.T) {
+	SetMaxContextLength(100)
+	defer SetMaxContextLength(16384)
+	long := strings.Repeat("a", 500)
+	out := truncateContext(long)
+	assert.LessOrEqual(t, len(out), 100)
+	assert.True(t, strings.HasSuffix(out, truncationSuffix))
+	require.True(t, utf8.ValidString(out))
 }
 
-func TestRecordToolResult_EventAttributesAndTruncation_RealSpan(t *testing.T) {
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	otel.SetTracerProvider(tp)
-	_, span := otel.Tracer("genai-test").Start(context.Background(), "op")
-	longResult := strings.Repeat("x", testContextLimit+50)
-	RecordToolResult(span, "big", longResult, true)
-	span.End()
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	require.Len(t, spans[0].Events, 1)
-	evt := spans[0].Events[0]
-	assert.Equal(t, "gen_ai.tool.result", evt.Name)
-	attrs := attribute.NewSet(evt.Attributes...)
-	toolNameVal, ok := attrs.Value(ToolNameKey)
-	require.True(t, ok)
-	assert.Equal(t, "big", toolNameVal.AsString(), "event must include tool name for dashboards")
-	resultVal, ok := attrs.Value(ToolResultKey)
-	require.True(t, ok)
-	result := resultVal.AsString()
-	assert.True(t, strings.HasSuffix(result, truncationSuffix))
-	assert.LessOrEqual(t, len(result), testContextLimit)
-	require.True(t, utf8.ValidString(result), "truncated result must remain valid UTF-8")
-	errVal, ok := attrs.Value(ToolErrorKey)
-	require.True(t, ok)
-	assert.True(t, errVal.AsBool())
+func TestTruncateContext_SmallLimit_NoSuffix(t *testing.T) {
+	// When limit <= len(truncationSuffix), result is prefix only (no suffix) so len(out) <= limit.
+	SetMaxContextLength(5)
+	defer SetMaxContextLength(16384)
+	out := truncateContext("hello world")
+	assert.LessOrEqual(t, len(out), 5)
+	assert.NotContains(t, out, truncationSuffix, "small limit must not add suffix")
+	require.True(t, utf8.ValidString(out))
+}
+
+func TestTruncateContext_SmallLimit10_UTF8Safe(t *testing.T) {
+	SetMaxContextLength(10)
+	defer SetMaxContextLength(16384)
+	// Multi-byte rune at index 9: 8 ASCII + 2-byte rune = 10 bytes
+	s := "12345678\u00e9"
+	out := truncateContext(s + " more")
+	assert.LessOrEqual(t, len(out), 10)
+	require.True(t, utf8.ValidString(out))
+	assert.NotContains(t, out, truncationSuffix)
 }
 
 type recordedEvent struct {
@@ -180,11 +244,13 @@ type recordedEvent struct {
 	attrs map[attribute.Key]attribute.Value
 }
 
-// recordingSpan implements trace.Span and records SetAttributes and AddEvent for tests.
+// recordingSpan implements trace.Span and records SetAttributes, SetStatus, and AddEvent for tests.
 type recordingSpan struct {
 	noop.Span
-	attrs  map[attribute.Key]attribute.Value
-	events []recordedEvent
+	attrs      map[attribute.Key]attribute.Value
+	events     []recordedEvent
+	statusCode codes.Code
+	statusDesc string
 }
 
 func (r *recordingSpan) SetAttributes(kv ...attribute.KeyValue) {
@@ -194,6 +260,11 @@ func (r *recordingSpan) SetAttributes(kv ...attribute.KeyValue) {
 	for _, a := range kv {
 		r.attrs[a.Key] = a.Value
 	}
+}
+
+func (r *recordingSpan) SetStatus(code codes.Code, desc string) {
+	r.statusCode = code
+	r.statusDesc = desc
 }
 
 func (r *recordingSpan) AddEvent(name string, _ ...trace.EventOption) {

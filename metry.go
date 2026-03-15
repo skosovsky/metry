@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
+	"github.com/skosovsky/metry/genai"
 	"github.com/skosovsky/metry/internal/genaimetrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,6 +45,12 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	}
 	if cfg.ServiceName == "" {
 		return nil, ErrServiceNameRequired
+	}
+	if limit := cfg.maxGenAIContextLength; limit > 0 {
+		if limit > math.MaxInt32 {
+			limit = math.MaxInt32
+		}
+		genai.SetMaxContextLength(int32(limit))
 	}
 
 	// Custom resource with service attributes; merge with default (host, PID, OS).
