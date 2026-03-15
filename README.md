@@ -28,7 +28,7 @@ graph LR
   end
 
   subgraph metryPkg [metry]
-    metryCore[Init / GlobalTracer / GlobalMeter]
+    metryCore[Init - global OTel providers]
     metryGenAI[genai]
     metryHTTP[HTTP middleware]
     metryGRPC[gRPC middleware]
@@ -97,16 +97,18 @@ func main() {
 
 ## Semantic Conventions (LLMOps)
 
+This version of metry does not provide `GlobalTracer()` or `GlobalMeter()`. Use `otel.Tracer("your-service/module")` and `otel.Meter("your-service/module")` for instrumentation scope so dashboards can filter traces and metrics by module.
+
 Record token usage and cost on the current span so backends like Langfuse or Phoenix can show agent trees and costs. When you call `metry.Init` with a metric exporter, GenAI counters (tokens, cost, TTFT) are registered automatically.
 
 ```go
 import (
-	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/genai"
+	"go.opentelemetry.io/otel"
 )
 
-// Inside your LLM call handler:
-ctx, span := metry.GlobalTracer().Start(ctx, "llm-call")
+// Use a tracer named after your service/module for granular filtering in Jaeger/Grafana:
+ctx, span := otel.Tracer("my-ai-service/llm").Start(ctx, "llm-call")
 defer span.End()
 
 // After the LLM responds:
@@ -114,7 +116,21 @@ genai.RecordUsage(ctx, span, 150, 50, 0.002)  // input tokens, output tokens, co
 genai.RecordInteraction(span, "Summarize this", "Here is the summary...")
 ```
 
-Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends. Long prompt/completion/tool strings are truncated to 16 KB by default (UTF-8-safe, result length always ≤ limit); you can set a different limit with `metry.WithMaxGenAIContextLength(bytes)` in `Init`. Tool spans use `otel.Tracer("metry")` at runtime so `genai` stays independent of the `metry` package. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). Before calling `metry.Init` again, call the returned `shutdown` so metrics can be re-registered; the test suite validates the lifecycle `Init -> shutdown -> Init`.
+Use `otel.Tracer("your-service/module")` (not a global tracer) so dashboards can filter by instrumentation scope. Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends.
+
+To record failures on a span in a consistent way (e.g. in HTTP/gRPC handlers or after a failed LLM call), use `traceutil.SpanError` so the span gets the error recorded and status set to Error:
+
+```go
+import "github.com/skosovsky/metry/traceutil"
+
+// In a handler, before span.End():
+if err != nil {
+	traceutil.SpanError(span, err)
+}
+defer span.End()
+```
+
+Long prompt/completion/tool strings are truncated to 16 KB by default (UTF-8-safe, result length always ≤ limit); you can set a different limit with `metry.WithMaxGenAIContextLength(bytes)` in `Init`. Tool spans use `otel.Tracer("metry/genai")` at runtime so `genai` stays independent of the `metry` package. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). Before calling `metry.Init` again, call the returned `shutdown` so metrics can be re-registered; the test suite validates the lifecycle `Init -> shutdown -> Init`.
 
 ## Agentic & RAG Tracing
 
@@ -207,7 +223,7 @@ genai.RecordUsageWithPurpose(ctx, span, 20, 5, 0.0003, genai.PurposeGuardEvaluat
 
 ## Ecosystem
 
-metry is the central observability layer for the AI stack. It makes libraries such as ragy (RAG), flowy (orchestration), and toolsy (tools) visible in production by providing a single tracer and meter and standard GenAI attributes.
+metry is the central observability layer for the AI stack. It makes libraries such as ragy (RAG), flowy (orchestration), and toolsy (tools) visible in production by configuring global OTel providers and standard GenAI attributes. Use `otel.Tracer("your-module")` and `otel.Meter("your-module")` for granular instrumentation scope.
 
 ## Contributing
 

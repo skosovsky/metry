@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -20,9 +21,9 @@ func TestInit_ValidOptions_Succeeds(t *testing.T) {
 		_ = shutdown(ctx)
 	})
 
-	tracer := GlobalTracer()
+	tracer := otel.Tracer("metry")
 	require.NotNil(t, tracer)
-	meter := GlobalMeter()
+	meter := otel.Meter("metry")
 	require.NotNil(t, meter)
 }
 
@@ -42,7 +43,7 @@ func TestInit_DefaultTraceRatio(t *testing.T) {
 		_ = shutdown(ctx)
 	})
 
-	tr := GlobalTracer()
+	tr := otel.Tracer("metry")
 	require.NotNil(t, tr)
 }
 
@@ -55,7 +56,7 @@ func TestInit_ZeroTraceRatio(t *testing.T) {
 		_ = shutdown(ctx)
 	})
 
-	tr := GlobalTracer()
+	tr := otel.Tracer("metry")
 	require.NotNil(t, tr)
 }
 
@@ -84,7 +85,7 @@ func TestInit_WithTraceExporter_Succeeds(t *testing.T) {
 		_ = shutdown(ctx)
 	})
 
-	tr := GlobalTracer()
+	tr := otel.Tracer("metry")
 	require.NotNil(t, tr)
 }
 

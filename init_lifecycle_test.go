@@ -9,6 +9,7 @@ import (
 	"github.com/skosovsky/metry/genai"
 	"github.com/skosovsky/metry/testutil"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
@@ -47,7 +48,7 @@ func TestInit_Shutdown_Init_GenAIMetricsWork(t *testing.T) {
 
 	// Second init: record and then shutdown to flush so we can assert on datapoints
 	genai.RecordTTFT(ctx, 0.2, "model-b")
-	_, span := metry.GlobalTracer().Start(ctx, "span")
+	_, span := otel.Tracer("metry").Start(ctx, "span")
 	genai.RecordUsage(ctx, span, 1, 2, 0.001)
 	span.End()
 

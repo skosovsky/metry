@@ -11,17 +11,14 @@ import (
 	"github.com/skosovsky/metry/internal/genaimetrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const (
-	tracerName      = "metry"
 	meterName       = "metry"
 	shutdownTimeout = 10 * time.Second
 )
@@ -153,18 +150,6 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		return nil
 	}
 	return shutdown, nil
-}
-
-// GlobalTracer returns the global Tracer for the library (name "metry").
-// Call after Init.
-func GlobalTracer() trace.Tracer {
-	return otel.Tracer(tracerName)
-}
-
-// GlobalMeter returns the global Meter for the library (name "metry").
-// Call after Init.
-func GlobalMeter() metric.Meter {
-	return otel.Meter(meterName)
 }
 
 // noopSpanExporter implements sdktrace.SpanExporter and drops all spans.

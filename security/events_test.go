@@ -4,16 +4,16 @@ import (
 	"context"
 	"testing"
 
-	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
 
 func TestRecordSecurityEvent_AddsEventToSpan(t *testing.T) {
 	mem := testutil.SetupTestTracing(t)
-	tracer := metry.GlobalTracer()
+	tracer := otel.Tracer("metry")
 	ctx, span := tracer.Start(context.Background(), "test-op")
 	RecordSecurityEvent(ctx, ActionBlock, "pii_masking", "PII detected in prompt", false)
 	span.End()

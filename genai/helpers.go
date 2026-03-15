@@ -13,8 +13,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// tracerName ties tool spans to the main provider set by metry.Init.
-const tracerName = "metry"
+// tracerName is the instrumentation scope for genai tool spans (granularity per task6).
+const tracerName = "metry/genai"
 
 func getTracer() trace.Tracer { return otel.Tracer(tracerName) }
 

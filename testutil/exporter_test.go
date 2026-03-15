@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/skosovsky/metry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -33,7 +32,7 @@ func TestInMemoryTraceExporter_TraceExporter(t *testing.T) {
 	)
 	otel.SetTracerProvider(tp)
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	tracer := metry.GlobalTracer()
+	tracer := otel.Tracer("metry")
 	_, span := tracer.Start(context.Background(), "op")
 	span.End()
 	assert.Equal(t, 1, mem.Len())
@@ -42,7 +41,7 @@ func TestInMemoryTraceExporter_TraceExporter(t *testing.T) {
 func TestSetupTestTracing_ReturnsExporter(t *testing.T) {
 	mem := SetupTestTracing(t)
 	require.NotNil(t, mem)
-	tracer := metry.GlobalTracer()
+	tracer := otel.Tracer("metry")
 	require.NotNil(t, tracer)
 	_, span := tracer.Start(context.Background(), "test")
 	span.End()
