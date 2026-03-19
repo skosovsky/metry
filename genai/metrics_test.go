@@ -6,20 +6,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/trace/noop"
-
-	"github.com/skosovsky/metry/internal/genaimetrics"
 )
 
 const (
-	ttftHistogramName       = "gen_ai.client.ttft"
-	tpsHistogramName        = "gen_ai.streaming.tps"
-	tbtHistogramName        = "gen_ai.streaming.tbt"
-	inputTokensCounterName  = "gen_ai.client.token.usage.input"  // #nosec G101
-	outputTokensCounterName = "gen_ai.client.token.usage.output" // #nosec G101
-	costCounterName         = "gen_ai.client.cost"
+	ttftHistogramName       = TTFTMetricName
+	tpsHistogramName        = StreamingTPSMetricName
+	tbtHistogramName        = StreamingTBTMetricName
+	inputTokensCounterName  = InputTokensMetricName
+	outputTokensCounterName = OutputTokensMetricName
+	costCounterName         = CostMetricName
 )
 
 func TestRegisterMetrics_AfterCleanup_CanRegisterAgain(t *testing.T) {
@@ -28,11 +27,11 @@ func TestRegisterMetrics_AfterCleanup_CanRegisterAgain(t *testing.T) {
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test-lifecycle")
 
-	cleanup1, err1 := genaimetrics.RegisterMetrics(meter)
+	cleanup1, err1 := RegisterMetricsForInit(meter)
 	require.NoError(t, err1)
 	cleanup1()
 
-	cleanup2, err2 := genaimetrics.RegisterMetrics(meter)
+	cleanup2, err2 := RegisterMetricsForInit(meter)
 	require.NoError(t, err2)
 	t.Cleanup(cleanup2)
 
@@ -51,12 +50,12 @@ func TestRegisterMetrics_LifecycleAfterCleanup(t *testing.T) {
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test-lifecycle")
 
-	cleanup1, err := genaimetrics.RegisterMetrics(meter)
+	cleanup1, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	cleanup1()
-	require.Nil(t, genaimetrics.Holder())
+	require.Nil(t, currentMetricsHolder())
 
-	cleanup2, err := genaimetrics.RegisterMetrics(meter)
+	cleanup2, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup2)
 
@@ -76,15 +75,15 @@ func TestRegisterMetrics_CleanupOwnerSafe_DoesNotClearNewHolder(t *testing.T) {
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test-owner-safe")
 
-	cleanupA, err := genaimetrics.RegisterMetrics(meter)
+	cleanupA, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	cleanupA()
-	cleanupB, err := genaimetrics.RegisterMetrics(meter)
+	cleanupB, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanupB)
 
 	cleanupA()
-	require.NotNil(t, genaimetrics.Holder())
+	require.NotNil(t, currentMetricsHolder())
 
 	ctx := context.Background()
 	RecordTTFT(ctx, 0.5, "model-b")
@@ -101,7 +100,7 @@ func TestRecordInteraction_AfterRegisterMetrics_IncrementsCounters(t *testing.T)
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -119,11 +118,13 @@ func TestRecordInteraction_AfterRegisterMetrics_IncrementsCounters(t *testing.T)
 
 	inputVal := getSumInt64(t, rm, inputTokensCounterName)
 	outputVal := getSumInt64(t, rm, outputTokensCounterName)
-	costVal := getSumFloat64(t, rm, costCounterName)
+	costMetric := getSumFloat64Metric(t, rm, costCounterName)
+	costVal := sumFloat64DataPoints(costMetric)
 
 	require.Equal(t, int64(10), inputVal)
 	require.Equal(t, int64(20), outputVal)
 	require.InDelta(t, 0.001, costVal, 1e-9)
+	require.True(t, costMetric.IsMonotonic, "cost metric must remain monotonic for Prometheus rate()")
 }
 
 func TestRecordInteraction_RecordsMetricsWithPurposeAttribute(t *testing.T) {
@@ -131,7 +132,7 @@ func TestRecordInteraction_RecordsMetricsWithPurposeAttribute(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -148,6 +149,7 @@ func TestRecordInteraction_RecordsMetricsWithPurposeAttribute(t *testing.T) {
 		InputTokens:  10,
 		OutputTokens: 20,
 		CostUSD:      0.002,
+		Currency:     "CREDITS",
 		Purpose:      PurposeGeneration,
 	})
 
@@ -165,6 +167,15 @@ func TestRecordInteraction_RecordsMetricsWithPurposeAttribute(t *testing.T) {
 	require.Equal(t, int64(20), getSumInt64ByPurpose(t, rm, outputTokensCounterName, PurposeGeneration))
 	require.InDelta(t, 0.001, getSumFloat64ByPurpose(t, rm, costCounterName, PurposeGuardEvaluation), 1e-9)
 	require.InDelta(t, 0.002, getSumFloat64ByPurpose(t, rm, costCounterName, PurposeGeneration), 1e-9)
+	require.InDelta(
+		t,
+		0.001,
+		getSumFloat64ByPurposeAndCurrency(t, rm, costCounterName, PurposeGuardEvaluation, defaultCostCurrency),
+		1e-9,
+	)
+	require.InDelta(t, 0.002, getSumFloat64ByPurposeAndCurrency(t, rm, costCounterName, PurposeGeneration, "CREDITS"), 1e-9)
+	assert.False(t, sumInt64HasAttribute(t, rm, inputTokensCounterName, CostCurrencyKey))
+	assert.False(t, sumInt64HasAttribute(t, rm, outputTokensCounterName, CostCurrencyKey))
 }
 
 func TestRecordInteraction_EmptyPurpose_AggregatesAsGeneration(t *testing.T) {
@@ -172,7 +183,7 @@ func TestRecordInteraction_EmptyPurpose_AggregatesAsGeneration(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -191,6 +202,37 @@ func TestRecordInteraction_EmptyPurpose_AggregatesAsGeneration(t *testing.T) {
 	require.Equal(t, int64(1), getSumInt64ByPurpose(t, rm, inputTokensCounterName, PurposeGeneration))
 	require.Equal(t, int64(2), getSumInt64ByPurpose(t, rm, outputTokensCounterName, PurposeGeneration))
 	require.InDelta(t, 0.001, getSumFloat64ByPurpose(t, rm, costCounterName, PurposeGeneration), 1e-9)
+	require.InDelta(
+		t,
+		0.001,
+		getSumFloat64ByPurposeAndCurrency(t, rm, costCounterName, PurposeGeneration, defaultCostCurrency),
+		1e-9,
+	)
+}
+
+func TestRecordInteraction_ZeroCost_DoesNotRecordCostCounter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	meter := mp.Meter("genai-test")
+	cleanup, err := RegisterMetricsForInit(meter)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	ctx := context.Background()
+	span := noop.Span{}
+	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{
+		InputTokens:  5,
+		OutputTokens: 8,
+	})
+
+	var rm metricdata.ResourceMetrics
+	err = reader.Collect(ctx, &rm)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(5), getSumInt64(t, rm, inputTokensCounterName))
+	require.Equal(t, int64(8), getSumInt64(t, rm, outputTokensCounterName))
+	assert.False(t, sumFloat64HasDatapoint(rm, costCounterName))
 }
 
 func TestRecordInteraction_ZeroUsage_DoesNotRecordCounters(t *testing.T) {
@@ -198,7 +240,7 @@ func TestRecordInteraction_ZeroUsage_DoesNotRecordCounters(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -220,7 +262,7 @@ func TestRecordTTFT_RecordsHistogram(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -246,7 +288,7 @@ func TestRecordStreamingCompletion_RecordsHistograms(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -275,7 +317,7 @@ func TestRecordStreamingCompletion_SkipsInvalidWindow(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -296,7 +338,7 @@ func TestRecordStreamingCompletion_SkipsTBTForSingleToken(t *testing.T) {
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	meter := mp.Meter("genai-test")
-	cleanup, err := genaimetrics.RegisterMetrics(meter)
+	cleanup, err := RegisterMetricsForInit(meter)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
 
@@ -345,6 +387,33 @@ func getSumFloat64ByPurpose(t *testing.T, rm metricdata.ResourceMetrics, name, p
 			var total float64
 			for _, dp := range sum.DataPoints {
 				if v, ok := dp.Attributes.Value(OperationPurposeKey); ok && v.AsString() == purpose {
+					total += dp.Value
+				}
+			}
+			return total
+		}
+	}
+	t.Fatalf("metric %q not found", name)
+	return 0
+}
+
+func getSumFloat64ByPurposeAndCurrency(
+	t *testing.T,
+	rm metricdata.ResourceMetrics,
+	name, purpose, currency string,
+) float64 {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[float64])
+			require.True(t, ok, "metric %q should be Sum[float64]", name)
+			var total float64
+			for _, dp := range sum.DataPoints {
+				if datapointHasStringAttribute(dp.Attributes, OperationPurposeKey, purpose) &&
+					datapointHasStringAttribute(dp.Attributes, CostCurrencyKey, currency) {
 					total += dp.Value
 				}
 			}
@@ -432,23 +501,7 @@ func getSumInt64(t *testing.T, rm metricdata.ResourceMetrics, name string) int64
 }
 
 func getSumFloat64(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			require.True(t, ok, "metric %q should be Sum[float64]", name)
-			var total float64
-			for _, dp := range sum.DataPoints {
-				total += dp.Value
-			}
-			return total
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return 0
+	return sumFloat64DataPoints(getSumFloat64Metric(t, rm, name))
 }
 
 func getSumInt64IfPresent(rm metricdata.ResourceMetrics, name string) int64 {
@@ -489,4 +542,67 @@ func getSumFloat64IfPresent(rm metricdata.ResourceMetrics, name string) float64 
 		}
 	}
 	return 0
+}
+
+func getSumFloat64Metric(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Sum[float64] {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[float64])
+			require.True(t, ok, "metric %q should be Sum[float64]", name)
+			return sum
+		}
+	}
+	t.Fatalf("metric %q not found", name)
+	return metricdata.Sum[float64]{}
+}
+
+func sumFloat64DataPoints(sum metricdata.Sum[float64]) float64 {
+	var total float64
+	for _, dp := range sum.DataPoints {
+		total += dp.Value
+	}
+	return total
+}
+
+func sumFloat64HasDatapoint(rm metricdata.ResourceMetrics, name string) bool {
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[float64])
+			return ok && len(sum.DataPoints) > 0
+		}
+	}
+	return false
+}
+
+func sumInt64HasAttribute(t *testing.T, rm metricdata.ResourceMetrics, name string, key attribute.Key) bool {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "metric %q should be Sum[int64]", name)
+			for _, dp := range sum.DataPoints {
+				if _, ok := dp.Attributes.Value(key); ok {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	t.Fatalf("metric %q not found", name)
+	return false
+}
+
+func datapointHasStringAttribute(set attribute.Set, key attribute.Key, want string) bool {
+	v, ok := set.Value(key)
+	return ok && v.AsString() == want
 }

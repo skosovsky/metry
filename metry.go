@@ -14,8 +14,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 
+	"github.com/skosovsky/metry/genai"
 	"github.com/skosovsky/metry/internal/genaiconfig"
-	"github.com/skosovsky/metry/internal/genaimetrics"
 )
 
 const (
@@ -92,7 +92,7 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		)
 		otel.SetMeterProvider(mp)
 		var regErr error
-		cleanupGenAI, regErr = genaimetrics.RegisterMetrics(otel.Meter(meterName))
+		cleanupGenAI, regErr = genai.RegisterMetricsForInit(otel.Meter(meterName))
 		if regErr != nil {
 			errs := []error{fmt.Errorf("metry: register genai metrics: %w", regErr)}
 			if cleanupGenAI != nil {

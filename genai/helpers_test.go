@@ -112,6 +112,7 @@ func TestRecordInteraction_WritesUsageAndNormalizesPurpose(t *testing.T) {
 	assert.Equal(t, int64(10), attrs[InputTokensKey].AsInt64())
 	assert.Equal(t, int64(20), attrs[OutputTokensKey].AsInt64())
 	assert.InDelta(t, 0.001, attrs[CostUSDKey].AsFloat64(), 1e-9)
+	assert.Equal(t, defaultCostCurrency, attrs[CostCurrencyKey].AsString())
 	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
 }
 
@@ -127,6 +128,22 @@ func TestRecordInteraction_WritesOptionalMultimodalUsage(t *testing.T) {
 
 	assert.InDelta(t, 12.5, attrs[AudioSecondsKey].AsFloat64(), 1e-9)
 	assert.Equal(t, int64(3), attrs[ImageCountKey].AsInt64())
+	assert.Equal(t, defaultCostCurrency, attrs[CostCurrencyKey].AsString())
+	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
+}
+
+func TestRecordInteraction_WritesExplicitCurrency(t *testing.T) {
+	t.Cleanup(resetRuntimeConfigForTest())
+
+	attrs := make(map[attribute.Key]attribute.Value)
+	rec := &recordingSpan{attrs: attrs}
+	RecordInteraction(context.Background(), rec, GenAIPayload{}, GenAIUsage{
+		CostUSD:  0.25,
+		Currency: "CREDITS",
+	})
+
+	assert.InDelta(t, 0.25, attrs[CostUSDKey].AsFloat64(), 1e-9)
+	assert.Equal(t, "CREDITS", attrs[CostCurrencyKey].AsString())
 	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
 }
 
@@ -286,7 +303,7 @@ func TestRecordAgentStep_AddsEvent(t *testing.T) {
 	rec := &recordingSpan{events: make([]recordedEvent, 0)}
 	RecordAgentStep(rec, "cardiologist", "specialist", "step-2")
 	require.Len(t, rec.events, 1)
-	assert.Equal(t, "gen_ai.agent.step", rec.events[0].name)
+	assert.Equal(t, AgentStepEvent, rec.events[0].name)
 }
 
 func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
@@ -303,7 +320,7 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 	require.Len(t, spans[0].Events, 1)
 	evt := spans[0].Events[0]
-	assert.Equal(t, "gen_ai.agent.step", evt.Name)
+	assert.Equal(t, AgentStepEvent, evt.Name)
 	attrs := attribute.NewSet(evt.Attributes...)
 	nameVal, ok := attrs.Value(AgentNameKey)
 	require.True(t, ok)

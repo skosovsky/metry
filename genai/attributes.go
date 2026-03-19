@@ -4,7 +4,7 @@ package genai
 
 import "go.opentelemetry.io/otel/attribute"
 
-// OpenLLMetry semantic convention attribute keys.
+// OpenLLMetry semantic convention attribute, event, and instrument keys.
 // See https://openllmetry.io/ and OpenTelemetry GenAI semantic conventions.
 //
 // Note on OpenTelemetry standard evolution:
@@ -14,6 +14,10 @@ import "go.opentelemetry.io/otel/attribute"
 // included in the standard Go OTel packages (e.g., > 1.42), these constants should
 // be updated to alias the official ones to ensure long-term ecosystem compatibility
 // without breaking the public `metry/genai` API.
+//
+// TODO(OTel v1.45+): Update these constants once OpenTelemetry GenAI
+// Semantic Conventions are officially stabilized.
+// Do not change these keys outside of this file to maintain the ACL pattern.
 const (
 	System          = "gen_ai.system"
 	RequestModel    = "gen_ai.request.model"
@@ -23,6 +27,7 @@ const (
 	InputTokens     = "gen_ai.usage.input_tokens"  // #nosec G101 -- OTel semantic convention name, not a credential
 	OutputTokens    = "gen_ai.usage.output_tokens" // #nosec G101 -- OTel semantic convention name, not a credential
 	CostUSD         = "gen_ai.usage.cost"
+	CostCurrency    = "gen_ai.cost.currency"
 	AudioSeconds    = "gen_ai.usage.audio_seconds"
 	ImageCount      = "gen_ai.usage.image_count"
 	EvaluationScore = "gen_ai.evaluation.score"
@@ -41,13 +46,24 @@ const (
 	EmbeddingModel  = "gen_ai.embedding.model"
 
 	// Multi-agent and orchestration (flowy).
-	AgentName    = "gen_ai.agent.name"
-	AgentRole    = "gen_ai.agent.role"
-	WorkflowStep = "gen_ai.workflow.step"
-	PromptType   = "gen_ai.prompt.type"
+	AgentName      = "gen_ai.agent.name"
+	AgentRole      = "gen_ai.agent.role"
+	WorkflowStep   = "gen_ai.workflow.step"
+	PromptType     = "gen_ai.prompt.type"
+	AgentStepEvent = "gen_ai.agent.step"
 
 	// Operation purpose for cost tracking (e.g. generation vs guard evaluation).
 	OperationPurpose = "ai.operation.purpose"
+)
+
+// GenAI metric instrument names.
+const (
+	InputTokensMetricName  = "gen_ai.client.token.usage.input"  // #nosec G101 -- OTel metric name, not a credential
+	OutputTokensMetricName = "gen_ai.client.token.usage.output" // #nosec G101 -- OTel metric name, not a credential
+	CostMetricName         = "gen_ai.cost"
+	TTFTMetricName         = "gen_ai.client.ttft"
+	StreamingTPSMetricName = "gen_ai.streaming.tps"
+	StreamingTBTMetricName = "gen_ai.streaming.tbt"
 )
 
 // Attribute keys as attribute.Key for type-safe span recording.
@@ -60,6 +76,7 @@ var (
 	InputTokensKey     = attribute.Key(InputTokens)
 	OutputTokensKey    = attribute.Key(OutputTokens)
 	CostUSDKey         = attribute.Key(CostUSD)
+	CostCurrencyKey    = attribute.Key(CostCurrency)
 	AudioSecondsKey    = attribute.Key(AudioSeconds)
 	ImageCountKey      = attribute.Key(ImageCount)
 	EvaluationScoreKey = attribute.Key(EvaluationScore)

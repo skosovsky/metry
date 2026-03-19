@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	ttftMetricName   = "gen_ai.client.ttft"
-	inputTokensName  = "gen_ai.client.token.usage.input"  // #nosec G101 -- OTel metric name, not a credential
-	outputTokensName = "gen_ai.client.token.usage.output" // #nosec G101 -- OTel metric name, not a credential
-	costMetricName   = "gen_ai.client.cost"
+	ttftMetricName   = genai.TTFTMetricName
+	inputTokensName  = genai.InputTokensMetricName
+	outputTokensName = genai.OutputTokensMetricName
+	costMetricName   = genai.CostMetricName
 )
 
 // TestInit_Shutdown_Init_GenAIMetricsAndConfigWork verifies that after Init -> shutdown -> Init,
@@ -74,10 +74,11 @@ func TestInit_Shutdown_Init_GenAIMetricsAndConfigWork(t *testing.T) {
 	require.InDelta(t, 0.2, sum, 1e-9, "TTFT sum")
 	require.Equal(t, "model-b", model, "TTFT model attribute")
 
-	inputVal, outputVal, costVal := getUsageFromResourceMetrics(t, *rm)
+	inputVal, outputVal, costVal, costCurrency := getUsageFromResourceMetrics(t, *rm)
 	require.Equal(t, int64(1), inputVal, "input tokens counter after second Init")
 	require.Equal(t, int64(2), outputVal, "output tokens counter after second Init")
 	require.InDelta(t, 0.001, costVal, 1e-9, "cost counter after second Init")
+	require.Equal(t, "USD", costCurrency, "cost counter currency after second Init")
 
 	tr.Reset()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(tr.SpanExporter()))
@@ -117,8 +118,8 @@ func getTTFTFromResourceMetrics(t *testing.T, rm metricdata.ResourceMetrics) (co
 	return 0, 0, ""
 }
 
-// getUsageFromResourceMetrics extracts input tokens, output tokens and cost sums from ResourceMetrics.
-func getUsageFromResourceMetrics(t *testing.T, rm metricdata.ResourceMetrics) (input int64, output int64, cost float64) {
+// getUsageFromResourceMetrics extracts input tokens, output tokens, cost sum, and cost currency from ResourceMetrics.
+func getUsageFromResourceMetrics(t *testing.T, rm metricdata.ResourceMetrics) (input int64, output int64, cost float64, currency string) {
 	t.Helper()
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
@@ -128,11 +129,11 @@ func getUsageFromResourceMetrics(t *testing.T, rm metricdata.ResourceMetrics) (i
 			case outputTokensName:
 				output = getSumInt64FromMetrics(t, m)
 			case costMetricName:
-				cost = getSumFloat64FromMetrics(t, m)
+				cost, currency = getCostSumAndCurrencyFromMetrics(t, m)
 			}
 		}
 	}
-	return input, output, cost
+	return input, output, cost, currency
 }
 
 func getSumInt64FromMetrics(t *testing.T, m metricdata.Metrics) int64 {
@@ -155,4 +156,22 @@ func getSumFloat64FromMetrics(t *testing.T, m metricdata.Metrics) float64 {
 		total += dp.Value
 	}
 	return total
+}
+
+func getCostSumAndCurrencyFromMetrics(t *testing.T, m metricdata.Metrics) (float64, string) {
+	t.Helper()
+	sum, ok := m.Data.(metricdata.Sum[float64])
+	require.True(t, ok, "metric %q should be Sum[float64]", m.Name)
+	require.True(t, sum.IsMonotonic, "metric %q should be monotonic", m.Name)
+	var total float64
+	var currency string
+	for _, dp := range sum.DataPoints {
+		total += dp.Value
+		if currency == "" {
+			if v, ok := dp.Attributes.Value(genai.CostCurrencyKey); ok {
+				currency = v.AsString()
+			}
+		}
+	}
+	return total, currency
 }

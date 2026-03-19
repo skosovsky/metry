@@ -165,6 +165,8 @@ genai.RecordInteraction(ctx, span,
 		InputTokens:  150,
 		OutputTokens: 50,
 		CostUSD:      0.002,
+		// Currency is optional; when empty, metry records "USD".
+		Currency: "USD",
 	},
 )
 ```
@@ -201,7 +203,7 @@ genai.RecordToolResult(span, `{"temp":22}`, false)
 genai.RecordCacheHit(span, true, "pgvector_cache")
 
 // When transitioning workflow steps (e.g. in flowy); each call adds an event (no overwrite).
-// Event name gen_ai.agent.step follows OTel GenAI semantic conventions.
+// Event name genai.AgentStepEvent follows OTel GenAI semantic conventions.
 genai.RecordAgentStep(span, "cardiologist", "specialist", "step-2")
 ```
 
@@ -274,16 +276,21 @@ genai.RecordInteraction(ctx, span, genai.GenAIPayload{}, genai.GenAIUsage{
 	InputTokens:  150,
 	OutputTokens: 50,
 	CostUSD:      0.002,
+	Currency:     "USD",
 })
 
-// LLM-judge / guard evaluation — same metrics, split by purpose:
+// LLM-judge / guard evaluation — same metrics, split by purpose and currency:
 genai.RecordInteraction(ctx, span, genai.GenAIPayload{}, genai.GenAIUsage{
 	InputTokens:  20,
 	OutputTokens: 5,
 	CostUSD:      0.0003,
+	Currency:     "CREDITS",
 	Purpose:      genai.PurposeGuardEvaluation,
 })
 ```
+
+The `gen_ai.cost` metric is exported as a counter and includes `ai.operation.purpose` plus
+`gen_ai.cost.currency`. When `Currency` is omitted, metry records `USD`.
 
 ## HTTP and gRPC
 

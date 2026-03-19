@@ -12,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/skosovsky/metry/internal/genaiconfig"
-	"github.com/skosovsky/metry/internal/genaimetrics"
 )
 
 // tracerName is the instrumentation scope for genai tool spans (granularity per task6).
@@ -20,7 +19,10 @@ const tracerName = "metry/genai"
 
 func getTracer() trace.Tracer { return otel.Tracer(tracerName) }
 
-const truncationSuffix = "... [TRUNCATED]"
+const (
+	truncationSuffix    = "... [TRUNCATED]"
+	defaultCostCurrency = "USD"
+)
 
 //revive:disable:exported
 
@@ -36,6 +38,7 @@ type GenAIUsage struct {
 	InputTokens  int
 	OutputTokens int
 	CostUSD      float64
+	Currency     string
 	AudioSeconds float64
 	ImageCount   int
 	Purpose      string
@@ -93,6 +96,13 @@ func normalizePurpose(purpose string) string {
 	return purpose
 }
 
+func normalizeCurrency(currency string) string {
+	if currency == "" {
+		return defaultCostCurrency
+	}
+	return currency
+}
+
 // RecordInteraction records the payload and usage for a single GenAI interaction.
 func RecordInteraction(ctx context.Context, span trace.Span, payload GenAIPayload, usage GenAIUsage) {
 	cfg := currentConfig()
@@ -117,10 +127,12 @@ func RecordInteraction(ctx context.Context, span trace.Span, payload GenAIPayloa
 	}
 
 	purpose := normalizePurpose(usage.Purpose)
+	currency := normalizeCurrency(usage.Currency)
 	usageAttrs := []attribute.KeyValue{
 		InputTokensKey.Int(usage.InputTokens),
 		OutputTokensKey.Int(usage.OutputTokens),
 		CostUSDKey.Float64(usage.CostUSD),
+		CostCurrencyKey.String(currency),
 		OperationPurposeKey.String(purpose),
 	}
 	if usage.AudioSeconds > 0 {
@@ -131,17 +143,21 @@ func RecordInteraction(ctx context.Context, span trace.Span, payload GenAIPayloa
 	}
 	span.SetAttributes(usageAttrs...)
 
-	opts := metric.WithAttributes(OperationPurposeKey.String(purpose))
-	holder := genaimetrics.Holder()
+	tokenOpts := metric.WithAttributes(OperationPurposeKey.String(purpose))
+	holder := currentMetricsHolder()
 	if holder != nil {
 		if holder.InputTokens != nil {
-			holder.InputTokens.Add(ctx, int64(usage.InputTokens), opts)
+			holder.InputTokens.Add(ctx, int64(usage.InputTokens), tokenOpts)
 		}
 		if holder.OutputTokens != nil {
-			holder.OutputTokens.Add(ctx, int64(usage.OutputTokens), opts)
+			holder.OutputTokens.Add(ctx, int64(usage.OutputTokens), tokenOpts)
 		}
-		if holder.Cost != nil {
-			holder.Cost.Add(ctx, usage.CostUSD, opts)
+		if holder.Cost != nil && usage.CostUSD != 0 {
+			costOpts := metric.WithAttributes(
+				OperationPurposeKey.String(purpose),
+				CostCurrencyKey.String(currency),
+			)
+			holder.Cost.Add(ctx, usage.CostUSD, costOpts)
 		}
 	}
 }
@@ -179,10 +195,10 @@ func RecordCacheHit(span trace.Span, hit bool, source string) {
 }
 
 // RecordAgentStep records one agent step as a span event (ReAct loops: Thought -> Action -> Observation).
-// Event name gen_ai.agent.step and attributes follow OTel GenAI semantic conventions for dashboards.
+// Event name and attributes follow OTel GenAI semantic conventions for dashboards.
 // Call from flowy on each state transition; multiple calls on the same span produce a chronological event list.
 func RecordAgentStep(span trace.Span, agentName, agentRole, step string) {
-	span.AddEvent("gen_ai.agent.step", trace.WithAttributes(
+	span.AddEvent(AgentStepEvent, trace.WithAttributes(
 		AgentNameKey.String(agentName),
 		AgentRoleKey.String(agentRole),
 		WorkflowStepKey.String(step),
