@@ -15,14 +15,18 @@ const (
 	outputTokensCounterName = "gen_ai.client.token.usage.output" // #nosec G101 -- OTel metric name, not a credential
 	costCounterName         = "gen_ai.client.cost"
 	ttftHistogramName       = "gen_ai.client.ttft"
+	tpsHistogramName        = "gen_ai.streaming.tps"
+	tbtHistogramName        = "gen_ai.streaming.tbt"
 )
 
-// MetricsHolder holds GenAI metric instruments. Used by genai package for RecordTTFT and RecordUsageWithPurpose.
+// MetricsHolder holds GenAI metric instruments. Used by genai package for RecordInteraction and streaming helpers.
 type MetricsHolder struct {
 	InputTokens  metric.Int64Counter
 	OutputTokens metric.Int64Counter
 	Cost         metric.Float64Counter
 	Ttft         metric.Float64Histogram
+	Tps          metric.Float64Histogram
+	Tbt          metric.Float64Histogram
 }
 
 var globalMetrics atomic.Pointer[MetricsHolder]
@@ -65,11 +69,29 @@ func RegisterMetrics(meter metric.Meter) (cleanup func(), err error) {
 	if err != nil {
 		return nil, err
 	}
+	tps, err := meter.Float64Histogram(
+		tpsHistogramName,
+		metric.WithUnit("token/s"),
+		metric.WithDescription("Tokens per second during the streaming generation window"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	tbt, err := meter.Float64Histogram(
+		tbtHistogramName,
+		metric.WithUnit("s"),
+		metric.WithDescription("Time between tokens during streaming generation"),
+	)
+	if err != nil {
+		return nil, err
+	}
 	holder := &MetricsHolder{
 		InputTokens:  inTokens,
 		OutputTokens: outTokens,
 		Cost:         cost,
 		Ttft:         ttft,
+		Tps:          tps,
+		Tbt:          tbt,
 	}
 	globalMetrics.Store(holder)
 	return func() {
@@ -77,7 +99,7 @@ func RegisterMetrics(meter metric.Meter) (cleanup func(), err error) {
 	}, nil
 }
 
-// Holder returns the current metrics holder for hot-path reads (genai.RecordTTFT, genai.RecordUsageWithPurpose).
+// Holder returns the current metrics holder for hot-path reads from the genai package.
 func Holder() *MetricsHolder {
 	return globalMetrics.Load()
 }

@@ -2,10 +2,7 @@
 package metry
 
 import (
-	"context"
-
-	"go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/resource"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -18,8 +15,9 @@ type config struct {
 	ServiceVersion        string
 	Environment           string
 	TraceRatio            float64
-	TraceExporter         *TraceExporter
-	MetricExporter        *MetricExporter
+	Exporter              sdktrace.SpanExporter
+	MetricExporter        sdkmetric.Exporter
+	RecordPayloads        bool
 	maxGenAIContextLength int
 }
 
@@ -50,94 +48,23 @@ func WithTraceRatio(ratio float64) Option {
 	return func(c *config) { c.TraceRatio = ratio }
 }
 
-// WithTraceExporter sets the trace exporter. If not set, a no-op exporter is used.
-func WithTraceExporter(te *TraceExporter) Option {
-	return func(c *config) { c.TraceExporter = te }
+// WithExporter sets the span exporter. If not set, a no-op exporter is used.
+func WithExporter(exp sdktrace.SpanExporter) Option {
+	return func(c *config) { c.Exporter = exp }
 }
 
 // WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
-// Accepts value to avoid mutability after Init (clean-break contract).
-func WithMetricExporter(me MetricExporter) Option {
-	return func(c *config) {
-		meCopy := me
-		c.MetricExporter = &meCopy
-	}
+func WithMetricExporter(exp sdkmetric.Exporter) Option {
+	return func(c *config) { c.MetricExporter = exp }
+}
+
+// WithRecordPayloads enables or disables prompt/completion/system payload recording.
+func WithRecordPayloads(enabled bool) Option {
+	return func(c *config) { c.RecordPayloads = enabled }
 }
 
 // WithMaxGenAIContextLength sets the max byte length for prompt/completion/tool strings before truncation (default 16384).
 // Use for local dev or closed loops where full context is needed; 0 means keep default.
 func WithMaxGenAIContextLength(bytes int) Option {
 	return func(c *config) { c.maxGenAIContextLength = bytes }
-}
-
-// WithOTLPGRPC sets trace and metric exporters for OTLP over gRPC (e.g. "localhost:4317").
-func WithOTLPGRPC(endpoint string, insecure bool) Option {
-	te, me := OTLPGRPC(endpoint, insecure)
-	return func(c *config) {
-		c.TraceExporter = te
-		c.MetricExporter = me
-	}
-}
-
-// WithOTLPHTTP sets trace and metric exporters for OTLP over HTTP (e.g. "localhost:4318").
-func WithOTLPHTTP(endpoint string, headers map[string]string) Option {
-	te, me := OTLPHTTP(endpoint, headers)
-	return func(c *config) {
-		c.TraceExporter = te
-		c.MetricExporter = me
-	}
-}
-
-// WithConsole sets trace and metric exporters that write to stdout (for local dev).
-func WithConsole() Option {
-	te, me := Console()
-	return func(c *config) {
-		c.TraceExporter = te
-		c.MetricExporter = me
-	}
-}
-
-// WithNoop sets no-op trace and metric exporters (disable telemetry or tests).
-func WithNoop() Option {
-	te, me := Noop()
-	return func(c *config) {
-		c.TraceExporter = te
-		c.MetricExporter = me
-	}
-}
-
-// TraceExporter is an opaque type that produces an OTel trace exporter.
-// Create it via OTLPGRPC, OTLPHTTP, Console, Noop, or testutil.
-type TraceExporter struct {
-	create traceExporterFactory
-}
-
-type traceExporterFactory func(ctx context.Context, res *resource.Resource) (sdktrace.SpanExporter, error)
-
-// MetricExporter is an opaque type that produces an OTel metric exporter.
-// Create it via OTLPGRPC, OTLPHTTP, Console, Noop, or testutil.
-type MetricExporter struct {
-	create metricExporterFactory
-}
-
-type metricExporterFactory func(ctx context.Context, res *resource.Resource) (metric.Exporter, error)
-
-// NewTraceExporterFromSpanExporter wraps an existing sdktrace.SpanExporter as a TraceExporter.
-// Used by testutil and other packages that need to plug in a custom exporter instance.
-func NewTraceExporterFromSpanExporter(exp sdktrace.SpanExporter) *TraceExporter {
-	return &TraceExporter{
-		create: func(context.Context, *resource.Resource) (sdktrace.SpanExporter, error) {
-			return exp, nil
-		},
-	}
-}
-
-// NewMetricExporterFromExporter wraps an existing metric.Exporter as a MetricExporter.
-// Used by testutil and other packages that need to plug in a custom exporter instance.
-func NewMetricExporterFromExporter(exp metric.Exporter) *MetricExporter {
-	return &MetricExporter{
-		create: func(context.Context, *resource.Resource) (metric.Exporter, error) {
-			return exp, nil
-		},
-	}
 }

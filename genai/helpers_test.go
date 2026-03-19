@@ -18,35 +18,68 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-func TestRecordInteraction_SetsAttributes(t *testing.T) {
+const testContextLimit = 16384
+
+func TestRecordInteraction_DefaultPrivacy_DoesNotSetPayloadAttributes(t *testing.T) {
+	t.Cleanup(resetRuntimeConfigForTest())
+
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
-	RecordInteraction(rec, "What is 2+2?", "4")
+	RecordInteraction(context.Background(), rec, GenAIPayload{
+		System:     "sys",
+		Prompt:     "What is 2+2?",
+		Completion: "4",
+	}, GenAIUsage{})
+
+	assert.Empty(t, attrs)
+}
+
+func TestRecordInteraction_WithRecordPayloads_SetsAttributes(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(defaultMaxContextLength, true))
+
+	attrs := make(map[attribute.Key]attribute.Value)
+	rec := &recordingSpan{attrs: attrs}
+	RecordInteraction(context.Background(), rec, GenAIPayload{
+		System:     "system prompt",
+		Prompt:     "What is 2+2?",
+		Completion: "4",
+	}, GenAIUsage{})
+
+	assert.Equal(t, "system prompt", attrs[SystemKey].AsString())
 	assert.Equal(t, "What is 2+2?", attrs[PromptKey].AsString())
 	assert.Equal(t, "4", attrs[CompletionKey].AsString())
 }
 
-const testContextLimit = 16384 // must match genai.maxContextLength for truncation tests
-
 func TestRecordInteraction_TruncatesLongStrings(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(testContextLimit, true))
+
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
 	long := strings.Repeat("a", testContextLimit+100)
-	RecordInteraction(rec, long, "short")
+	RecordInteraction(context.Background(), rec, GenAIPayload{
+		Prompt:     long,
+		Completion: "short",
+	}, GenAIUsage{})
+
 	prompt := attrs[PromptKey].AsString()
 	assert.LessOrEqual(t, len(prompt), testContextLimit)
 	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "prompt should end with truncation suffix")
 	assert.Equal(t, "short", attrs[CompletionKey].AsString())
 }
 
-// TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic proves DoD: a 1MB prompt does not
-// cause panic or OOM; RecordInteraction truncates to maxContextLength and appends truncation suffix.
 func TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(testContextLimit, true))
+
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
 	prompt1MB := strings.Repeat("a", 1_000_000)
 	completion := "ok"
-	RecordInteraction(rec, prompt1MB, completion)
+
+	RecordInteraction(context.Background(), rec, GenAIPayload{
+		Prompt:     prompt1MB,
+		Completion: completion,
+	}, GenAIUsage{})
+
 	prompt := attrs[PromptKey].AsString()
 	assert.LessOrEqual(t, len(prompt), testContextLimit, "prompt must be truncated to maxContextLength")
 	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "truncated prompt must end with ... [TRUNCATED]")
@@ -55,41 +88,108 @@ func TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic(t *testing.T)
 }
 
 func TestTruncateContext_UTF8Safe(t *testing.T) {
-	// Build a string longer than maxContextLength with a multi-byte rune near the cut point
-	// so that truncation does not cut the rune in half (UTF-8 safe).
-	// a + e-acute + b = 1+2+1 = 4 bytes; repeat to exceed limit then add rune near boundary.
+	t.Cleanup(setRuntimeConfigForTest(testContextLimit, false))
+
 	base := "a\u00e9b"
-	s := strings.Repeat(base, 5000) // 20000 bytes > 16384
+	s := strings.Repeat(base, 5000)
 	out := truncateContext(s)
 	assert.True(t, strings.HasSuffix(out, truncationSuffix))
-	assert.LessOrEqual(t, len(out), testContextLimit, "truncated result including suffix must be <= maxContextLength (16384) for transport limits")
-	require.True(t, utf8.ValidString(out), "truncated string must be valid UTF-8 for export")
+	assert.LessOrEqual(t, len(out), testContextLimit)
+	require.True(t, utf8.ValidString(out))
 }
 
-func TestRecordUsage_Unit(t *testing.T) {
+func TestRecordInteraction_WritesUsageAndNormalizesPurpose(t *testing.T) {
+	t.Cleanup(resetRuntimeConfigForTest())
+
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
-	RecordUsage(context.Background(), rec, 10, 20, 0.001)
+	RecordInteraction(context.Background(), rec, GenAIPayload{}, GenAIUsage{
+		InputTokens:  10,
+		OutputTokens: 20,
+		CostUSD:      0.001,
+	})
+
 	assert.Equal(t, int64(10), attrs[InputTokensKey].AsInt64())
 	assert.Equal(t, int64(20), attrs[OutputTokensKey].AsInt64())
 	assert.InDelta(t, 0.001, attrs[CostUSDKey].AsFloat64(), 1e-9)
-	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString(), "RecordUsage defaults to PurposeGeneration")
+	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
 }
 
-func TestRecordUsageWithPurpose_SetsPurposeOnSpan(t *testing.T) {
+func TestRecordInteraction_WritesOptionalMultimodalUsage(t *testing.T) {
+	t.Cleanup(resetRuntimeConfigForTest())
+
 	attrs := make(map[attribute.Key]attribute.Value)
 	rec := &recordingSpan{attrs: attrs}
-	RecordUsageWithPurpose(context.Background(), rec, 5, 10, 0.002, PurposeGuardEvaluation)
-	assert.Equal(t, PurposeGuardEvaluation, attrs[OperationPurposeKey].AsString())
-	assert.Equal(t, int64(5), attrs[InputTokensKey].AsInt64())
-	assert.Equal(t, int64(10), attrs[OutputTokensKey].AsInt64())
+	RecordInteraction(context.Background(), rec, GenAIPayload{}, GenAIUsage{
+		AudioSeconds: 12.5,
+		ImageCount:   3,
+	})
+
+	assert.InDelta(t, 12.5, attrs[AudioSecondsKey].AsFloat64(), 1e-9)
+	assert.Equal(t, int64(3), attrs[ImageCountKey].AsInt64())
+	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
 }
 
-func TestRecordUsageWithPurpose_EmptyPurpose_WritesGenerationOnSpan(t *testing.T) {
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordUsageWithPurpose(context.Background(), rec, 1, 2, 0.001, "")
-	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString(), "empty purpose should normalize to PurposeGeneration")
+func TestTruncateContext_ConfigurableLimit(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(100, false))
+
+	long := strings.Repeat("a", 500)
+	out := truncateContext(long)
+	assert.LessOrEqual(t, len(out), 100)
+	assert.True(t, strings.HasSuffix(out, truncationSuffix))
+	require.True(t, utf8.ValidString(out))
+}
+
+func TestTruncateContext_SmallLimit_NoSuffix(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(5, false))
+
+	out := truncateContext("hello world")
+	assert.LessOrEqual(t, len(out), 5)
+	assert.NotContains(t, out, truncationSuffix)
+	require.True(t, utf8.ValidString(out))
+}
+
+func TestTruncateContext_SmallLimit10_UTF8Safe(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(10, false))
+
+	s := "12345678\u00e9"
+	out := truncateContext(s + " more")
+	assert.LessOrEqual(t, len(out), 10)
+	require.True(t, utf8.ValidString(out))
+	assert.NotContains(t, out, truncationSuffix)
+}
+
+func TestTruncateContext_InvalidUTF8_O1(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(32, false))
+
+	s := string([]byte{0xff}) + strings.Repeat("a", 128)
+	out := truncateContext(s)
+
+	assert.LessOrEqual(t, len(out), 32)
+	assert.True(t, strings.HasSuffix(out, truncationSuffix))
+	assert.NotEqual(t, truncationSuffix, out, "valid suffix of the payload must survive invalid leading bytes")
+	assert.True(t, strings.HasPrefix(out, strings.Repeat("a", 4)))
+	require.True(t, utf8.ValidString(out))
+}
+
+func TestTruncateContext_InvalidUTF8WithinLimit_IsSanitized(t *testing.T) {
+	t.Cleanup(setRuntimeConfigForTest(32, false))
+
+	out := truncateContext("ok" + string([]byte{0xff}) + "tail")
+
+	assert.Equal(t, "oktail", out)
+	require.True(t, utf8.ValidString(out))
+}
+
+func BenchmarkTruncateContext_InvalidUTF8(b *testing.B) {
+	restore := setRuntimeConfigForTest(testContextLimit, false)
+	defer restore()
+
+	s := string([]byte{0xff}) + strings.Repeat("a", 1_000_000)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = truncateContext(s)
+	}
 }
 
 func TestStartToolSpan_SetsAttributesAndReturnsChildSpan(t *testing.T) {
@@ -97,8 +197,10 @@ func TestStartToolSpan_SetsAttributesAndReturnsChildSpan(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	otel.SetTracerProvider(tp)
+
 	_, span := StartToolSpan(context.Background(), "search", "call-1", `{"q":"test"}`)
 	span.End()
+
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	s := spans[0]
@@ -118,6 +220,7 @@ func TestRecordToolResult_SetsAttributeAndStatus(t *testing.T) {
 	RecordToolResult(rec, `{"ok":true}`, false)
 	assert.Equal(t, `{"ok":true}`, attrs[ToolResultKey].AsString())
 	assert.Equal(t, codes.Ok, rec.statusCode)
+
 	rec.statusCode = 0
 	RecordToolResult(rec, `{"error":"fail"}`, true)
 	assert.Equal(t, "tool execution failed", rec.statusDesc)
@@ -129,10 +232,12 @@ func TestRecordToolResult_OnToolSpan_AttributesAndStatus(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	otel.SetTracerProvider(tp)
+
 	_, span := StartToolSpan(context.Background(), "big", "id-1", "{}")
 	longResult := strings.Repeat("x", testContextLimit+50)
 	RecordToolResult(span, longResult, true)
 	span.End()
+
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	s := spans[0]
@@ -143,8 +248,7 @@ func TestRecordToolResult_OnToolSpan_AttributesAndStatus(t *testing.T) {
 	assert.True(t, strings.HasSuffix(result, truncationSuffix))
 	assert.LessOrEqual(t, len(result), testContextLimit)
 	require.True(t, utf8.ValidString(result))
-	// Verify exported span has Error status set by RecordToolResult(span, _, true).
-	assert.Equal(t, codes.Error, s.Status.Code, "tool span with isError=true must export status Error")
+	assert.Equal(t, codes.Error, s.Status.Code)
 }
 
 func TestStartToolSpan_ConcurrentToolCalls(t *testing.T) {
@@ -152,6 +256,7 @@ func TestStartToolSpan_ConcurrentToolCalls(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	otel.SetTracerProvider(tp)
+
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
@@ -164,8 +269,9 @@ func TestStartToolSpan_ConcurrentToolCalls(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+
 	spans := mem.GetSpans()
-	require.Len(t, spans, 10, "concurrent StartToolSpan -> RecordToolResult -> End must produce 10 independent spans")
+	require.Len(t, spans, 10)
 }
 
 func TestRecordCacheHit_SetsAttributes(t *testing.T) {
@@ -188,9 +294,11 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 	otel.SetTracerProvider(tp)
+
 	_, span := otel.Tracer("genai-test").Start(context.Background(), "op")
 	RecordAgentStep(span, "cardiologist", "specialist", "step-2")
 	span.End()
+
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	require.Len(t, spans[0].Events, 1)
@@ -206,37 +314,6 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	stepVal, ok := attrs.Value(WorkflowStepKey)
 	require.True(t, ok)
 	assert.Equal(t, "step-2", stepVal.AsString())
-}
-
-func TestTruncateContext_ConfigurableLimit(t *testing.T) {
-	SetMaxContextLength(100)
-	defer SetMaxContextLength(16384)
-	long := strings.Repeat("a", 500)
-	out := truncateContext(long)
-	assert.LessOrEqual(t, len(out), 100)
-	assert.True(t, strings.HasSuffix(out, truncationSuffix))
-	require.True(t, utf8.ValidString(out))
-}
-
-func TestTruncateContext_SmallLimit_NoSuffix(t *testing.T) {
-	// When limit <= len(truncationSuffix), result is prefix only (no suffix) so len(out) <= limit.
-	SetMaxContextLength(5)
-	defer SetMaxContextLength(16384)
-	out := truncateContext("hello world")
-	assert.LessOrEqual(t, len(out), 5)
-	assert.NotContains(t, out, truncationSuffix, "small limit must not add suffix")
-	require.True(t, utf8.ValidString(out))
-}
-
-func TestTruncateContext_SmallLimit10_UTF8Safe(t *testing.T) {
-	SetMaxContextLength(10)
-	defer SetMaxContextLength(16384)
-	// Multi-byte rune at index 9: 8 ASCII + 2-byte rune = 10 bytes
-	s := "12345678\u00e9"
-	out := truncateContext(s + " more")
-	assert.LessOrEqual(t, len(out), 10)
-	require.True(t, utf8.ValidString(out))
-	assert.NotContains(t, out, truncationSuffix)
 }
 
 type recordedEvent struct {
@@ -262,16 +339,16 @@ func (r *recordingSpan) SetAttributes(kv ...attribute.KeyValue) {
 	}
 }
 
-func (r *recordingSpan) SetStatus(code codes.Code, desc string) {
+func (r *recordingSpan) SetStatus(code codes.Code, description string) {
 	r.statusCode = code
-	r.statusDesc = desc
+	r.statusDesc = description
 }
 
-func (r *recordingSpan) AddEvent(name string, _ ...trace.EventOption) {
-	if r.events == nil {
-		r.events = make([]recordedEvent, 0)
+func (r *recordingSpan) AddEvent(name string, options ...trace.EventOption) {
+	cfg := trace.NewEventConfig(options...)
+	attrs := make(map[attribute.Key]attribute.Value, len(cfg.Attributes()))
+	for _, a := range cfg.Attributes() {
+		attrs[a.Key] = a.Value
 	}
-	// EventOption from otel/trace cannot be unwrapped here; record name only for unit tests.
-	// Use TestRecordAgentStep_EventAttributes_RealSpan for full attribute checks.
-	r.events = append(r.events, recordedEvent{name: name, attrs: nil})
+	r.events = append(r.events, recordedEvent{name: name, attrs: attrs})
 }

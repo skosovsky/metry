@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/skosovsky/metry/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/skosovsky/metry/testutil"
 )
 
 func TestRecordSecurityEvent_AddsEventToSpan(t *testing.T) {

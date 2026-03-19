@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/skosovsky/metry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -43,10 +42,9 @@ func (e *InMemoryTraceExporter) Len() int {
 	return len(e.ex.GetSpans())
 }
 
-// TraceExporter returns a metry.TraceExporter that sends spans to this in-memory store.
-// Use with metry.WithTraceExporter or metry.WithMetricExporter when calling metry.Init.
-func (e *InMemoryTraceExporter) TraceExporter() *metry.TraceExporter {
-	return metry.NewTraceExporterFromSpanExporter(e.ex)
+// SpanExporter returns the underlying sdktrace.SpanExporter.
+func (e *InMemoryTraceExporter) SpanExporter() sdktrace.SpanExporter {
+	return e.ex
 }
 
 // InMemoryMetricExporter stores the count of Export calls and the last ResourceMetrics
@@ -141,9 +139,9 @@ func (e *InMemoryMetricExporter) Len() int {
 	return e.count
 }
 
-// MetricExporter returns a metry.MetricExporter that sends metrics to this in-memory store.
-func (e *InMemoryMetricExporter) MetricExporter() *metry.MetricExporter {
-	return metry.NewMetricExporterFromExporter(e)
+// Exporter returns the underlying sdkmetric.Exporter.
+func (e *InMemoryMetricExporter) Exporter() sdkmetric.Exporter {
+	return e
 }
 
 // deepCopyResourceMetrics returns an independent copy of rm so SDK buffer reuse cannot affect tests.

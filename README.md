@@ -12,9 +12,9 @@
 ## Why metry
 
 - **Zero-Boilerplate Init** — Configure Tracer, Meter, and W3C propagators in a single call. No OTel SDK setup boilerplate.
-- **100% Vendor-Agnostic (OTLP First)** — Works out of the box with Jaeger, Grafana Tempo, Langfuse, Phoenix, Datadog. Swap the backend by changing one line.
+- **100% Vendor-Agnostic** — Bring your own OTel exporters and transports. `metry` configures providers and GenAI helpers without forcing OTLP gRPC or any specific backend.
 - **OpenLLMetry Semantic Conventions** — Built-in typed constants and helpers for token usage, cost, and prompts (`gen_ai.system`, `gen_ai.usage`, etc.). Future-proof design allows transparent migration to official OTel GenAI semconv when they mature.
-- **Plug-and-Play Middlewares** — Ready-made wrappers for `net/http` and gRPC to create root spans and propagate `trace_id`.
+- **Plug-and-Play Middlewares** — Ready-made wrappers for `net/http`, plus optional gRPC integration published as a separate module.
 
 ## Architecture
 
@@ -30,8 +30,11 @@ graph LR
   subgraph metryPkg [metry]
     metryCore[Init - global OTel providers]
     metryGenAI[genai]
+  end
+
+  subgraph metryIntegrations [integrations]
     metryHTTP[HTTP middleware]
-    metryGRPC[gRPC middleware]
+    metryGRPC[gRPC middleware module]
   end
 
   subgraph Backends
@@ -58,6 +61,25 @@ graph LR
 go get github.com/skosovsky/metry
 ```
 
+Optional gRPC integration:
+
+```bash
+go get github.com/skosovsky/metry/middleware/grpc
+```
+
+## Development
+
+For repo-local validation, use the Make targets instead of invoking `golangci-lint` directly:
+
+```bash
+make fmt
+make lint
+make test
+make test-race
+```
+
+These targets are module-aware (`metry` + `middleware/grpc`), apply the repository's `goimports` local-prefix rules, and use cache locations that work reliably with the nested-module workspace layout.
+
 ## Quick Start
 
 ```go
@@ -70,15 +92,34 @@ import (
 
 	"github.com/skosovsky/metry"
 	metryhttp "github.com/skosovsky/metry/middleware/http"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 )
 
 func main() {
 	ctx := context.Background()
 
+	traceExporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint("localhost:4318"),
+		otlptracehttp.WithInsecure(),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	metricExporter, err := otlpmetrichttp.New(ctx,
+		otlpmetrichttp.WithEndpoint("localhost:4318"),
+		otlpmetrichttp.WithInsecure(),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	shutdown, err := metry.Init(ctx,
 		metry.WithServiceName("my-ai-service"),
 		metry.WithEnvironment("production"),
-		metry.WithOTLPGRPC("localhost:4317", true),
+		metry.WithExporter(traceExporter),
+		metry.WithMetricExporter(metricExporter),
+		metry.WithRecordPayloads(false), // privacy-first default; explicit here for clarity
 		metry.WithTraceRatio(1.0),
 	)
 	if err != nil {
@@ -95,11 +136,13 @@ func main() {
 }
 ```
 
+`metry` no longer creates OTLP or gRPC exporters internally. Construct exporters in your application and inject them with `WithExporter` / `WithMetricExporter`.
+
 ## Semantic Conventions (LLMOps)
 
 This version of metry does not provide `GlobalTracer()` or `GlobalMeter()`. Use `otel.Tracer("your-service/module")` and `otel.Meter("your-service/module")` for instrumentation scope so dashboards can filter traces and metrics by module.
 
-Record token usage and cost on the current span so backends like Langfuse or Phoenix can show agent trees and costs. When you call `metry.Init` with a metric exporter, GenAI counters (tokens, cost, TTFT) are registered automatically.
+Record token usage and cost on the current span so backends like Langfuse or Phoenix can show agent trees and costs. When you call `metry.Init` with a metric exporter, GenAI counters and streaming histograms (tokens, cost, TTFT, TPS, TBT) are registered automatically. Payload recording is opt-in; by default `metry` does not export raw prompt/completion text.
 
 ```go
 import (
@@ -112,11 +155,21 @@ ctx, span := otel.Tracer("my-ai-service/llm").Start(ctx, "llm-call")
 defer span.End()
 
 // After the LLM responds:
-genai.RecordUsage(ctx, span, 150, 50, 0.002)  // input tokens, output tokens, cost USD
-genai.RecordInteraction(span, "Summarize this", "Here is the summary...")
+genai.RecordInteraction(ctx, span,
+	genai.GenAIPayload{
+		System:     "You are a concise assistant.",
+		Prompt:     "Summarize this",
+		Completion: "Here is the summary...",
+	},
+	genai.GenAIUsage{
+		InputTokens:  150,
+		OutputTokens: 50,
+		CostUSD:      0.002,
+	},
+)
 ```
 
-Use `otel.Tracer("your-service/module")` (not a global tracer) so dashboards can filter by instrumentation scope. Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends.
+Use `otel.Tracer("your-service/module")` (not a global tracer) so dashboards can filter by instrumentation scope. Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends when `WithRecordPayloads(true)` is enabled.
 
 To record failures on a span in a consistent way (e.g. in HTTP/gRPC handlers or after a failed LLM call), use `traceutil.SpanError` so the span gets the error recorded and status set to Error:
 
@@ -164,6 +217,13 @@ genai.RecordTTFT(ctx, time.Since(start).Seconds(), "gpt-4o")
 
 The `gen_ai.client.ttft` histogram (unit: seconds) is exported with a `gen_ai.request.model` dimension when you call `metry.Init` with a metric exporter.
 
+After the stream finishes, record aggregate streaming performance:
+
+```go
+// ttft measured earlier, totalDuration is end-to-end stream duration.
+genai.RecordStreamingCompletion(ctx, "gpt-4o", 256, ttftSeconds, totalDuration.Seconds())
+```
+
 ## Context Propagation (Baggage)
 
 Propagate key-value metadata (e.g. `session_id`, `patient_id`) across HTTP and gRPC boundaries. Keys and values must comply with W3C Baggage; invalid key/value returns a wrapped error.
@@ -206,20 +266,29 @@ span.SetAttributes(
 | `ai.security.score` | Confidence or cosine distance for semantic checks. |
 | `ai.security.reason` | Human-readable reason for block or mutation. |
 
-To separate guard-evaluation cost from user-facing generation in billing and dashboards, record usage with an explicit purpose so it is written to both span attributes and metric data points. Use `genai.RecordUsage` (defaults to `genai.PurposeGeneration`) for normal user-facing calls, and `genai.RecordUsageWithPurpose(..., genai.PurposeGuardEvaluation)` for LLM-judge or other guard calls:
+To separate guard-evaluation cost from user-facing generation in billing and dashboards, pass an explicit `Purpose` inside `genai.GenAIUsage`:
 
 ```go
-// Normal reply to the user (purpose = "generation"):
-genai.RecordUsage(ctx, span, 150, 50, 0.002)
+// Normal reply to the user (Purpose defaults to "generation" when empty):
+genai.RecordInteraction(ctx, span, genai.GenAIPayload{}, genai.GenAIUsage{
+	InputTokens:  150,
+	OutputTokens: 50,
+	CostUSD:      0.002,
+})
 
-// LLM-judge / guard evaluation (purpose = "guard_evaluation") — same metrics, split by purpose:
-genai.RecordUsageWithPurpose(ctx, span, 20, 5, 0.0003, genai.PurposeGuardEvaluation)
+// LLM-judge / guard evaluation — same metrics, split by purpose:
+genai.RecordInteraction(ctx, span, genai.GenAIPayload{}, genai.GenAIUsage{
+	InputTokens:  20,
+	OutputTokens: 5,
+	CostUSD:      0.0003,
+	Purpose:      genai.PurposeGuardEvaluation,
+})
 ```
 
 ## HTTP and gRPC
 
 - **HTTP** — Wrap your handler: `metryhttp.Handler(mux, "operation-name")`.
-- **gRPC** — Use `metrygrpc.ServerOptions()` when creating the server and `metrygrpc.ClientDialOption()` when creating the client.
+- **gRPC** — Install `github.com/skosovsky/metry/middleware/grpc` separately, then use `metrygrpc.ServerOptions()` and `metrygrpc.ClientDialOption()`.
 
 ## Ecosystem
 

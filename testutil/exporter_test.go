@@ -22,9 +22,9 @@ func TestNewInMemoryTraceExporter_InitialState(t *testing.T) {
 	assert.Equal(t, 0, mem.Len())
 }
 
-func TestInMemoryTraceExporter_TraceExporter(t *testing.T) {
+func TestInMemoryTraceExporter_SpanExporter(t *testing.T) {
 	mem := NewInMemoryTraceExporter()
-	te := mem.TraceExporter()
+	te := mem.SpanExporter()
 	require.NotNil(t, te)
 	// Use SimpleSpanProcessor so spans are exported synchronously for deterministic test.
 	tp := sdktrace.NewTracerProvider(

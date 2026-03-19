@@ -15,14 +15,18 @@ import "go.opentelemetry.io/otel/attribute"
 // be updated to alias the official ones to ensure long-term ecosystem compatibility
 // without breaking the public `metry/genai` API.
 const (
-	System        = "gen_ai.system"
-	RequestModel  = "gen_ai.request.model"
-	ResponseModel = "gen_ai.response.model"
-	Prompt        = "gen_ai.prompt"
-	Completion    = "gen_ai.completion"
-	InputTokens   = "gen_ai.usage.input_tokens"  // #nosec G101 -- OTel semantic convention name, not a credential
-	OutputTokens  = "gen_ai.usage.output_tokens" // #nosec G101 -- OTel semantic convention name, not a credential
-	CostUSD       = "gen_ai.usage.cost"
+	System          = "gen_ai.system"
+	RequestModel    = "gen_ai.request.model"
+	ResponseModel   = "gen_ai.response.model"
+	Prompt          = "gen_ai.prompt"
+	Completion      = "gen_ai.completion"
+	InputTokens     = "gen_ai.usage.input_tokens"  // #nosec G101 -- OTel semantic convention name, not a credential
+	OutputTokens    = "gen_ai.usage.output_tokens" // #nosec G101 -- OTel semantic convention name, not a credential
+	CostUSD         = "gen_ai.usage.cost"
+	AudioSeconds    = "gen_ai.usage.audio_seconds"
+	ImageCount      = "gen_ai.usage.image_count"
+	EvaluationScore = "gen_ai.evaluation.score"
+	EvaluationText  = "gen_ai.evaluation.text"
 
 	// Tool Calling (toolsy).
 	ToolName   = "gen_ai.tool.name"
@@ -48,14 +52,18 @@ const (
 
 // Attribute keys as attribute.Key for type-safe span recording.
 var (
-	SystemKey        = attribute.Key(System)
-	RequestModelKey  = attribute.Key(RequestModel)
-	ResponseModelKey = attribute.Key(ResponseModel)
-	PromptKey        = attribute.Key(Prompt)
-	CompletionKey    = attribute.Key(Completion)
-	InputTokensKey   = attribute.Key(InputTokens)
-	OutputTokensKey  = attribute.Key(OutputTokens)
-	CostUSDKey       = attribute.Key(CostUSD)
+	SystemKey          = attribute.Key(System)
+	RequestModelKey    = attribute.Key(RequestModel)
+	ResponseModelKey   = attribute.Key(ResponseModel)
+	PromptKey          = attribute.Key(Prompt)
+	CompletionKey      = attribute.Key(Completion)
+	InputTokensKey     = attribute.Key(InputTokens)
+	OutputTokensKey    = attribute.Key(OutputTokens)
+	CostUSDKey         = attribute.Key(CostUSD)
+	AudioSecondsKey    = attribute.Key(AudioSeconds)
+	ImageCountKey      = attribute.Key(ImageCount)
+	EvaluationScoreKey = attribute.Key(EvaluationScore)
+	EvaluationTextKey  = attribute.Key(EvaluationText)
 
 	ToolNameKey   = attribute.Key(ToolName)
 	ToolIDKey     = attribute.Key(ToolID)

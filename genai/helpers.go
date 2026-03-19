@@ -2,15 +2,17 @@ package genai
 
 import (
 	"context"
-	"sync/atomic"
+	"strings"
 	"unicode/utf8"
 
-	"github.com/skosovsky/metry/internal/genaimetrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry/internal/genaiconfig"
+	"github.com/skosovsky/metry/internal/genaimetrics"
 )
 
 // tracerName is the instrumentation scope for genai tool spans (granularity per task6).
@@ -18,94 +20,141 @@ const tracerName = "metry/genai"
 
 func getTracer() trace.Tracer { return otel.Tracer(tracerName) }
 
-var maxContextLength atomic.Int32
-
 const truncationSuffix = "... [TRUNCATED]"
 
-func init() {
-	maxContextLength.Store(16384)
+//revive:disable:exported
+
+// GenAIPayload captures the text payloads attached to an interaction span.
+type GenAIPayload struct {
+	System     string
+	Prompt     string
+	Completion string
 }
 
-// SetMaxContextLength is an internal API. DO NOT use directly; configure via metry.WithMaxGenAIContextLength.
-func SetMaxContextLength(limit int32) {
-	maxContextLength.Store(limit)
+// GenAIUsage captures token/cost and multimodal usage recorded on an interaction span.
+type GenAIUsage struct {
+	InputTokens  int
+	OutputTokens int
+	CostUSD      float64
+	AudioSeconds float64
+	ImageCount   int
+	Purpose      string
 }
+
+//revive:enable:exported
 
 // truncateContext returns s if len(s) <= limit; otherwise returns a UTF-8-safe
 // prefix of s so that len(out) <= limit. If limit allows, appends truncationSuffix; otherwise returns prefix only.
 func truncateContext(s string) string {
-	limit := int(maxContextLength.Load())
+	return truncateContextWithConfig(s, currentConfig())
+}
+
+func truncateContextWithConfig(s string, cfg *genaiconfig.RuntimeConfig) string {
+	limit := cfg.MaxContextLength()
 	if limit <= 0 {
 		return ""
 	}
 	if len(s) <= limit {
-		return s
+		return strings.ToValidUTF8(s, "")
 	}
 	// Edge case: limit is smaller than suffix — return UTF-8-safe prefix only (no suffix).
 	if limit <= len(truncationSuffix) {
-		for limit > 0 && !utf8.ValidString(s[:limit]) {
-			limit--
-		}
-		return s[:limit]
+		return strings.ToValidUTF8(truncateAtRuneBoundary(s, limit), "")
 	}
-	cutLimit := limit - len(truncationSuffix)
-	for cutLimit > 0 && !utf8.ValidString(s[:cutLimit]) {
-		cutLimit--
-	}
-	trunc := s[:cutLimit]
+	trunc := strings.ToValidUTF8(truncateAtRuneBoundary(s, limit-len(truncationSuffix)), "")
 	return trunc + truncationSuffix
 }
 
-// RecordUsage sets token usage and cost attributes on the span and increments
-// OTel counters when metry.Init was called with a metric exporter, with purpose defaulting to PurposeGeneration.
-func RecordUsage(ctx context.Context, span trace.Span, inTokens, outTokens int, costUSD float64) {
-	RecordUsageWithPurpose(ctx, span, inTokens, outTokens, costUSD, PurposeGeneration)
+func truncateAtRuneBoundary(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if limit >= len(s) {
+		return s
+	}
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit]
 }
 
-// RecordUsageWithPurpose records usage with an explicit purpose so metrics can be
-// split by generation vs guard_evaluation vs quality_evaluation (billing, dashboards).
-func RecordUsageWithPurpose(ctx context.Context, span trace.Span, inTokens, outTokens int, costUSD float64, purpose string) {
+func hasUsageData(usage GenAIUsage) bool {
+	return usage.InputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.CostUSD != 0 ||
+		usage.AudioSeconds != 0 ||
+		usage.ImageCount != 0
+}
+
+func normalizePurpose(purpose string) string {
 	if purpose == "" {
-		purpose = PurposeGeneration
+		return PurposeGeneration
 	}
-	span.SetAttributes(
-		attribute.Int(InputTokens, inTokens),
-		attribute.Int(OutputTokens, outTokens),
-		attribute.Float64(CostUSD, costUSD),
+	return purpose
+}
+
+// RecordInteraction records the payload and usage for a single GenAI interaction.
+func RecordInteraction(ctx context.Context, span trace.Span, payload GenAIPayload, usage GenAIUsage) {
+	cfg := currentConfig()
+	if cfg.RecordPayloads() {
+		payloadAttrs := make([]attribute.KeyValue, 0, 3)
+		if payload.System != "" {
+			payloadAttrs = append(payloadAttrs, SystemKey.String(truncateContextWithConfig(payload.System, cfg)))
+		}
+		if payload.Prompt != "" {
+			payloadAttrs = append(payloadAttrs, PromptKey.String(truncateContextWithConfig(payload.Prompt, cfg)))
+		}
+		if payload.Completion != "" {
+			payloadAttrs = append(payloadAttrs, CompletionKey.String(truncateContextWithConfig(payload.Completion, cfg)))
+		}
+		if len(payloadAttrs) > 0 {
+			span.SetAttributes(payloadAttrs...)
+		}
+	}
+
+	if !hasUsageData(usage) {
+		return
+	}
+
+	purpose := normalizePurpose(usage.Purpose)
+	usageAttrs := []attribute.KeyValue{
+		InputTokensKey.Int(usage.InputTokens),
+		OutputTokensKey.Int(usage.OutputTokens),
+		CostUSDKey.Float64(usage.CostUSD),
 		OperationPurposeKey.String(purpose),
-	)
+	}
+	if usage.AudioSeconds > 0 {
+		usageAttrs = append(usageAttrs, AudioSecondsKey.Float64(usage.AudioSeconds))
+	}
+	if usage.ImageCount > 0 {
+		usageAttrs = append(usageAttrs, ImageCountKey.Int(usage.ImageCount))
+	}
+	span.SetAttributes(usageAttrs...)
+
 	opts := metric.WithAttributes(OperationPurposeKey.String(purpose))
 	holder := genaimetrics.Holder()
 	if holder != nil {
 		if holder.InputTokens != nil {
-			holder.InputTokens.Add(ctx, int64(inTokens), opts)
+			holder.InputTokens.Add(ctx, int64(usage.InputTokens), opts)
 		}
 		if holder.OutputTokens != nil {
-			holder.OutputTokens.Add(ctx, int64(outTokens), opts)
+			holder.OutputTokens.Add(ctx, int64(usage.OutputTokens), opts)
 		}
 		if holder.Cost != nil {
-			holder.Cost.Add(ctx, costUSD, opts)
+			holder.Cost.Add(ctx, usage.CostUSD, opts)
 		}
 	}
-}
-
-// RecordInteraction sets prompt and completion attributes on the span (OpenLLMetry conventions).
-// Long strings are truncated to maxContextLength to protect export pipelines.
-func RecordInteraction(span trace.Span, prompt, completion string) {
-	span.SetAttributes(
-		attribute.String(Prompt, truncateContext(prompt)),
-		attribute.String(Completion, truncateContext(completion)),
-	)
 }
 
 // StartToolSpan creates a child span for a tool invocation. Caller MUST call span.End() (e.g. via defer).
 // Use for parallel tool calls so each has its own span and timing.
 func StartToolSpan(ctx context.Context, toolName, toolID, argsJSON string) (context.Context, trace.Span) {
+	cfg := currentConfig()
 	ctx, span := getTracer().Start(ctx, "tool: "+toolName)
 	span.SetAttributes(
 		ToolNameKey.String(toolName),
 		ToolIDKey.String(toolID),
-		ToolArgsKey.String(truncateContext(argsJSON)),
+		ToolArgsKey.String(truncateContextWithConfig(argsJSON, cfg)),
 	)
 	return ctx, span
 }
@@ -113,7 +162,7 @@ func StartToolSpan(ctx context.Context, toolName, toolID, argsJSON string) (cont
 // RecordToolResult records the result of a tool call on its own span (from StartToolSpan).
 // resultJSON is truncated; isError sets span status to Error for dashboard visibility.
 func RecordToolResult(span trace.Span, resultJSON string, isError bool) {
-	span.SetAttributes(ToolResultKey.String(truncateContext(resultJSON)))
+	span.SetAttributes(ToolResultKey.String(truncateContextWithConfig(resultJSON, currentConfig())))
 	if isError {
 		span.SetStatus(codes.Error, "tool execution failed")
 	} else {

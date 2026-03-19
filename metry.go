@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
-	"github.com/skosovsky/metry/genai"
-	"github.com/skosovsky/metry/internal/genaimetrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
@@ -16,6 +13,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+
+	"github.com/skosovsky/metry/internal/genaiconfig"
+	"github.com/skosovsky/metry/internal/genaimetrics"
 )
 
 const (
@@ -43,12 +43,9 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	if cfg.ServiceName == "" {
 		return nil, ErrServiceNameRequired
 	}
-	if limit := cfg.maxGenAIContextLength; limit > 0 {
-		if limit > math.MaxInt32 {
-			limit = math.MaxInt32
-		}
-		genai.SetMaxContextLength(int32(limit))
-	}
+	prevGenAIConfig := genaiconfig.Load()
+	genAIConfigToken := genaiconfig.New(cfg.maxGenAIContextLength, cfg.RecordPayloads)
+	genaiconfig.Store(genAIConfigToken)
 
 	// Custom resource with service attributes; merge with default (host, PID, OS).
 	customAttrs := []attribute.KeyValue{
@@ -66,19 +63,15 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	defRes := resource.Default()
 	res, err := resource.Merge(defRes, customRes)
 	if err != nil {
+		genaiconfig.CompareAndSwap(genAIConfigToken, prevGenAIConfig)
 		return nil, fmt.Errorf("metry: merge resource: %w", err)
 	}
 
 	// Trace provider.
 	var tp *sdktrace.TracerProvider
 	{
-		var exp sdktrace.SpanExporter
-		if cfg.TraceExporter != nil && cfg.TraceExporter.create != nil {
-			exp, err = cfg.TraceExporter.create(ctx, res)
-			if err != nil {
-				return nil, fmt.Errorf("metry: create trace exporter: %w", err)
-			}
-		} else {
+		exp := cfg.Exporter
+		if exp == nil {
 			exp = noopSpanExporter{}
 		}
 		tp = sdktrace.NewTracerProvider(
@@ -92,16 +85,10 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	// Metric provider (only if exporter provided). On failure, rollback trace provider and restore globals.
 	var mp *sdkmetric.MeterProvider
 	var cleanupGenAI func()
-	if cfg.MetricExporter != nil && cfg.MetricExporter.create != nil {
-		exp, createErr := cfg.MetricExporter.create(ctx, res)
-		if createErr != nil {
-			_ = tp.Shutdown(ctx)
-			otel.SetTracerProvider(prevTracer)
-			return nil, errors.Join(fmt.Errorf("metry: create metric exporter: %w", createErr))
-		}
+	if cfg.MetricExporter != nil {
 		mp = sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
-			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)),
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(cfg.MetricExporter)),
 		)
 		otel.SetMeterProvider(mp)
 		var regErr error
@@ -119,6 +106,7 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 			}
 			otel.SetTracerProvider(prevTracer)
 			otel.SetMeterProvider(prevMeter)
+			genaiconfig.CompareAndSwap(genAIConfigToken, prevGenAIConfig)
 			return nil, errors.Join(errs...)
 		}
 	}
@@ -144,6 +132,7 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 				errs = append(errs, fmt.Errorf("meter shutdown: %w", err))
 			}
 		}
+		genaiconfig.CompareAndSwap(genAIConfigToken, genaiconfig.Default())
 		if len(errs) > 0 {
 			return errors.Join(errs...)
 		}

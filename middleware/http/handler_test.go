@@ -6,9 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/skosovsky/metry/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/skosovsky/metry/testutil"
 )
 
 func TestHTTPHandler_WrapsHandler(t *testing.T) {

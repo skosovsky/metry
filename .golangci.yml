@@ -14,7 +14,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/skosovsky/toolsy
+        - github.com/skosovsky/metry
 
 linters-settings:
   errcheck:
