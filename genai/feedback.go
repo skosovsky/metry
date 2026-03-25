@@ -3,27 +3,28 @@ package genai
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// RecordAsyncFeedback attaches delayed evaluation data to an existing trace.
+// RecordAsyncFeedback records delayed user feedback on the default tracker.
 func RecordAsyncFeedback(
 	ctx context.Context,
-	tracer trace.Tracer,
 	traceIDHex string,
 	score float64,
 	feedbackText string,
 ) error {
-	if tracer == nil {
-		return errors.New("genai: tracer must not be nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	return Default().RecordAsyncFeedback(ctx, traceIDHex, score, feedbackText)
+}
 
+// RecordAsyncFeedback records delayed user feedback with an explicit tracker.
+func (t *Tracker) RecordAsyncFeedback(
+	ctx context.Context,
+	traceIDHex string,
+	score float64,
+	feedbackText string,
+) error {
 	traceID, err := trace.TraceIDFromHex(traceIDHex)
 	if err != nil {
 		return err
@@ -37,19 +38,19 @@ func RecordAsyncFeedback(
 		TraceID:    traceID,
 		SpanID:     spanID,
 		TraceFlags: trace.FlagsSampled,
+		TraceState: trace.TraceState{},
 		Remote:     true,
 	})
 	ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
 
-	_, span := tracer.Start(ctx, "user_feedback")
+	_, span := t.tracer.Start(ctx, "user_feedback")
 	defer span.End()
 
-	cfg := currentConfig()
 	attrs := []attribute.KeyValue{
 		EvaluationScoreKey.Float64(score),
 	}
-	if cfg.RecordPayloads() && feedbackText != "" {
-		attrs = append(attrs, EvaluationTextKey.String(truncateContextWithConfig(feedbackText, cfg)))
+	if t.cfg.RecordPayloads() && feedbackText != "" {
+		attrs = append(attrs, EvaluationTextKey.String(truncateContextWithConfig(feedbackText, t.cfg)))
 	}
 	span.SetAttributes(attrs...)
 	return nil

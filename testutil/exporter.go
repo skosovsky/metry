@@ -91,7 +91,10 @@ func checkSupportedAggregations(rm *metricdata.ResourceMetrics) {
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			switch m.Data.(type) {
-			case metricdata.Sum[int64], metricdata.Sum[float64], metricdata.Histogram[float64]:
+			case metricdata.Sum[int64],
+				metricdata.Sum[float64],
+				metricdata.Histogram[int64],
+				metricdata.Histogram[float64]:
 				continue
 			default:
 				panic(fmt.Sprintf("testutil: Export does not support aggregation type %T (e.g. Gauge)", m.Data))
@@ -183,6 +186,8 @@ func deepCopyMetrics(m metricdata.Metrics) metricdata.Metrics {
 		out.Data = deepCopySumInt64(d)
 	case metricdata.Sum[float64]:
 		out.Data = deepCopySumFloat64(d)
+	case metricdata.Histogram[int64]:
+		out.Data = deepCopyHistogramInt64(d)
 	case metricdata.Histogram[float64]:
 		out.Data = deepCopyHistogramFloat64(d)
 	default:
@@ -265,7 +270,9 @@ func deepCopySumFloat64(s metricdata.Sum[float64]) metricdata.Sum[float64] {
 	return out
 }
 
-func deepCopyHistogramDataPointFloat64(dp metricdata.HistogramDataPoint[float64]) metricdata.HistogramDataPoint[float64] {
+func deepCopyHistogramDataPointFloat64(
+	dp metricdata.HistogramDataPoint[float64],
+) metricdata.HistogramDataPoint[float64] {
 	out := metricdata.HistogramDataPoint[float64]{
 		Attributes:   dp.Attributes,
 		StartTime:    dp.StartTime,
@@ -282,6 +289,38 @@ func deepCopyHistogramDataPointFloat64(dp metricdata.HistogramDataPoint[float64]
 		for i := range dp.Exemplars {
 			out.Exemplars[i] = deepCopyExemplar(dp.Exemplars[i])
 		}
+	}
+	return out
+}
+
+func deepCopyHistogramDataPointInt64(dp metricdata.HistogramDataPoint[int64]) metricdata.HistogramDataPoint[int64] {
+	out := metricdata.HistogramDataPoint[int64]{
+		Attributes:   dp.Attributes,
+		StartTime:    dp.StartTime,
+		Time:         dp.Time,
+		Count:        dp.Count,
+		Bounds:       append([]float64(nil), dp.Bounds...),
+		BucketCounts: append([]uint64(nil), dp.BucketCounts...),
+		Min:          dp.Min,
+		Max:          dp.Max,
+		Sum:          dp.Sum,
+	}
+	if len(dp.Exemplars) > 0 {
+		out.Exemplars = make([]metricdata.Exemplar[int64], len(dp.Exemplars))
+		for i := range dp.Exemplars {
+			out.Exemplars[i] = deepCopyExemplar(dp.Exemplars[i])
+		}
+	}
+	return out
+}
+
+func deepCopyHistogramInt64(h metricdata.Histogram[int64]) metricdata.Histogram[int64] {
+	out := metricdata.Histogram[int64]{
+		DataPoints:  make([]metricdata.HistogramDataPoint[int64], len(h.DataPoints)),
+		Temporality: h.Temporality,
+	}
+	for i := range h.DataPoints {
+		out.DataPoints[i] = deepCopyHistogramDataPointInt64(h.DataPoints[i])
 	}
 	return out
 }

@@ -3,7 +3,6 @@
 [![Go](https://img.shields.io/badge/Go-%3E%3D1.26-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-100%25-000000?logo=opentelemetry)](https://opentelemetry.io/)
-[![OpenLLMetry](https://img.shields.io/badge/OpenLLMetry-Compliant-blue)](https://openllmetry.io/)
 
 **Universal, zero-boilerplate OpenTelemetry & LLMOps hub for Go AI applications. One line of code to trace them all.**
 
@@ -13,7 +12,7 @@
 
 - **Zero-Boilerplate Init** — Configure Tracer, Meter, and W3C propagators in a single call. No OTel SDK setup boilerplate.
 - **100% Vendor-Agnostic** — Bring your own OTel exporters and transports. `metry` configures providers and GenAI helpers without forcing OTLP gRPC or any specific backend.
-- **OpenLLMetry Semantic Conventions** — Built-in typed constants and helpers for token usage, cost, and prompts (`gen_ai.system`, `gen_ai.usage`, etc.). Future-proof design allows transparent migration to official OTel GenAI semconv when they mature.
+- **Official OTel GenAI + pragmatic extensions** — Emits official OpenTelemetry GenAI attributes and metrics where the spec already exists, and keeps explicit custom extensions for cost and streaming UX metrics.
 - **Plug-and-Play Middlewares** — Ready-made wrappers for `net/http`, plus optional gRPC integration published as a separate module.
 
 ## Architecture
@@ -91,6 +90,7 @@ import (
 	"net/http"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/genai"
 	metryhttp "github.com/skosovsky/metry/middleware/http"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -119,7 +119,9 @@ func main() {
 		metry.WithEnvironment("production"),
 		metry.WithExporter(traceExporter),
 		metry.WithMetricExporter(metricExporter),
-		metry.WithRecordPayloads(false), // privacy-first default; explicit here for clarity
+		metry.WithGenAIConfig(
+			genai.WithRecordPayloads(false), // privacy-first default
+		),
 		metry.WithTraceRatio(1.0),
 	)
 	if err != nil {
@@ -136,16 +138,18 @@ func main() {
 }
 ```
 
-`metry` no longer creates OTLP or gRPC exporters internally. Construct exporters in your application and inject them with `WithExporter` / `WithMetricExporter`.
+`metry` no longer creates OTLP or gRPC exporters internally. Construct exporters in your application and inject them with `WithExporter` / `WithMetricExporter`. When `WithMetricExporter` is omitted, the current `metry.Init(...)` session installs a no-op meter provider, so GenAI metrics are not exported and are not inherited from a previous metry session.
 
 ## Semantic Conventions (LLMOps)
 
-This version of metry does not provide `GlobalTracer()` or `GlobalMeter()`. Use `otel.Tracer("your-service/module")` and `otel.Meter("your-service/module")` for instrumentation scope so dashboards can filter traces and metrics by module.
+Use `otel.Tracer("your-service/module")` and `otel.Meter("your-service/module")` for instrumentation scope so dashboards can filter traces and metrics by module.
 
-Record token usage and cost on the current span so backends like Langfuse or Phoenix can show agent trees and costs. When you call `metry.Init` with a metric exporter, GenAI counters and streaming histograms (tokens, cost, TTFT, TPS, TBT) are registered automatically. Payload recording is opt-in; by default `metry` does not export raw prompt/completion text.
+`metry` emits official OTel GenAI span attributes and client metrics where they exist, including `gen_ai.provider.name`, `gen_ai.operation.name`, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.client.token.usage`, and `gen_ai.client.operation.duration`. Cost, token-component breakdown, and streaming UX signals remain explicit custom extensions. Payload recording is opt-in and configured via `metry.WithGenAIConfig(...)`.
 
 ```go
 import (
+	"time"
+
 	"github.com/skosovsky/metry/genai"
 	"go.opentelemetry.io/otel"
 )
@@ -156,22 +160,48 @@ defer span.End()
 
 // After the LLM responds:
 genai.RecordInteraction(ctx, span,
+	genai.GenAIMeta{
+		Provider:      "openai",
+		Operation:     "chat",
+		RequestModel:  "gpt-4o-mini",
+		ResponseModel: "gpt-4o-mini",
+		Duration:      850 * time.Millisecond,
+	},
 	genai.GenAIPayload{
-		System:     "You are a concise assistant.",
-		Prompt:     "Summarize this",
-		Completion: "Here is the summary...",
+		SystemInstructions: []genai.GenAIContentPart{{
+			Type:    "text",
+			Content: "You are a concise assistant.",
+		}},
+		InputMessages: []genai.GenAIMessage{{
+			Role: "user",
+			Parts: []genai.GenAIContentPart{{
+				Type:    "text",
+				Content: "Summarize this",
+			}},
+		}},
+		OutputMessages: []genai.GenAIMessage{{
+			Role: "assistant",
+			Parts: []genai.GenAIContentPart{{
+				Type:    "text",
+				Content: "Here is the summary...",
+			}},
+			FinishReason: "stop",
+		}},
 	},
-	genai.GenAIUsage{
-		InputTokens:  150,
-		OutputTokens: 50,
-		CostUSD:      0.002,
-		// Currency is optional; when empty, metry records "USD".
-		Currency: "USD",
-	},
-)
+		genai.GenAIUsage{
+			// InputTokens should include cached input tokens when the provider exposes a total.
+			InputTokens: 150,
+			// OutputTokens should include reasoning tokens when the provider exposes a total.
+			OutputTokens: 50,
+			// Cost must be non-negative. Negative values are treated as invalid input and ignored.
+			Cost:         0.002,
+			// Currency is optional; when empty, metry records "USD".
+			Currency: "USD",
+		},
+	)
 ```
 
-Use `otel.Tracer("your-service/module")` (not a global tracer) so dashboards can filter by instrumentation scope. Spans tagged with `gen_ai.usage.*` and `gen_ai.prompt` / `gen_ai.completion` are recognized by OpenLLMetry-compatible backends when `WithRecordPayloads(true)` is enabled.
+On spans, structured payload attributes are serialized as JSON strings because Go OTel attributes do not support arbitrary structured values directly. `metry` normalizes payload and tool JSON before emitting it, guarantees that truncated JSON-valued attrs stay valid JSON, and drops malformed tool JSON instead of writing invalid semconv values. `GenAIUsage.Cost` is treated as a non-negative input; negative values are ignored and do not emit span attrs or cost metrics. Long payload and tool JSON strings are truncated to 16 KB by default; override this with `metry.WithGenAIConfig(genai.WithMaxContextLength(bytes))`.
 
 To record failures on a span in a consistent way (e.g. in HTTP/gRPC handlers or after a failed LLM call), use `traceutil.SpanError` so the span gets the error recorded and status set to Error:
 
@@ -185,7 +215,11 @@ if err != nil {
 defer span.End()
 ```
 
-Long prompt/completion/tool strings are truncated to 16 KB by default (UTF-8-safe, result length always ≤ limit); you can set a different limit with `metry.WithMaxGenAIContextLength(bytes)` in `Init`. Tool spans use `otel.Tracer("metry/genai")` at runtime so `genai` stays independent of the `metry` package. The library follows a **clean-break** policy: initialization is via `metry.Init` only (no `genai.Init` or legacy options). Before calling `metry.Init` again, call the returned `shutdown` so metrics can be re-registered; the test suite validates the lifecycle `Init -> shutdown -> Init`.
+`metry.Init` installs the package default tracker used by package-level convenience wrappers. Supported wrappers are `genai.RecordInteraction`, `genai.RecordTTFT`, `genai.RecordStreamingCompletion`, `genai.RecordAsyncFeedback`, `genai.StartToolSpan`, and `genai.RecordToolResult`. Stateless helpers that do not depend on tracker runtime remain package-level by design: `genai.RecordCacheHit` and `genai.RecordAgentStep`.
+
+Advanced users can create trackers with `genai.NewTracker(...)` when the ambient tracer is acceptable, or pass an explicit tracer with `genai.NewTrackerWithTracer(...)` when they need tool spans and metrics to stay bound to a specific tracer provider.
+
+Before `metry.Init`, the package default tracker stays privacy-first: payload recording is off, and helper-created spans (`genai.StartToolSpan` and `genai.RecordAsyncFeedback`) use a no-op tracer instead of silently writing to any ambient global provider.
 
 ## Agentic & RAG Tracing
 
@@ -209,21 +243,27 @@ genai.RecordAgentStep(span, "cardiologist", "specialist", "step-2")
 
 ## Streaming & UX Metrics
 
-Record Time To First Token (TTFT) for streaming LLM responses. Pass the model name so dashboards can show latency per LLM (e.g. gpt-4o vs claude-3-5):
+Record client-side Time To First Token (TTFT) for streaming LLM responses. Pass the same `GenAIMeta` you use for usage metrics:
 
 ```go
 start := time.Now()
+meta := genai.GenAIMeta{
+	Provider:     "openai",
+	Operation:    "chat",
+	RequestModel: "gpt-4o",
+}
 // ... start streaming, receive first token ...
-genai.RecordTTFT(ctx, time.Since(start).Seconds(), "gpt-4o")
+ttft := time.Since(start)
+genai.RecordTTFT(ctx, meta, ttft)
 ```
 
-The `gen_ai.client.ttft` histogram (unit: seconds) is exported with a `gen_ai.request.model` dimension when you call `metry.Init` with a metric exporter.
+The custom `metry.gen_ai.client.ttft` histogram is exported with the same provider/operation/model dimensions as the rest of the GenAI tracker. Official token totals continue to use `gen_ai.client.token.usage`, while cache/reasoning breakdown is exported separately via the custom `metry.gen_ai.client.token.component.usage` histogram.
 
 After the stream finishes, record aggregate streaming performance:
 
 ```go
 // ttft measured earlier, totalDuration is end-to-end stream duration.
-genai.RecordStreamingCompletion(ctx, "gpt-4o", 256, ttftSeconds, totalDuration.Seconds())
+genai.RecordStreamingCompletion(ctx, meta, 256, ttft, totalDuration)
 ```
 
 ## Context Propagation (Baggage)
@@ -272,18 +312,18 @@ To separate guard-evaluation cost from user-facing generation in billing and das
 
 ```go
 // Normal reply to the user (Purpose defaults to "generation" when empty):
-genai.RecordInteraction(ctx, span, genai.GenAIPayload{}, genai.GenAIUsage{
+genai.RecordInteraction(ctx, span, meta, genai.GenAIPayload{}, genai.GenAIUsage{
 	InputTokens:  150,
 	OutputTokens: 50,
-	CostUSD:      0.002,
+	Cost:         0.002,
 	Currency:     "USD",
 })
 
 // LLM-judge / guard evaluation — same metrics, split by purpose and currency:
-genai.RecordInteraction(ctx, span, genai.GenAIPayload{}, genai.GenAIUsage{
+genai.RecordInteraction(ctx, span, meta, genai.GenAIPayload{}, genai.GenAIUsage{
 	InputTokens:  20,
 	OutputTokens: 5,
-	CostUSD:      0.0003,
+	Cost:         0.0003,
 	Currency:     "CREDITS",
 	Purpose:      genai.PurposeGuardEvaluation,
 })

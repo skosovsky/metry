@@ -179,7 +179,8 @@ func TestInMemoryMetricExporter_MutatingSnapshotDoesNotAffectStoredSnapshot(t *t
 	// Mutate the returned snapshot; stored snapshot must be unchanged
 	for i := range last1.ScopeMetrics {
 		for j := range last1.ScopeMetrics[i].Metrics {
-			if s, ok := last1.ScopeMetrics[i].Metrics[j].Data.(metricdata.Sum[int64]); ok && len(s.DataPoints) > 0 {
+			s, okSum := last1.ScopeMetrics[i].Metrics[j].Data.(metricdata.Sum[int64])
+			if okSum && len(s.DataPoints) > 0 {
 				s.DataPoints[0].Value = 99
 				last1.ScopeMetrics[i].Metrics[j].Data = s
 				break
@@ -219,7 +220,8 @@ func makeRMWithSumAndExemplar(value int64, exemplarValue int64) *metricdata.Reso
 func getFirstExemplarValueInt64(rm metricdata.ResourceMetrics) (int64, bool) {
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if s, ok := m.Data.(metricdata.Sum[int64]); ok && len(s.DataPoints) > 0 && len(s.DataPoints[0].Exemplars) > 0 {
+			if s, ok := m.Data.(metricdata.Sum[int64]); ok && len(s.DataPoints) > 0 &&
+				len(s.DataPoints[0].Exemplars) > 0 {
 				return s.DataPoints[0].Exemplars[0].Value, true
 			}
 		}
@@ -282,7 +284,8 @@ func makeRMWithHistogramAndExemplar(histSum float64, exemplarValue float64) *met
 func getFirstHistogramExemplarValue(rm metricdata.ResourceMetrics) (float64, bool) {
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if h, ok := m.Data.(metricdata.Histogram[float64]); ok && len(h.DataPoints) > 0 && len(h.DataPoints[0].Exemplars) > 0 {
+			if h, ok := m.Data.(metricdata.Histogram[float64]); ok && len(h.DataPoints) > 0 &&
+				len(h.DataPoints[0].Exemplars) > 0 {
 				return h.DataPoints[0].Exemplars[0].Value, true
 			}
 		}
@@ -338,7 +341,9 @@ func TestInMemoryMetricExporter_HistogramExemplarMutatingSnapshotDoesNotAffectSt
 	// Mutate the returned snapshot's histogram exemplar
 	for i := range last1.ScopeMetrics {
 		for j := range last1.ScopeMetrics[i].Metrics {
-			if h, ok := last1.ScopeMetrics[i].Metrics[j].Data.(metricdata.Histogram[float64]); ok && len(h.DataPoints) > 0 && len(h.DataPoints[0].Exemplars) > 0 {
+			if h, okHist := last1.ScopeMetrics[i].Metrics[j].Data.(metricdata.Histogram[float64]); okHist &&
+				len(h.DataPoints) > 0 &&
+				len(h.DataPoints[0].Exemplars) > 0 {
 				h.DataPoints[0].Exemplars[0].Value = 999
 				last1.ScopeMetrics[i].Metrics[j].Data = h
 				break

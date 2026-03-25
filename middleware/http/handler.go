@@ -1,6 +1,4 @@
 // Package http provides HTTP middleware for metry that creates root spans and propagates trace context.
-//
-//nolint:revive // package name "http" is intentional for HTTP middleware domain
 package http
 
 import (

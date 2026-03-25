@@ -2,44 +2,65 @@ package genai
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/otel/metric"
 )
 
-// RecordTTFT records the Time To First Token (in seconds) as a histogram metric with model dimension.
-// modelName is recorded as an attribute so dashboards can show TTFT per LLM (e.g. gpt-4o vs claude-3-5).
-// Metrics are registered automatically when metry.Init is called with a metric exporter.
-func RecordTTFT(ctx context.Context, durationSeconds float64, modelName string) {
-	holder := currentMetricsHolder()
-	if holder != nil && holder.Ttft != nil {
-		opts := metric.WithAttributes(RequestModelKey.String(modelName))
-		holder.Ttft.Record(ctx, durationSeconds, opts)
-	}
+// RecordTTFT records custom client-side time-to-first-token on the default tracker.
+func RecordTTFT(ctx context.Context, meta GenAIMeta, duration time.Duration) {
+	Default().RecordTTFT(ctx, meta, duration)
 }
 
-// RecordStreamingCompletion records aggregate streaming quality metrics for a completed generation.
+// RecordTTFT records custom client-side time-to-first-token on an explicit tracker.
+func (t *Tracker) RecordTTFT(ctx context.Context, meta GenAIMeta, duration time.Duration) {
+	if t.metrics == nil || t.metrics.TTFT == nil || duration <= 0 {
+		return
+	}
+	attrs, ok := metricAttributesFromMeta(meta)
+	if !ok {
+		return
+	}
+	t.metrics.TTFT.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
+}
+
+// RecordStreamingCompletion records custom streaming quality metrics on the default tracker.
 func RecordStreamingCompletion(
 	ctx context.Context,
-	modelName string,
+	meta GenAIMeta,
 	outputTokens int,
-	ttftSeconds float64,
-	totalDurationSeconds float64,
+	ttft time.Duration,
+	totalDuration time.Duration,
 ) {
-	holder := currentMetricsHolder()
-	if holder == nil {
+	Default().RecordStreamingCompletion(ctx, meta, outputTokens, ttft, totalDuration)
+}
+
+// RecordStreamingCompletion records custom streaming quality metrics on an explicit tracker.
+func (t *Tracker) RecordStreamingCompletion(
+	ctx context.Context,
+	meta GenAIMeta,
+	outputTokens int,
+	ttft time.Duration,
+	totalDuration time.Duration,
+) {
+	if t.metrics == nil {
 		return
 	}
 
-	generationWindow := totalDurationSeconds - ttftSeconds
+	generationWindow := totalDuration - ttft
 	if generationWindow <= 0 {
 		return
 	}
 
-	opts := metric.WithAttributes(RequestModelKey.String(modelName))
-	if holder.Tps != nil && outputTokens > 0 {
-		holder.Tps.Record(ctx, float64(outputTokens)/generationWindow, opts)
+	attrs, ok := metricAttributesFromMeta(meta)
+	if !ok {
+		return
 	}
-	if holder.Tbt != nil && outputTokens > 1 {
-		holder.Tbt.Record(ctx, generationWindow/float64(outputTokens-1), opts)
+
+	if t.metrics.TPS != nil && outputTokens > 0 {
+		t.metrics.TPS.Record(ctx, float64(outputTokens)/generationWindow.Seconds(), metric.WithAttributes(attrs...))
+	}
+	if t.metrics.TBT != nil && outputTokens > 1 {
+		t.metrics.TBT.Record(ctx, generationWindow.Seconds()/float64(outputTokens-1), metric.WithAttributes(attrs...))
 	}
 }

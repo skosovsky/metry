@@ -13,6 +13,7 @@ import (
 // mockSpan records RecordError and SetStatus calls for tests.
 type mockSpan struct {
 	noop.Span
+
 	recordErrorCalled bool
 	setStatusCalled   bool
 	errRecorded       error

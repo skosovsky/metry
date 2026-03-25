@@ -4,6 +4,8 @@ package metry
 import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	"github.com/skosovsky/metry/genai"
 )
 
 // Option configures Init. Use WithServiceName, WithTraceRatio, etc.
@@ -11,20 +13,25 @@ type Option func(*config)
 
 // config holds Init options with defaults applied.
 type config struct {
-	ServiceName           string
-	ServiceVersion        string
-	Environment           string
-	TraceRatio            float64
-	Exporter              sdktrace.SpanExporter
-	MetricExporter        sdkmetric.Exporter
-	RecordPayloads        bool
-	maxGenAIContextLength int
+	ServiceName    string
+	ServiceVersion string
+	Environment    string
+	TraceRatio     float64
+	Exporter       sdktrace.SpanExporter
+	MetricExporter sdkmetric.Exporter
+	genAIOptions   []genai.Option
 }
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
 func newConfig() *config {
 	return &config{
-		TraceRatio: 1.0,
+		ServiceName:    "",
+		ServiceVersion: "",
+		Environment:    "",
+		TraceRatio:     1.0,
+		Exporter:       nil,
+		MetricExporter: nil,
+		genAIOptions:   nil,
 	}
 }
 
@@ -58,13 +65,9 @@ func WithMetricExporter(exp sdkmetric.Exporter) Option {
 	return func(c *config) { c.MetricExporter = exp }
 }
 
-// WithRecordPayloads enables or disables prompt/completion/system payload recording.
-func WithRecordPayloads(enabled bool) Option {
-	return func(c *config) { c.RecordPayloads = enabled }
-}
-
-// WithMaxGenAIContextLength sets the max byte length for prompt/completion/tool strings before truncation (default 16384).
-// Use for local dev or closed loops where full context is needed; 0 means keep default.
-func WithMaxGenAIContextLength(bytes int) Option {
-	return func(c *config) { c.maxGenAIContextLength = bytes }
+// WithGenAIConfig configures the GenAI tracker created by metry.Init.
+func WithGenAIConfig(opts ...genai.Option) Option {
+	return func(c *config) {
+		c.genAIOptions = append(c.genAIOptions, opts...)
+	}
 }

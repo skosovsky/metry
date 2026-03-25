@@ -12,7 +12,10 @@ import (
 func SetBaggageValue(ctx context.Context, key, value string) (context.Context, error) {
 	member, err := baggage.NewMember(key, value)
 	if err != nil {
-		return ctx, fmt.Errorf("metry: invalid baggage key/value (W3C standard prohibits special chars/spaces in keys): %w", err)
+		return ctx, fmt.Errorf(
+			"metry: invalid baggage key/value (W3C standard prohibits special chars/spaces in keys): %w",
+			err,
+		)
 	}
 	b := baggage.FromContext(ctx)
 	b, err = b.SetMember(member)

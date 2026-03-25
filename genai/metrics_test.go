@@ -3,6 +3,7 @@ package genai
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,555 +13,178 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-const (
-	ttftHistogramName       = TTFTMetricName
-	tpsHistogramName        = StreamingTPSMetricName
-	tbtHistogramName        = StreamingTBTMetricName
-	inputTokensCounterName  = InputTokensMetricName
-	outputTokensCounterName = OutputTokensMetricName
-	costCounterName         = CostMetricName
-)
-
-func TestRegisterMetrics_AfterCleanup_CanRegisterAgain(t *testing.T) {
+func TestRecordInteraction_RecordsOfficialTokenHistogramAndCustomCost(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test-lifecycle")
 
-	cleanup1, err1 := RegisterMetricsForInit(meter)
-	require.NoError(t, err1)
-	cleanup1()
-
-	cleanup2, err2 := RegisterMetricsForInit(meter)
-	require.NoError(t, err2)
-	t.Cleanup(cleanup2)
-
-	ctx := context.Background()
-	RecordTTFT(ctx, 1.5, "test-model")
-	var rm metricdata.ResourceMetrics
-	err := reader.Collect(ctx, &rm)
+	tracker, err := NewTracker(mp.Meter("genai-test"))
 	require.NoError(t, err)
-	ttftCount, _ := getHistogramFloat64(t, rm, ttftHistogramName)
-	assert.Equal(t, uint64(1), ttftCount)
-}
 
-func TestRegisterMetrics_LifecycleAfterCleanup(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test-lifecycle")
-
-	cleanup1, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	cleanup1()
-	require.Nil(t, currentMetricsHolder())
-
-	cleanup2, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup2)
-
-	ctx := context.Background()
-	RecordTTFT(ctx, 0.1, "model-v2")
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-	count, sum := getHistogramFloat64(t, rm, ttftHistogramName)
-	require.Equal(t, uint64(1), count)
-	require.InDelta(t, 0.1, sum, 1e-9)
-}
-
-func TestRegisterMetrics_CleanupOwnerSafe_DoesNotClearNewHolder(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test-owner-safe")
-
-	cleanupA, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	cleanupA()
-	cleanupB, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanupB)
-
-	cleanupA()
-	require.NotNil(t, currentMetricsHolder())
-
-	ctx := context.Background()
-	RecordTTFT(ctx, 0.5, "model-b")
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-	count, sum := getHistogramFloat64(t, rm, ttftHistogramName)
-	require.Equal(t, uint64(1), count)
-	require.InDelta(t, 0.5, sum, 1e-9)
-}
-
-func TestRecordInteraction_AfterRegisterMetrics_IncrementsCounters(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	ctx := context.Background()
+	meta := testMeta()
 	span := noop.Span{}
-	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{
+	tracker.RecordInteraction(context.Background(), &span, meta, GenAIPayload{}, GenAIUsage{
 		InputTokens:  10,
 		OutputTokens: 20,
-		CostUSD:      0.001,
+		Cost:         0.001,
 	})
 
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	inputVal := getSumInt64(t, rm, inputTokensCounterName)
-	outputVal := getSumInt64(t, rm, outputTokensCounterName)
-	costMetric := getSumFloat64Metric(t, rm, costCounterName)
-	costVal := sumFloat64DataPoints(costMetric)
-
-	require.Equal(t, int64(10), inputVal)
-	require.Equal(t, int64(20), outputVal)
-	require.InDelta(t, 0.001, costVal, 1e-9)
-	require.True(t, costMetric.IsMonotonic, "cost metric must remain monotonic for Prometheus rate()")
+	rm := collectMetrics(t, reader)
+	assert.InDelta(t, 10, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInput), 1e-9)
+	assert.InDelta(t, 20, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeOutput), 1e-9)
+	assert.InDelta(t, 2.0, float64HistogramSum(t, rm, OperationDurationMetricName), 1e-9)
+	assert.InDelta(t, 0.001, float64SumValue(t, rm, CostMetricName), 1e-9)
+	assert.Equal(t, "USD", firstFloat64SumAttr(t, rm, CostMetricName, CostCurrencyKey))
 }
 
-func TestRecordInteraction_RecordsMetricsWithPurposeAttribute(t *testing.T) {
+func TestRecordInteraction_NegativeCost_IsIgnored(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
+
+	tracker, err := NewTracker(mp.Meter("genai-test"))
 	require.NoError(t, err)
-	t.Cleanup(cleanup)
 
-	ctx := context.Background()
-	span := noop.Span{}
-
-	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{
-		InputTokens:  3,
-		OutputTokens: 7,
-		CostUSD:      0.001,
-		Purpose:      PurposeGuardEvaluation,
-	})
-	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), GenAIPayload{}, GenAIUsage{
 		InputTokens:  10,
 		OutputTokens: 20,
-		CostUSD:      0.002,
-		Currency:     "CREDITS",
-		Purpose:      PurposeGeneration,
+		Cost:         -0.25,
+		Currency:     "USD",
 	})
 
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
+	_, ok := rec.attrs[UsageCostKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[CostCurrencyKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OperationPurposeKey]
+	assert.False(t, ok)
+
+	rm := collectMetrics(t, reader)
+	assert.InDelta(t, 10, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInput), 1e-9)
+	assert.InDelta(t, 20, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeOutput), 1e-9)
+	assertMetricAbsent(t, rm, CostMetricName)
+}
+
+func TestRecordInteraction_RecordsCacheReasoningAndVideoMetrics(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+
+	tracker, err := NewTracker(mp.Meter("genai-test"))
 	require.NoError(t, err)
 
-	require.Equal(t, int64(13), getSumInt64(t, rm, inputTokensCounterName))
-	require.Equal(t, int64(27), getSumInt64(t, rm, outputTokensCounterName))
-	require.InDelta(t, 0.003, getSumFloat64(t, rm, costCounterName), 1e-9)
+	span := noop.Span{}
+	tracker.RecordInteraction(context.Background(), &span, testMeta(), GenAIPayload{}, GenAIUsage{
+		InputTokens:              100,
+		OutputTokens:             50,
+		CacheCreationInputTokens: 20,
+		CacheReadInputTokens:     30,
+		ReasoningOutputTokens:    10,
+		VideoSeconds:             12.5,
+		VideoFrames:              24,
+	})
 
-	require.Equal(t, int64(3), getSumInt64ByPurpose(t, rm, inputTokensCounterName, PurposeGuardEvaluation))
-	require.Equal(t, int64(10), getSumInt64ByPurpose(t, rm, inputTokensCounterName, PurposeGeneration))
-	require.Equal(t, int64(7), getSumInt64ByPurpose(t, rm, outputTokensCounterName, PurposeGuardEvaluation))
-	require.Equal(t, int64(20), getSumInt64ByPurpose(t, rm, outputTokensCounterName, PurposeGeneration))
-	require.InDelta(t, 0.001, getSumFloat64ByPurpose(t, rm, costCounterName, PurposeGuardEvaluation), 1e-9)
-	require.InDelta(t, 0.002, getSumFloat64ByPurpose(t, rm, costCounterName, PurposeGeneration), 1e-9)
-	require.InDelta(
+	rm := collectMetrics(t, reader)
+	assert.InDelta(t, 100, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInput), 1e-9)
+	assert.InDelta(t, 50, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeOutput), 1e-9)
+	assert.InDelta(t, 0, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInputCacheCreation), 1e-9)
+	assert.InDelta(t, 0, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInputCacheRead), 1e-9)
+	assert.InDelta(t, 0, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeOutputReasoning), 1e-9)
+	assert.InDelta(
 		t,
-		0.001,
-		getSumFloat64ByPurposeAndCurrency(t, rm, costCounterName, PurposeGuardEvaluation, defaultCostCurrency),
+		20,
+		int64HistogramSumByTokenType(t, rm, TokenComponentUsageMetricName, TokenTypeInputCacheCreation),
 		1e-9,
 	)
-	require.InDelta(t, 0.002, getSumFloat64ByPurposeAndCurrency(t, rm, costCounterName, PurposeGeneration, "CREDITS"), 1e-9)
-	assert.False(t, sumInt64HasAttribute(t, rm, inputTokensCounterName, CostCurrencyKey))
-	assert.False(t, sumInt64HasAttribute(t, rm, outputTokensCounterName, CostCurrencyKey))
-}
-
-func TestRecordInteraction_EmptyPurpose_AggregatesAsGeneration(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	ctx := context.Background()
-	span := noop.Span{}
-	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{
-		InputTokens:  1,
-		OutputTokens: 2,
-		CostUSD:      0.001,
-	})
-
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	require.Equal(t, int64(1), getSumInt64ByPurpose(t, rm, inputTokensCounterName, PurposeGeneration))
-	require.Equal(t, int64(2), getSumInt64ByPurpose(t, rm, outputTokensCounterName, PurposeGeneration))
-	require.InDelta(t, 0.001, getSumFloat64ByPurpose(t, rm, costCounterName, PurposeGeneration), 1e-9)
-	require.InDelta(
+	assert.InDelta(
 		t,
-		0.001,
-		getSumFloat64ByPurposeAndCurrency(t, rm, costCounterName, PurposeGeneration, defaultCostCurrency),
+		30,
+		int64HistogramSumByTokenType(t, rm, TokenComponentUsageMetricName, TokenTypeInputCacheRead),
 		1e-9,
 	)
+	assert.InDelta(
+		t,
+		10,
+		int64HistogramSumByTokenType(t, rm, TokenComponentUsageMetricName, TokenTypeOutputReasoning),
+		1e-9,
+	)
+	assert.InDelta(t, 12.5, float64HistogramSum(t, rm, VideoSecondsMetricName), 1e-9)
+	assert.InDelta(t, 24, int64HistogramTotal(t, rm, VideoFramesMetricName), 1e-9)
 }
 
-func TestRecordInteraction_ZeroCost_DoesNotRecordCostCounter(t *testing.T) {
+func TestRecordTTFT_RecordsCustomHistogram(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
 
-	ctx := context.Background()
-	span := noop.Span{}
-	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{
-		InputTokens:  5,
-		OutputTokens: 8,
-	})
-
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
+	tracker, err := NewTracker(mp.Meter("genai-test"))
 	require.NoError(t, err)
 
-	require.Equal(t, int64(5), getSumInt64(t, rm, inputTokensCounterName))
-	require.Equal(t, int64(8), getSumInt64(t, rm, outputTokensCounterName))
-	assert.False(t, sumFloat64HasDatapoint(rm, costCounterName))
+	tracker.RecordTTFT(context.Background(), testMeta(), 420*time.Millisecond)
+
+	rm := collectMetrics(t, reader)
+	assert.InDelta(t, 0.42, float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
+	assert.Equal(t, "gpt-4o-mini", firstFloat64HistogramAttr(t, rm, TTFTMetricName, RequestModelKey))
 }
 
-func TestRecordInteraction_ZeroUsage_DoesNotRecordCounters(t *testing.T) {
+func TestRecordStreamingCompletion_RecordsCustomHistograms(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
+
+	tracker, err := NewTracker(mp.Meter("genai-test"))
 	require.NoError(t, err)
-	t.Cleanup(cleanup)
 
-	ctx := context.Background()
-	span := noop.Span{}
-	RecordInteraction(ctx, &span, GenAIPayload{}, GenAIUsage{})
+	tracker.RecordStreamingCompletion(context.Background(), testMeta(), 11, time.Second, 6*time.Second)
 
+	rm := collectMetrics(t, reader)
+	assert.InDelta(t, 2.2, float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
+	assert.InDelta(t, 0.5, float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
+}
+
+func collectMetrics(t *testing.T, reader *sdkmetric.ManualReader) metricdata.ResourceMetrics {
+	t.Helper()
 	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	assert.Equal(t, int64(0), getSumInt64IfPresent(rm, inputTokensCounterName))
-	assert.Equal(t, int64(0), getSumInt64IfPresent(rm, outputTokensCounterName))
-	assert.InDelta(t, 0.0, getSumFloat64IfPresent(rm, costCounterName), 1e-9)
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+	return rm
 }
 
-func TestRecordTTFT_RecordsHistogram(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	ctx := context.Background()
-	const testModel = "gpt-4o"
-	RecordTTFT(ctx, 0.42, testModel)
-
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	count, sum := getHistogramFloat64(t, rm, ttftHistogramName)
-	require.Equal(t, uint64(1), count)
-	require.InDelta(t, 0.42, sum, 1e-9)
-
-	modelVal, ok := getHistogramDatapointModel(t, rm, ttftHistogramName)
-	require.True(t, ok)
-	assert.Equal(t, testModel, modelVal)
-}
-
-func TestRecordStreamingCompletion_RecordsHistograms(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	ctx := context.Background()
-	RecordStreamingCompletion(ctx, "gpt-4o", 11, 1.0, 6.0)
-
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	tpsCount, tpsSum := getHistogramFloat64(t, rm, tpsHistogramName)
-	require.Equal(t, uint64(1), tpsCount)
-	require.InDelta(t, 2.2, tpsSum, 1e-9)
-
-	tbtCount, tbtSum := getHistogramFloat64(t, rm, tbtHistogramName)
-	require.Equal(t, uint64(1), tbtCount)
-	require.InDelta(t, 0.5, tbtSum, 1e-9)
-
-	modelVal, ok := getHistogramDatapointModel(t, rm, tpsHistogramName)
-	require.True(t, ok)
-	assert.Equal(t, "gpt-4o", modelVal)
-}
-
-func TestRecordStreamingCompletion_SkipsInvalidWindow(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	ctx := context.Background()
-	RecordStreamingCompletion(ctx, "model-a", 10, 2.0, 2.0)
-	RecordStreamingCompletion(ctx, "model-a", 10, 3.0, 2.0)
-
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	assert.Equal(t, uint64(0), getHistogramCountIfPresent(rm, tpsHistogramName))
-	assert.Equal(t, uint64(0), getHistogramCountIfPresent(rm, tbtHistogramName))
-}
-
-func TestRecordStreamingCompletion_SkipsTBTForSingleToken(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	meter := mp.Meter("genai-test")
-	cleanup, err := RegisterMetricsForInit(meter)
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-
-	ctx := context.Background()
-	RecordStreamingCompletion(ctx, "model-a", 1, 0.5, 1.5)
-
-	var rm metricdata.ResourceMetrics
-	err = reader.Collect(ctx, &rm)
-	require.NoError(t, err)
-
-	require.Equal(t, uint64(1), getHistogramCountIfPresent(rm, tpsHistogramName))
-	require.Equal(t, uint64(0), getHistogramCountIfPresent(rm, tbtHistogramName))
-}
-
-func getSumInt64ByPurpose(t *testing.T, rm metricdata.ResourceMetrics, name, purpose string) int64 {
+func int64HistogramSumByTokenType(t *testing.T, rm metricdata.ResourceMetrics, name, tokenType string) float64 {
 	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			require.True(t, ok, "metric %q should be Sum[int64]", name)
-			var total int64
-			for _, dp := range sum.DataPoints {
-				if v, ok := dp.Attributes.Value(OperationPurposeKey); ok && v.AsString() == purpose {
-					total += dp.Value
-				}
-			}
-			return total
+	hist := findInt64Histogram(t, rm, name)
+	var total int64
+	for _, dp := range hist.DataPoints {
+		if v, ok := dp.Attributes.Value(TokenTypeKey); ok && v.AsString() == tokenType {
+			total += dp.Sum
 		}
 	}
-	t.Fatalf("metric %q not found", name)
-	return 0
+	return float64(total)
 }
 
-func getSumFloat64ByPurpose(t *testing.T, rm metricdata.ResourceMetrics, name, purpose string) float64 {
+func int64HistogramTotal(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
 	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			require.True(t, ok, "metric %q should be Sum[float64]", name)
-			var total float64
-			for _, dp := range sum.DataPoints {
-				if v, ok := dp.Attributes.Value(OperationPurposeKey); ok && v.AsString() == purpose {
-					total += dp.Value
-				}
-			}
-			return total
-		}
+	hist := findInt64Histogram(t, rm, name)
+	var total int64
+	for _, dp := range hist.DataPoints {
+		total += dp.Sum
 	}
-	t.Fatalf("metric %q not found", name)
-	return 0
+	return float64(total)
 }
 
-func getSumFloat64ByPurposeAndCurrency(
-	t *testing.T,
-	rm metricdata.ResourceMetrics,
-	name, purpose, currency string,
-) float64 {
+func float64HistogramSum(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
 	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			require.True(t, ok, "metric %q should be Sum[float64]", name)
-			var total float64
-			for _, dp := range sum.DataPoints {
-				if datapointHasStringAttribute(dp.Attributes, OperationPurposeKey, purpose) &&
-					datapointHasStringAttribute(dp.Attributes, CostCurrencyKey, currency) {
-					total += dp.Value
-				}
-			}
-			return total
-		}
+	hist := findFloat64Histogram(t, rm, name)
+	var total float64
+	for _, dp := range hist.DataPoints {
+		total += dp.Sum
 	}
-	t.Fatalf("metric %q not found", name)
-	return 0
+	return total
 }
 
-func getHistogramFloat64(t *testing.T, rm metricdata.ResourceMetrics, name string) (count uint64, sum float64) {
+func float64SumValue(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
 	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			hist, ok := m.Data.(metricdata.Histogram[float64])
-			require.True(t, ok, "metric %q should be Histogram[float64]", name)
-			require.NotEmpty(t, hist.DataPoints)
-			dp := hist.DataPoints[0]
-			return dp.Count, dp.Sum
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return 0, 0
-}
-
-func getHistogramDatapointModel(t *testing.T, rm metricdata.ResourceMetrics, name string) (model string, ok bool) {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			hist, ok := m.Data.(metricdata.Histogram[float64])
-			if !ok || len(hist.DataPoints) == 0 {
-				return "", false
-			}
-			v, ok := hist.DataPoints[0].Attributes.Value(RequestModelKey)
-			if !ok {
-				return "", false
-			}
-			return v.AsString(), true
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return "", false
-}
-
-func getHistogramCountIfPresent(rm metricdata.ResourceMetrics, name string) uint64 {
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			hist, ok := m.Data.(metricdata.Histogram[float64])
-			if !ok || len(hist.DataPoints) == 0 {
-				return 0
-			}
-			return hist.DataPoints[0].Count
-		}
-	}
-	return 0
-}
-
-func getSumInt64(t *testing.T, rm metricdata.ResourceMetrics, name string) int64 {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			require.True(t, ok, "metric %q should be Sum[int64]", name)
-			var total int64
-			for _, dp := range sum.DataPoints {
-				total += dp.Value
-			}
-			return total
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return 0
-}
-
-func getSumFloat64(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
-	return sumFloat64DataPoints(getSumFloat64Metric(t, rm, name))
-}
-
-func getSumInt64IfPresent(rm metricdata.ResourceMetrics, name string) int64 {
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			if !ok {
-				return 0
-			}
-			var total int64
-			for _, dp := range sum.DataPoints {
-				total += dp.Value
-			}
-			return total
-		}
-	}
-	return 0
-}
-
-func getSumFloat64IfPresent(rm metricdata.ResourceMetrics, name string) float64 {
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			if !ok {
-				return 0
-			}
-			var total float64
-			for _, dp := range sum.DataPoints {
-				total += dp.Value
-			}
-			return total
-		}
-	}
-	return 0
-}
-
-func getSumFloat64Metric(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Sum[float64] {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			require.True(t, ok, "metric %q should be Sum[float64]", name)
-			return sum
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return metricdata.Sum[float64]{}
-}
-
-func sumFloat64DataPoints(sum metricdata.Sum[float64]) float64 {
+	sum := findFloat64Sum(t, rm, name)
 	var total float64
 	for _, dp := range sum.DataPoints {
 		total += dp.Value
@@ -568,41 +192,79 @@ func sumFloat64DataPoints(sum metricdata.Sum[float64]) float64 {
 	return total
 }
 
-func sumFloat64HasDatapoint(rm metricdata.ResourceMetrics, name string) bool {
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			return ok && len(sum.DataPoints) > 0
-		}
-	}
-	return false
+func firstFloat64SumAttr(t *testing.T, rm metricdata.ResourceMetrics, name string, key attribute.Key) string {
+	t.Helper()
+	sum := findFloat64Sum(t, rm, name)
+	require.NotEmpty(t, sum.DataPoints)
+	value, ok := sum.DataPoints[0].Attributes.Value(key)
+	require.True(t, ok)
+	return value.AsString()
 }
 
-func sumInt64HasAttribute(t *testing.T, rm metricdata.ResourceMetrics, name string, key attribute.Key) bool {
+func firstFloat64HistogramAttr(t *testing.T, rm metricdata.ResourceMetrics, name string, key attribute.Key) string {
+	t.Helper()
+	hist := findFloat64Histogram(t, rm, name)
+	require.NotEmpty(t, hist.DataPoints)
+	value, ok := hist.DataPoints[0].Attributes.Value(key)
+	require.True(t, ok)
+	return value.AsString()
+}
+
+func assertMetricAbsent(t *testing.T, rm metricdata.ResourceMetrics, name string) {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == name {
+				t.Fatalf("metric %q unexpectedly found", name)
+			}
+		}
+	}
+}
+
+func findInt64Histogram(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Histogram[int64] {
 	t.Helper()
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if m.Name != name {
 				continue
 			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			require.True(t, ok, "metric %q should be Sum[int64]", name)
-			for _, dp := range sum.DataPoints {
-				if _, ok := dp.Attributes.Value(key); ok {
-					return true
-				}
-			}
-			return false
+			hist, ok := m.Data.(metricdata.Histogram[int64])
+			require.True(t, ok)
+			return hist
 		}
 	}
 	t.Fatalf("metric %q not found", name)
-	return false
+	return metricdata.Histogram[int64]{}
 }
 
-func datapointHasStringAttribute(set attribute.Set, key attribute.Key, want string) bool {
-	v, ok := set.Value(key)
-	return ok && v.AsString() == want
+func findFloat64Histogram(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Histogram[float64] {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			require.True(t, ok)
+			return hist
+		}
+	}
+	t.Fatalf("metric %q not found", name)
+	return metricdata.Histogram[float64]{}
+}
+
+func findFloat64Sum(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Sum[float64] {
+	t.Helper()
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[float64])
+			require.True(t, ok)
+			return sum
+		}
+	}
+	t.Fatalf("metric %q not found", name)
+	return metricdata.Sum[float64]{}
 }

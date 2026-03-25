@@ -1,53 +1,48 @@
-GO_ENV = GOCACHE=/tmp/metry-go-build-cache
-LINT_ENV = GOCACHE=/tmp/metry-go-build-cache GOLANGCI_LINT_CACHE=/tmp/metry-golangci-lint-cache
+GO      := go
+MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \;)
 
-.PHONY: test test-root test-grpc lint lint-root lint-grpc fmt fmt-root fmt-grpc tidy cover test-race test-race-root test-race-grpc
-
-test:
-	@$(GO_ENV) go test ./...
-	@cd middleware/grpc && $(GO_ENV) go test ./...
-
-test-root:
-	@$(GO_ENV) go test ./...
-
-test-grpc:
-	@cd middleware/grpc && $(GO_ENV) go test ./...
+.PHONY: lint fix test bench bench-hotpath fuzz cover
 
 lint:
-	@$(LINT_ENV) golangci-lint run ./...
-	@cd middleware/grpc && $(LINT_ENV) golangci-lint run ./...
+	@for dir in $(MODULES); do \
+		echo "golangci-lint - $$dir"; \
+		(cd "$$dir" && golangci-lint run ./...) || exit 1; \
+	done
 
-lint-root:
-	@$(LINT_ENV) golangci-lint run ./...
+fix:
+	@if [ -f "go.work" ]; then $(GO) work sync; fi
+	@for dir in $(MODULES); do \
+		echo "fix & tidy - $$dir"; \
+		(cd "$$dir" && $(GO) fix ./... && $(GO) mod tidy) || exit 1; \
+		(cd "$$dir" && golangci-lint run --fix ./...) || exit 1; \
+	done
 
-lint-grpc:
-	@cd middleware/grpc && $(LINT_ENV) golangci-lint run ./...
+test:
+	@for dir in $(MODULES); do \
+		echo "test - $$dir"; \
+		(cd "$$dir" && $(GO) test -v -race ./...) || exit 1; \
+	done
 
-fmt: fmt-root fmt-grpc
+bench:
+	@for dir in $(MODULES); do \
+		echo "bench - $$dir"; \
+		(cd "$$dir" && $(GO) test -bench=. -run=^$$ ./...) || exit 1; \
+	done
 
-fmt-root:
-	@gofmt -s -w .
-	@goimports -local github.com/skosovsky/metry -w .
-
-fmt-grpc:
-	@cd middleware/grpc && gofmt -s -w .
-	@cd middleware/grpc && goimports -local github.com/skosovsky/metry -w .
-
-tidy:
-	@go mod tidy
-	@cd middleware/grpc && go mod tidy
-	@go work sync
+fuzz:
+	@for dir in $(MODULES); do \
+		echo "fuzz - $$dir"; \
+		(cd "$$dir" && \
+			for pkg in $$($(GO) list -tags=fuzz ./...); do \
+				if $(GO) test -tags=fuzz -list . "$$pkg" 2>/dev/null | grep -q '^Fuzz'; then \
+					$(GO) test -tags=fuzz -fuzz=. -fuzztime=30s "$$pkg" || exit 1; \
+				fi; \
+			done \
+		) || exit 1; \
+	done
 
 cover:
-	@$(GO_ENV) go test -coverprofile=coverage.out ./...
-	@go tool cover -html=coverage.out -o coverage.html
-
-test-race:
-	@$(GO_ENV) go test -race ./...
-	@cd middleware/grpc && $(GO_ENV) go test -race ./...
-
-test-race-root:
-	@$(GO_ENV) go test -race ./...
-
-test-race-grpc:
-	@cd middleware/grpc && $(GO_ENV) go test -race ./...
+	@for dir in $(MODULES); do \
+		echo "cover - $$dir"; \
+		(cd "$$dir" && $(GO) test -coverprofile=coverage.out ./... && $(GO) tool cover -func=coverage.out) || exit 1; \
+	done

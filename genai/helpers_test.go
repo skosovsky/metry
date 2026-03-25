@@ -2,10 +2,11 @@ package genai
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
-	"unicode/utf8"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,285 +19,303 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-const testContextLimit = 16384
-
 func TestRecordInteraction_DefaultPrivacy_DoesNotSetPayloadAttributes(t *testing.T) {
-	t.Cleanup(resetRuntimeConfigForTest())
+	installDefaultTrackerForTest(t, noopTracker)
 
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordInteraction(context.Background(), rec, GenAIPayload{
-		System:     "sys",
-		Prompt:     "What is 2+2?",
-		Completion: "4",
-	}, GenAIUsage{})
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	RecordInteraction(context.Background(), rec, testMeta(), testPayload(), GenAIUsage{})
 
-	assert.Empty(t, attrs)
+	_, ok := rec.attrs[SystemInstructionsKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[InputMessagesKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OutputMessagesKey]
+	assert.False(t, ok)
+	assert.Equal(t, "openai", rec.attrs[ProviderNameKey].AsString())
+	assert.Equal(t, "chat", rec.attrs[OperationNameKey].AsString())
 }
 
-func TestRecordInteraction_WithRecordPayloads_SetsAttributes(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(defaultMaxContextLength, true))
+func TestRecordInteraction_WithPayloads_SetsOfficialPayloadAndUsageAttrs(t *testing.T) {
+	tracker, err := NewTracker(nil, WithRecordPayloads(true))
+	require.NoError(t, err)
 
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordInteraction(context.Background(), rec, GenAIPayload{
-		System:     "system prompt",
-		Prompt:     "What is 2+2?",
-		Completion: "4",
-	}, GenAIUsage{})
-
-	assert.Equal(t, "system prompt", attrs[SystemKey].AsString())
-	assert.Equal(t, "What is 2+2?", attrs[PromptKey].AsString())
-	assert.Equal(t, "4", attrs[CompletionKey].AsString())
-}
-
-func TestRecordInteraction_TruncatesLongStrings(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(testContextLimit, true))
-
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	long := strings.Repeat("a", testContextLimit+100)
-	RecordInteraction(context.Background(), rec, GenAIPayload{
-		Prompt:     long,
-		Completion: "short",
-	}, GenAIUsage{})
-
-	prompt := attrs[PromptKey].AsString()
-	assert.LessOrEqual(t, len(prompt), testContextLimit)
-	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "prompt should end with truncation suffix")
-	assert.Equal(t, "short", attrs[CompletionKey].AsString())
-}
-
-func TestRecordInteraction_OneMegabytePrompt_TruncatesWithoutPanic(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(testContextLimit, true))
-
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	prompt1MB := strings.Repeat("a", 1_000_000)
-	completion := "ok"
-
-	RecordInteraction(context.Background(), rec, GenAIPayload{
-		Prompt:     prompt1MB,
-		Completion: completion,
-	}, GenAIUsage{})
-
-	prompt := attrs[PromptKey].AsString()
-	assert.LessOrEqual(t, len(prompt), testContextLimit, "prompt must be truncated to maxContextLength")
-	assert.True(t, strings.HasSuffix(prompt, truncationSuffix), "truncated prompt must end with ... [TRUNCATED]")
-	assert.Equal(t, completion, attrs[CompletionKey].AsString())
-	require.True(t, utf8.ValidString(prompt), "truncated output must remain valid UTF-8 for export")
-}
-
-func TestTruncateContext_UTF8Safe(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(testContextLimit, false))
-
-	base := "a\u00e9b"
-	s := strings.Repeat(base, 5000)
-	out := truncateContext(s)
-	assert.True(t, strings.HasSuffix(out, truncationSuffix))
-	assert.LessOrEqual(t, len(out), testContextLimit)
-	require.True(t, utf8.ValidString(out))
-}
-
-func TestRecordInteraction_WritesUsageAndNormalizesPurpose(t *testing.T) {
-	t.Cleanup(resetRuntimeConfigForTest())
-
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordInteraction(context.Background(), rec, GenAIPayload{}, GenAIUsage{
-		InputTokens:  10,
-		OutputTokens: 20,
-		CostUSD:      0.001,
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), testPayload(), GenAIUsage{
+		InputTokens:           10,
+		OutputTokens:          20,
+		ReasoningOutputTokens: 4,
+		Cost:                  0.25,
+		Currency:              "CREDITS",
 	})
 
-	assert.Equal(t, int64(10), attrs[InputTokensKey].AsInt64())
-	assert.Equal(t, int64(20), attrs[OutputTokensKey].AsInt64())
-	assert.InDelta(t, 0.001, attrs[CostUSDKey].AsFloat64(), 1e-9)
-	assert.Equal(t, defaultCostCurrency, attrs[CostCurrencyKey].AsString())
-	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
+	assert.JSONEq(t, `[{"type":"text","content":"You are concise."}]`, rec.attrs[SystemInstructionsKey].AsString())
+	assert.JSONEq(
+		t,
+		`[{"role":"user","parts":[{"type":"text","content":"What is 2+2?"}]}]`,
+		rec.attrs[InputMessagesKey].AsString(),
+	)
+	assert.JSONEq(
+		t,
+		`[{"role":"assistant","parts":[{"type":"text","content":"4"}],"finish_reason":"stop"}]`,
+		rec.attrs[OutputMessagesKey].AsString(),
+	)
+	assert.Equal(t, int64(10), rec.attrs[InputTokensKey].AsInt64())
+	assert.Equal(t, int64(20), rec.attrs[OutputTokensKey].AsInt64())
+	assert.Equal(t, int64(4), rec.attrs[UsageReasoningOutputTokensKey].AsInt64())
+	assert.InDelta(t, 0.25, rec.attrs[UsageCostKey].AsFloat64(), 1e-9)
+	assert.Equal(t, "CREDITS", rec.attrs[CostCurrencyKey].AsString())
 }
 
-func TestRecordInteraction_WritesOptionalMultimodalUsage(t *testing.T) {
-	t.Cleanup(resetRuntimeConfigForTest())
+func TestRecordInteraction_CacheOnlyUsage_DoesNotEmitSyntheticZeroAttrs(t *testing.T) {
+	tracker, err := NewTracker(nil)
+	require.NoError(t, err)
 
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordInteraction(context.Background(), rec, GenAIPayload{}, GenAIUsage{
-		AudioSeconds: 12.5,
-		ImageCount:   3,
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), GenAIPayload{}, GenAIUsage{
+		CacheReadInputTokens: 7,
 	})
 
-	assert.InDelta(t, 12.5, attrs[AudioSecondsKey].AsFloat64(), 1e-9)
-	assert.Equal(t, int64(3), attrs[ImageCountKey].AsInt64())
-	assert.Equal(t, defaultCostCurrency, attrs[CostCurrencyKey].AsString())
-	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
+	assert.Equal(t, int64(7), rec.attrs[CacheReadInputTokensKey].AsInt64())
+	_, ok := rec.attrs[InputTokensKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OutputTokensKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[UsageCostKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[CostCurrencyKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OperationPurposeKey]
+	assert.False(t, ok)
 }
 
-func TestRecordInteraction_WritesExplicitCurrency(t *testing.T) {
-	t.Cleanup(resetRuntimeConfigForTest())
+func TestRecordInteraction_VideoOnlyUsage_DoesNotEmitSyntheticZeroAttrs(t *testing.T) {
+	tracker, err := NewTracker(nil)
+	require.NoError(t, err)
 
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordInteraction(context.Background(), rec, GenAIPayload{}, GenAIUsage{
-		CostUSD:  0.25,
-		Currency: "CREDITS",
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), GenAIPayload{}, GenAIUsage{
+		VideoFrames: 24,
 	})
 
-	assert.InDelta(t, 0.25, attrs[CostUSDKey].AsFloat64(), 1e-9)
-	assert.Equal(t, "CREDITS", attrs[CostCurrencyKey].AsString())
-	assert.Equal(t, PurposeGeneration, attrs[OperationPurposeKey].AsString())
+	assert.Equal(t, int64(24), rec.attrs[UsageVideoFramesKey].AsInt64())
+	_, ok := rec.attrs[InputTokensKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OutputTokensKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[UsageCostKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[CostCurrencyKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OperationPurposeKey]
+	assert.False(t, ok)
 }
 
-func TestTruncateContext_ConfigurableLimit(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(100, false))
+func TestRecordInteraction_CostOnlyUsage_EmitsDefaultPurposeWithoutSyntheticTokenZeros(t *testing.T) {
+	tracker, err := NewTracker(nil)
+	require.NoError(t, err)
 
-	long := strings.Repeat("a", 500)
-	out := truncateContext(long)
-	assert.LessOrEqual(t, len(out), 100)
-	assert.True(t, strings.HasSuffix(out, truncationSuffix))
-	require.True(t, utf8.ValidString(out))
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), GenAIPayload{}, GenAIUsage{
+		Cost: 0.25,
+	})
+
+	assert.InDelta(t, 0.25, rec.attrs[UsageCostKey].AsFloat64(), 1e-9)
+	assert.Equal(t, "USD", rec.attrs[CostCurrencyKey].AsString())
+	assert.Equal(t, PurposeGeneration, rec.attrs[OperationPurposeKey].AsString())
+	_, ok := rec.attrs[InputTokensKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[OutputTokensKey]
+	assert.False(t, ok)
 }
 
-func TestTruncateContext_SmallLimit_NoSuffix(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(5, false))
+func TestRecordInteraction_PurposeOnlyUsage_EmitsExplicitPurposeWithoutCostAttrs(t *testing.T) {
+	tracker, err := NewTracker(nil)
+	require.NoError(t, err)
 
-	out := truncateContext("hello world")
-	assert.LessOrEqual(t, len(out), 5)
-	assert.NotContains(t, out, truncationSuffix)
-	require.True(t, utf8.ValidString(out))
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), GenAIPayload{}, GenAIUsage{
+		Purpose: PurposeGuardEvaluation,
+	})
+
+	assert.Equal(t, PurposeGuardEvaluation, rec.attrs[OperationPurposeKey].AsString())
+	_, ok := rec.attrs[UsageCostKey]
+	assert.False(t, ok)
+	_, ok = rec.attrs[CostCurrencyKey]
+	assert.False(t, ok)
 }
 
-func TestTruncateContext_SmallLimit10_UTF8Safe(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(10, false))
+func TestRecordInteraction_TruncatedPayloadJSON_RemainsValid(t *testing.T) {
+	tracker, err := NewTracker(nil, WithRecordPayloads(true), WithMaxContextLength(96))
+	require.NoError(t, err)
 
-	s := "12345678\u00e9"
-	out := truncateContext(s + " more")
-	assert.LessOrEqual(t, len(out), 10)
-	require.True(t, utf8.ValidString(out))
-	assert.NotContains(t, out, truncationSuffix)
-}
-
-func TestTruncateContext_InvalidUTF8_O1(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(32, false))
-
-	s := string([]byte{0xff}) + strings.Repeat("a", 128)
-	out := truncateContext(s)
-
-	assert.LessOrEqual(t, len(out), 32)
-	assert.True(t, strings.HasSuffix(out, truncationSuffix))
-	assert.NotEqual(t, truncationSuffix, out, "valid suffix of the payload must survive invalid leading bytes")
-	assert.True(t, strings.HasPrefix(out, strings.Repeat("a", 4)))
-	require.True(t, utf8.ValidString(out))
-}
-
-func TestTruncateContext_InvalidUTF8WithinLimit_IsSanitized(t *testing.T) {
-	t.Cleanup(setRuntimeConfigForTest(32, false))
-
-	out := truncateContext("ok" + string([]byte{0xff}) + "tail")
-
-	assert.Equal(t, "oktail", out)
-	require.True(t, utf8.ValidString(out))
-}
-
-func BenchmarkTruncateContext_InvalidUTF8(b *testing.B) {
-	restore := setRuntimeConfigForTest(testContextLimit, false)
-	defer restore()
-
-	s := string([]byte{0xff}) + strings.Repeat("a", 1_000_000)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = truncateContext(s)
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	long := strings.Repeat("a", 2048)
+	payload := GenAIPayload{
+		InputMessages: []GenAIMessage{{
+			Role: "user",
+			Parts: []GenAIContentPart{{
+				Type:    "text",
+				Content: long,
+			}},
+		}},
 	}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), payload, GenAIUsage{})
+
+	value := rec.attrs[InputMessagesKey].AsString()
+	assert.LessOrEqual(t, len(value), 96)
+	assert.True(t, json.Valid([]byte(value)))
 }
 
-func TestStartToolSpan_SetsAttributesAndReturnsChildSpan(t *testing.T) {
+func TestRecordInteraction_InvalidPayloadToolJSON_DropsMalformedFieldButKeepsPayloadAttr(t *testing.T) {
+	tracker, err := NewTracker(nil, WithRecordPayloads(true))
+	require.NoError(t, err)
+
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	payload := GenAIPayload{
+		InputMessages: []GenAIMessage{{
+			Role: "assistant",
+			Parts: []GenAIContentPart{{
+				Type:      "tool_call",
+				Name:      "search",
+				Arguments: json.RawMessage(`{"q":`),
+			}},
+		}},
+	}
+	tracker.RecordInteraction(context.Background(), rec, testMeta(), payload, GenAIUsage{})
+
+	value := rec.attrs[InputMessagesKey].AsString()
+	require.True(t, json.Valid([]byte(value)))
+	assert.NotContains(t, value, `"arguments":`)
+}
+
+func TestStartToolSpan_SetsOfficialToolAttrs(t *testing.T) {
 	mem := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	tracker, err := NewTrackerWithTracer(nil, tp.Tracer("tool-test"))
+	require.NoError(t, err)
+
+	_, span := tracker.StartToolSpan(context.Background(), "search", "call-1", `{"q":"test"}`)
+	span.End()
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := attribute.NewSet(spans[0].Attributes...)
+	assert.Equal(t, "execute_tool", mustStringAttr(t, attrs, OperationNameKey))
+	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
+	assert.Equal(t, "call-1", mustStringAttr(t, attrs, ToolCallIDKey))
+	assert.JSONEq(t, `{"q":"test"}`, mustStringAttr(t, attrs, ToolCallArgumentsKey))
+}
+
+func TestStartToolSpan_TruncatedArgsJSON_RemainsValid(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	tracker, err := NewTrackerWithTracer(nil, tp.Tracer("tool-test"), WithMaxContextLength(96))
+	require.NoError(t, err)
+
+	_, span := tracker.StartToolSpan(context.Background(), "search", "call-1", `{"q":"`+strings.Repeat("a", 2048)+`"}`)
+	span.End()
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := attribute.NewSet(spans[0].Attributes...)
+	value := mustStringAttr(t, attrs, ToolCallArgumentsKey)
+	assert.LessOrEqual(t, len(value), 96)
+	assert.True(t, json.Valid([]byte(value)))
+}
+
+func TestStartToolSpan_InvalidArgsJSON_DropsAttribute(t *testing.T) {
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	tracker, err := NewTrackerWithTracer(nil, tp.Tracer("tool-test"))
+	require.NoError(t, err)
+
+	_, span := tracker.StartToolSpan(context.Background(), "search", "call-1", `{"q":`)
+	span.End()
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := attribute.NewSet(spans[0].Attributes...)
+	_, ok := attrs.Value(ToolCallArgumentsKey)
+	assert.False(t, ok)
+}
+
+func TestStartToolSpan_DefaultTrackerIsTracingNoopBeforeInit(t *testing.T) {
+	installDefaultTrackerForTest(t, nil)
+
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	prevTracerProvider := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prevTracerProvider) })
 	otel.SetTracerProvider(tp)
 
 	_, span := StartToolSpan(context.Background(), "search", "call-1", `{"q":"test"}`)
 	span.End()
 
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	s := spans[0]
-	assert.Equal(t, "tool: search", s.Name)
-	attrs := attribute.NewSet(s.Attributes...)
-	toolName, _ := attrs.Value(ToolNameKey)
-	assert.Equal(t, "search", toolName.AsString())
-	toolID, _ := attrs.Value(ToolIDKey)
-	assert.Equal(t, "call-1", toolID.AsString())
-	toolArgs, _ := attrs.Value(ToolArgsKey)
-	assert.JSONEq(t, `{"q":"test"}`, toolArgs.AsString())
+	require.Empty(t, mem.GetSpans())
 }
 
-func TestRecordToolResult_SetsAttributeAndStatus(t *testing.T) {
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
-	RecordToolResult(rec, `{"ok":true}`, false)
-	assert.Equal(t, `{"ok":true}`, attrs[ToolResultKey].AsString())
+func TestRecordToolResult_TruncatedResultJSON_RemainsValid(t *testing.T) {
+	tracker, err := NewTracker(nil, WithMaxContextLength(96))
+	require.NoError(t, err)
+
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordToolResult(rec, `{"result":"`+strings.Repeat("b", 2048)+`"}`, false)
+
+	value := rec.attrs[ToolCallResultKey].AsString()
+	assert.LessOrEqual(t, len(value), 96)
+	assert.True(t, json.Valid([]byte(value)))
+	assert.False(t, rec.attrs[ToolErrorKey].AsBool())
 	assert.Equal(t, codes.Ok, rec.statusCode)
-
-	rec.statusCode = 0
-	RecordToolResult(rec, `{"error":"fail"}`, true)
-	assert.Equal(t, "tool execution failed", rec.statusDesc)
-	assert.Equal(t, codes.Error, rec.statusCode)
 }
 
-func TestRecordToolResult_OnToolSpan_AttributesAndStatus(t *testing.T) {
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	otel.SetTracerProvider(tp)
+func TestRecordToolResult_InvalidResultJSON_DropsAttributeAndSetsErrorStatus(t *testing.T) {
+	tracker, err := NewTracker(nil)
+	require.NoError(t, err)
 
-	_, span := StartToolSpan(context.Background(), "big", "id-1", "{}")
-	longResult := strings.Repeat("x", testContextLimit+50)
-	RecordToolResult(span, longResult, true)
-	span.End()
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
+	tracker.RecordToolResult(rec, `{"result":`, true)
 
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	s := spans[0]
-	attrs := attribute.NewSet(s.Attributes...)
-	resultVal, ok := attrs.Value(ToolResultKey)
-	require.True(t, ok)
-	result := resultVal.AsString()
-	assert.True(t, strings.HasSuffix(result, truncationSuffix))
-	assert.LessOrEqual(t, len(result), testContextLimit)
-	require.True(t, utf8.ValidString(result))
-	assert.Equal(t, codes.Error, s.Status.Code)
+	_, ok := rec.attrs[ToolCallResultKey]
+	assert.False(t, ok)
+	assert.True(t, rec.attrs[ToolErrorKey].AsBool())
+	assert.Equal(t, codes.Error, rec.statusCode)
 }
 
 func TestStartToolSpan_ConcurrentToolCalls(t *testing.T) {
 	mem := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	otel.SetTracerProvider(tp)
+
+	tracker, err := NewTrackerWithTracer(nil, tp.Tracer("tool-test"))
+	require.NoError(t, err)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			ctx := context.Background()
-			_, span := StartToolSpan(ctx, "tool", "id-"+strings.Repeat("x", id+1), "{}")
-			RecordToolResult(span, "ok", false)
+			_, span := tracker.StartToolSpan(context.Background(), "tool", "id-"+strings.Repeat("x", id+1), `{}`)
+			tracker.RecordToolResult(span, `{"ok":true}`, false)
 			span.End()
 		}(i)
 	}
 	wg.Wait()
 
-	spans := mem.GetSpans()
-	require.Len(t, spans, 10)
+	require.Len(t, mem.GetSpans(), 10)
 }
 
 func TestRecordCacheHit_SetsAttributes(t *testing.T) {
-	attrs := make(map[attribute.Key]attribute.Value)
-	rec := &recordingSpan{attrs: attrs}
+	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
 	RecordCacheHit(rec, true, "pgvector_cache")
-	assert.True(t, attrs[CacheHitKey].AsBool())
-	assert.Equal(t, "pgvector_cache", attrs[RetrievalSourceKey].AsString())
+	assert.True(t, rec.attrs[CacheHitKey].AsBool())
+	assert.Equal(t, "pgvector_cache", rec.attrs[RetrievalSourceKey].AsString())
 }
 
 func TestRecordAgentStep_AddsEvent(t *testing.T) {
@@ -310,6 +329,8 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	mem := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	prevTracerProvider := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prevTracerProvider) })
 	otel.SetTracerProvider(tp)
 
 	_, span := otel.Tracer("genai-test").Start(context.Background(), "op")
@@ -322,15 +343,50 @@ func TestRecordAgentStep_EventAttributes_RealSpan(t *testing.T) {
 	evt := spans[0].Events[0]
 	assert.Equal(t, AgentStepEvent, evt.Name)
 	attrs := attribute.NewSet(evt.Attributes...)
-	nameVal, ok := attrs.Value(AgentNameKey)
+	assert.Equal(t, "cardiologist", mustStringAttr(t, attrs, AgentNameKey))
+	assert.Equal(t, "specialist", mustStringAttr(t, attrs, AgentRoleKey))
+	assert.Equal(t, "step-2", mustStringAttr(t, attrs, WorkflowStepKey))
+}
+
+func testMeta() GenAIMeta {
+	return GenAIMeta{
+		Provider:      "openai",
+		Operation:     "chat",
+		RequestModel:  "gpt-4o-mini",
+		ResponseModel: "gpt-4o-mini",
+		Duration:      2 * time.Second,
+	}
+}
+
+func testPayload() GenAIPayload {
+	return GenAIPayload{
+		SystemInstructions: []GenAIContentPart{{
+			Type:    "text",
+			Content: "You are concise.",
+		}},
+		InputMessages: []GenAIMessage{{
+			Role: "user",
+			Parts: []GenAIContentPart{{
+				Type:    "text",
+				Content: "What is 2+2?",
+			}},
+		}},
+		OutputMessages: []GenAIMessage{{
+			Role: "assistant",
+			Parts: []GenAIContentPart{{
+				Type:    "text",
+				Content: "4",
+			}},
+			FinishReason: "stop",
+		}},
+	}
+}
+
+func mustStringAttr(t *testing.T, attrs attribute.Set, key attribute.Key) string {
+	t.Helper()
+	value, ok := attrs.Value(key)
 	require.True(t, ok)
-	assert.Equal(t, "cardiologist", nameVal.AsString())
-	roleVal, ok := attrs.Value(AgentRoleKey)
-	require.True(t, ok)
-	assert.Equal(t, "specialist", roleVal.AsString())
-	stepVal, ok := attrs.Value(WorkflowStepKey)
-	require.True(t, ok)
-	assert.Equal(t, "step-2", stepVal.AsString())
+	return value.AsString()
 }
 
 type recordedEvent struct {
@@ -338,9 +394,9 @@ type recordedEvent struct {
 	attrs map[attribute.Key]attribute.Value
 }
 
-// recordingSpan implements trace.Span and records SetAttributes, SetStatus, and AddEvent for tests.
 type recordingSpan struct {
 	noop.Span
+
 	attrs      map[attribute.Key]attribute.Value
 	events     []recordedEvent
 	statusCode codes.Code

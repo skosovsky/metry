@@ -8,6 +8,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -15,7 +17,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 
 	"github.com/skosovsky/metry/genai"
-	"github.com/skosovsky/metry/internal/genaiconfig"
 )
 
 const (
@@ -31,10 +32,28 @@ var (
 // Init configures global OTel providers and returns a shutdown function.
 // Uses resource.Default() merged with service attributes for host/PID/OS and service identity.
 // On partial failure, already-created providers are shut down and global otel state is
-// restored to the previous tracer/meter (atomic "all or nothing" for global provider state).
-func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) error, err error) {
-	prevTracer := otel.GetTracerProvider()
-	prevMeter := otel.GetMeterProvider()
+// restored to the previous tracer/meter/propagator/default GenAI tracker.
+
+//nolint:gocognit,funlen // Init orchestrates trace/metrics/propagator/session lifecycle in one place.
+func Init(ctx context.Context, opts ...Option) (func(context.Context) error, error) {
+	initSessionMu.Lock()
+	defer initSessionMu.Unlock()
+
+	prevSession := currentInitSession
+	baseState := newBaseOTelState()
+	if prevSession != nil {
+		baseState = prevSession.base
+	}
+	prevTracer := baseState.tracer
+	prevMeter := baseState.meter
+	prevPropagator := baseState.propagator
+	prevTracker := baseState.tracker
+	if prevSession != nil {
+		prevTracer = prevSession.activeTracer
+		prevMeter = prevSession.activeMeter
+		prevPropagator = prevSession.activePropagator
+		prevTracker = prevSession.tracker
+	}
 
 	cfg := newConfig()
 	for _, o := range opts {
@@ -43,9 +62,6 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	if cfg.ServiceName == "" {
 		return nil, ErrServiceNameRequired
 	}
-	prevGenAIConfig := genaiconfig.Load()
-	genAIConfigToken := genaiconfig.New(cfg.maxGenAIContextLength, cfg.RecordPayloads)
-	genaiconfig.Store(genAIConfigToken)
 
 	// Custom resource with service attributes; merge with default (host, PID, OS).
 	customAttrs := []attribute.KeyValue{
@@ -63,7 +79,6 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 	defRes := resource.Default()
 	res, err := resource.Merge(defRes, customRes)
 	if err != nil {
-		genaiconfig.CompareAndSwap(genAIConfigToken, prevGenAIConfig)
 		return nil, fmt.Errorf("metry: merge resource: %w", err)
 	}
 
@@ -82,63 +97,103 @@ func Init(ctx context.Context, opts ...Option) (shutdown func(context.Context) e
 		otel.SetTracerProvider(tp)
 	}
 
-	// Metric provider (only if exporter provided). On failure, rollback trace provider and restore globals.
+	// Each Init owns its active meter provider. Without a metric exporter, install a session-local no-op provider
+	// so metrics are not inherited from a previous metry session.
+	activeMeter := metric.MeterProvider(noopmetric.NewMeterProvider())
 	var mp *sdkmetric.MeterProvider
-	var cleanupGenAI func()
 	if cfg.MetricExporter != nil {
 		mp = sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
 			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(cfg.MetricExporter)),
 		)
-		otel.SetMeterProvider(mp)
-		var regErr error
-		cleanupGenAI, regErr = genai.RegisterMetricsForInit(otel.Meter(meterName))
-		if regErr != nil {
-			errs := []error{fmt.Errorf("metry: register genai metrics: %w", regErr)}
-			if cleanupGenAI != nil {
-				cleanupGenAI()
-			}
-			if e := tp.Shutdown(ctx); e != nil {
-				errs = append(errs, e)
-			}
-			if e := mp.Shutdown(ctx); e != nil {
-				errs = append(errs, e)
-			}
-			otel.SetTracerProvider(prevTracer)
-			otel.SetMeterProvider(prevMeter)
-			genaiconfig.CompareAndSwap(genAIConfigToken, prevGenAIConfig)
-			return nil, errors.Join(errs...)
-		}
+		activeMeter = mp
 	}
 
 	// W3C Trace Context and Baggage propagation.
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+	installedPropagator := &metryPropagator{TextMapPropagator: propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
-	))
+	)}
+	otel.SetTextMapPropagator(installedPropagator)
 
-	shutdown = func(ctx context.Context) error {
-		ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
-		defer cancel()
-		var errs []error
-		if err := tp.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("tracer shutdown: %w", err))
+	var trackerMeter metric.Meter
+	if cfg.MetricExporter != nil {
+		trackerMeter = mp.Meter(meterName)
+	}
+	defaultTracker, err := genai.NewTrackerWithTracer(trackerMeter, tp.Tracer("metry/genai"), cfg.genAIOptions...)
+	if err != nil {
+		errs := []error{fmt.Errorf("metry: create genai tracker: %w", err)}
+		applyGlobalOTelState(prevTracer, prevMeter, prevPropagator, prevTracker)
+		if e := tp.Shutdown(ctx); e != nil {
+			errs = append(errs, e)
 		}
 		if mp != nil {
-			if cleanupGenAI != nil {
-				cleanupGenAI()
+			if e := mp.Shutdown(ctx); e != nil {
+				errs = append(errs, e)
 			}
-			if err := mp.Shutdown(ctx); err != nil {
+		}
+		return nil, errors.Join(errs...)
+	}
+	applyGlobalOTelState(tp, activeMeter, installedPropagator, defaultTracker)
+	session := &initSession{
+		prev:             prevSession,
+		base:             baseState,
+		activeTracer:     tp,
+		activeMeter:      activeMeter,
+		activePropagator: installedPropagator,
+		tp:               tp,
+		mp:               mp,
+		tracker:          defaultTracker,
+		closed:           false,
+	}
+	currentInitSession = session
+
+	shutdownFn := func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+		defer cancel()
+
+		initSessionMu.Lock()
+		if session.closed {
+			initSessionMu.Unlock()
+			return nil
+		}
+		session.closed = true
+		if currentInitSession == session {
+			nextSession := livePreviousSession(session.prev)
+			currentInitSession = nextSession
+			if nextSession != nil {
+				applyGlobalOTelState(
+					nextSession.activeTracer,
+					nextSession.activeMeter,
+					nextSession.activePropagator,
+					nextSession.tracker,
+				)
+			} else {
+				applyGlobalOTelState(
+					session.base.tracer,
+					session.base.meter,
+					session.base.propagator,
+					session.base.tracker,
+				)
+			}
+		}
+		initSessionMu.Unlock()
+
+		var errs []error
+		if err := session.tp.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("tracer shutdown: %w", err))
+		}
+		if session.mp != nil {
+			if err := session.mp.Shutdown(ctx); err != nil {
 				errs = append(errs, fmt.Errorf("meter shutdown: %w", err))
 			}
 		}
-		genaiconfig.CompareAndSwap(genAIConfigToken, genaiconfig.Default())
 		if len(errs) > 0 {
 			return errors.Join(errs...)
 		}
 		return nil
 	}
-	return shutdown, nil
+	return shutdownFn, nil
 }
 
 // noopSpanExporter implements sdktrace.SpanExporter and drops all spans.
