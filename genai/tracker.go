@@ -1,12 +1,17 @@
 package genai
 
 import (
-	"go.opentelemetry.io/otel"
+	"errors"
+
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
+)
 
-	"github.com/skosovsky/metry/internal/defaultslot"
+var (
+	// ErrMeterRequired is returned when NewTracker is called with a nil meter.
+	ErrMeterRequired = errors.New("genai: meter is required")
+	// ErrTracerRequired is returned when NewTracker is called with a nil tracer.
+	ErrTracerRequired = errors.New("genai: tracer is required")
 )
 
 // Tracker owns GenAI runtime config, metric instruments, and the tracer used for tool spans.
@@ -28,28 +33,21 @@ type metricsHolder struct {
 	VideoFrames         metric.Int64Histogram
 }
 
-//nolint:gochecknoglobals // Default() returns this when no tracker is installed in the slot.
-var noopTracker = &Tracker{
-	cfg:     defaultRuntimeConfig(),
-	metrics: nil,
-	tracer:  noop.NewTracerProvider().Tracer(tracerName),
-}
+// NewTracker creates an explicit GenAI tracker with its own config, instruments, and tracer.
+func NewTracker(meter metric.Meter, tracer trace.Tracer, opts ...Option) (*Tracker, error) {
+	if meter == nil {
+		return nil, ErrMeterRequired
+	}
+	if tracer == nil {
+		return nil, ErrTracerRequired
+	}
 
-// NewTracker creates an explicit GenAI tracker with its own config and instruments.
-func NewTracker(meter metric.Meter, opts ...Option) (*Tracker, error) {
-	return NewTrackerWithTracer(meter, otel.Tracer(tracerName), opts...)
-}
-
-// NewTrackerWithTracer creates an explicit GenAI tracker with its own config, instruments, and tracer.
-func NewTrackerWithTracer(meter metric.Meter, tracer trace.Tracer, opts ...Option) (*Tracker, error) {
 	cfg := buildRuntimeConfig(opts...)
 	holder, err := newMetricsHolder(meter)
 	if err != nil {
 		return nil, err
 	}
-	if tracer == nil {
-		tracer = otel.Tracer(tracerName)
-	}
+
 	return &Tracker{
 		cfg:     cfg,
 		metrics: holder,
@@ -57,20 +55,8 @@ func NewTrackerWithTracer(meter metric.Meter, tracer trace.Tracer, opts ...Optio
 	}, nil
 }
 
-// Default returns the package-level default tracker.
-func Default() *Tracker {
-	if tracker, ok := defaultslot.Load().(*Tracker); ok && tracker != nil {
-		return tracker
-	}
-	return noopTracker
-}
-
 //nolint:funlen // Sequential OTel instrument registration; splitting would obscure error handling.
 func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
-	if meter == nil {
-		return nil, nil //nolint:nilnil // nil meter is supported: tracker records spans without metric instruments.
-	}
-
 	tokenUsage, err := meter.Int64Histogram(
 		TokenUsageMetricName,
 		metric.WithUnit("{token}"),

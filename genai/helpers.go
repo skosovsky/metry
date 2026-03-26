@@ -13,8 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const tracerName = "metry/genai"
-const truncationSuffix = "... [TRUNCATED]"
+const truncationSuffix = "... [truncated]"
 const defaultCostCurrency = "USD"
 
 // Preallocated capacities for attribute slices built in hot paths.
@@ -25,10 +24,8 @@ const (
 	attrCapUsageAttrs       = 10
 )
 
-// GenAIMeta describes operation-level metadata used for official GenAI semconv.
-//
-//nolint:revive // public API intentionally keeps GenAI prefix for clarity across packages.
-type GenAIMeta struct {
+// Meta describes operation-level metadata used for official GenAI semconv.
+type Meta struct {
 	Provider      string
 	Operation     string
 	RequestModel  string
@@ -39,10 +36,8 @@ type GenAIMeta struct {
 	ErrorType     string
 }
 
-// GenAIContentPart is one structured content block inside a system instruction or message.
-//
-//nolint:revive // public API intentionally keeps GenAI prefix for clarity across packages.
-type GenAIContentPart struct {
+// ContentPart is one structured content block inside a system instruction or message.
+type ContentPart struct {
 	Type      string          `json:"type"`
 	Content   string          `json:"content,omitempty"`
 	ID        string          `json:"id,omitempty"`
@@ -51,31 +46,25 @@ type GenAIContentPart struct {
 	Result    json.RawMessage `json:"result,omitempty"`
 }
 
-// GenAIMessage is one structured GenAI message emitted on spans as JSON payload.
-//
-//nolint:revive // public API intentionally keeps GenAI prefix for clarity across packages.
-type GenAIMessage struct {
-	Role         string             `json:"role"`
-	Parts        []GenAIContentPart `json:"parts"`
-	FinishReason string             `json:"finish_reason,omitempty"`
+// Message is one structured GenAI message emitted on spans as JSON payload.
+type Message struct {
+	Role         string        `json:"role"`
+	Parts        []ContentPart `json:"parts"`
+	FinishReason string        `json:"finish_reason,omitempty"`
 }
 
-// GenAIPayload captures structured system/input/output content for one interaction.
-//
-//nolint:revive // public API intentionally keeps GenAI prefix for clarity across packages.
-type GenAIPayload struct {
-	SystemInstructions []GenAIContentPart
-	InputMessages      []GenAIMessage
-	OutputMessages     []GenAIMessage
+// Payload captures structured system/input/output content for one interaction.
+type Payload struct {
+	SystemInstructions []ContentPart
+	InputMessages      []Message
+	OutputMessages     []Message
 }
 
-// GenAIUsage captures billable and multimodal usage for one interaction.
+// Usage captures billable and multimodal usage for one interaction.
 // InputTokens should include cached input tokens when the provider exposes a total.
 // OutputTokens should include reasoning output tokens when the provider exposes a total.
 // Cost must be non-negative; negative values are treated as invalid input and ignored.
-//
-//nolint:revive // public API intentionally keeps GenAI prefix for clarity across packages.
-type GenAIUsage struct {
+type Usage struct {
 	InputTokens              int
 	OutputTokens             int
 	CacheCreationInputTokens int
@@ -121,7 +110,7 @@ func truncateAtRuneBoundary(s string, limit int) string {
 	return s[:limit]
 }
 
-func hasUsageData(usage GenAIUsage) bool {
+func hasUsageData(usage Usage) bool {
 	return usage.InputTokens != 0 ||
 		usage.OutputTokens != 0 ||
 		usage.CacheCreationInputTokens != 0 ||
@@ -149,24 +138,13 @@ func normalizeCurrency(currency string) string {
 	return currency
 }
 
-// RecordInteraction records one GenAI interaction on the package default tracker.
-func RecordInteraction(
-	ctx context.Context,
-	span trace.Span,
-	meta GenAIMeta,
-	payload GenAIPayload,
-	usage GenAIUsage,
-) {
-	Default().RecordInteraction(ctx, span, meta, payload, usage)
-}
-
 // RecordInteraction records one GenAI interaction on an explicit tracker.
 func (t *Tracker) RecordInteraction(
 	ctx context.Context,
 	span trace.Span,
-	meta GenAIMeta,
-	payload GenAIPayload,
-	usage GenAIUsage,
+	meta Meta,
+	payload Payload,
+	usage Usage,
 ) {
 	attrs := make([]attribute.KeyValue, 0, attrCapInteractionAttrs)
 	attrs = append(attrs, buildMetaAttributes(meta)...)
@@ -184,7 +162,7 @@ func (t *Tracker) RecordInteraction(
 	t.recordOperationDuration(ctx, meta)
 }
 
-func buildMetaAttributes(meta GenAIMeta) []attribute.KeyValue {
+func buildMetaAttributes(meta Meta) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapMetaAttrs)
 	if meta.Provider != "" {
 		attrs = append(attrs, ProviderNameKey.String(meta.Provider))
@@ -210,7 +188,7 @@ func buildMetaAttributes(meta GenAIMeta) []attribute.KeyValue {
 	return attrs
 }
 
-func buildPayloadAttributes(payload GenAIPayload, cfg runtimeConfig) []attribute.KeyValue {
+func buildPayloadAttributes(payload Payload, cfg runtimeConfig) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapPayloadAttrs)
 	if value := marshalPayloadValue(payload.SystemInstructions, cfg); value != "" {
 		attrs = append(attrs, SystemInstructionsKey.String(value))
@@ -228,18 +206,14 @@ func marshalPayloadValue(value any, cfg runtimeConfig) string {
 	if value == nil {
 		return ""
 	}
-	buf, err := json.Marshal(normalizePayloadValue(value, cfg.MaxContextLength()))
+	buf, err := json.Marshal(value)
 	if err != nil || string(buf) == "null" || string(buf) == "[]" {
 		return ""
 	}
-	normalized, ok := normalizePayloadJSON(buf, cfg.MaxContextLength())
-	if !ok {
-		return ""
-	}
-	return normalized
+	return truncateContextWithConfig(string(buf), cfg)
 }
 
-func buildUsageAttributes(usage GenAIUsage) []attribute.KeyValue {
+func buildUsageAttributes(usage Usage) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapUsageAttrs)
 	if usage.InputTokens > 0 {
 		attrs = append(attrs, InputTokensKey.Int(usage.InputTokens))
@@ -280,7 +254,7 @@ func buildUsageAttributes(usage GenAIUsage) []attribute.KeyValue {
 	return attrs
 }
 
-func (t *Tracker) recordUsageMetrics(ctx context.Context, meta GenAIMeta, usage GenAIUsage) {
+func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage) {
 	if t.metrics == nil || !hasUsageData(usage) {
 		return
 	}
@@ -336,7 +310,7 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta GenAIMeta, usage 
 	}
 }
 
-func (t *Tracker) recordOperationDuration(ctx context.Context, meta GenAIMeta) {
+func (t *Tracker) recordOperationDuration(ctx context.Context, meta Meta) {
 	if t.metrics == nil || t.metrics.OperationDuration == nil || meta.Duration <= 0 {
 		return
 	}
@@ -350,7 +324,7 @@ func (t *Tracker) recordOperationDuration(ctx context.Context, meta GenAIMeta) {
 	t.metrics.OperationDuration.Record(ctx, meta.Duration.Seconds(), metric.WithAttributes(attrs...))
 }
 
-func metricAttributesFromMeta(meta GenAIMeta) ([]attribute.KeyValue, bool) {
+func metricAttributesFromMeta(meta Meta) ([]attribute.KeyValue, bool) {
 	if meta.Provider == "" || meta.Operation == "" {
 		return nil, false
 	}
@@ -387,11 +361,6 @@ func recordIntHistogram(ctx context.Context, histogram metric.Int64Histogram, va
 	histogram.Record(ctx, int64(value), metric.WithAttributes(attrs...))
 }
 
-// StartToolSpan creates a child span for a tool execution using the default tracker config.
-func StartToolSpan(ctx context.Context, toolName, toolCallID, argsJSON string) (context.Context, trace.Span) {
-	return Default().StartToolSpan(ctx, toolName, toolCallID, argsJSON)
-}
-
 // StartToolSpan creates a child span for a tool execution using an explicit tracker.
 func (t *Tracker) StartToolSpan(
 	ctx context.Context,
@@ -403,22 +372,17 @@ func (t *Tracker) StartToolSpan(
 		ToolNameKey.String(toolName),
 		ToolCallIDKey.String(toolCallID),
 	}
-	if value, ok := normalizeToolJSON(argsJSON, t.cfg.MaxContextLength()); ok {
-		attrs = append(attrs, ToolCallArgumentsKey.String(value))
+	if argsJSON != "" {
+		attrs = append(attrs, ToolCallArgumentsKey.String(truncateContextWithConfig(argsJSON, t.cfg)))
 	}
 	span.SetAttributes(attrs...)
 	return ctx, span
 }
 
-// RecordToolResult records tool output and status on the package default tracker.
-func RecordToolResult(span trace.Span, resultJSON string, isError bool) {
-	Default().RecordToolResult(span, resultJSON, isError)
-}
-
 // RecordToolResult records tool output and status using an explicit tracker config.
 func (t *Tracker) RecordToolResult(span trace.Span, resultJSON string, isError bool) {
-	if value, ok := normalizeToolJSON(resultJSON, t.cfg.MaxContextLength()); ok {
-		span.SetAttributes(ToolCallResultKey.String(value))
+	if resultJSON != "" {
+		span.SetAttributes(ToolCallResultKey.String(truncateContextWithConfig(resultJSON, t.cfg)))
 	}
 	if isError {
 		span.SetAttributes(ToolErrorKey.Bool(true))

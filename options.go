@@ -4,14 +4,12 @@ package metry
 import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-
-	"github.com/skosovsky/metry/genai"
 )
 
-// Option configures Init. Use WithServiceName, WithTraceRatio, etc.
+// Option configures New. Use WithServiceName, WithTraceRatio, etc.
 type Option func(*config)
 
-// config holds Init options with defaults applied.
+// config holds New options with defaults applied.
 type config struct {
 	ServiceName    string
 	ServiceVersion string
@@ -19,7 +17,6 @@ type config struct {
 	TraceRatio     float64
 	Exporter       sdktrace.SpanExporter
 	MetricExporter sdkmetric.Exporter
-	genAIOptions   []genai.Option
 }
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
@@ -31,7 +28,6 @@ func newConfig() *config {
 		TraceRatio:     1.0,
 		Exporter:       nil,
 		MetricExporter: nil,
-		genAIOptions:   nil,
 	}
 }
 
@@ -63,11 +59,4 @@ func WithExporter(exp sdktrace.SpanExporter) Option {
 // WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
 func WithMetricExporter(exp sdkmetric.Exporter) Option {
 	return func(c *config) { c.MetricExporter = exp }
-}
-
-// WithGenAIConfig configures the GenAI tracker created by metry.Init.
-func WithGenAIConfig(opts ...genai.Option) Option {
-	return func(c *config) {
-		c.genAIOptions = append(c.genAIOptions, opts...)
-	}
 }

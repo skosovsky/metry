@@ -2,143 +2,147 @@ package metry
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/skosovsky/metry/genai"
-	"github.com/skosovsky/metry/internal/genaitest"
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestInit_ValidOptions_Succeeds(t *testing.T) {
-	ctx := context.Background()
-	genaitest.InstallDefaultTrackerForTest(t, nil)
-	shutdown, err := Init(ctx, WithServiceName("test-svc"), WithServiceVersion("1.0.0"), WithEnvironment("test"))
-	require.NoError(t, err)
-	require.NotNil(t, shutdown)
-	t.Cleanup(func() { _ = shutdown(ctx) })
-
-	require.NotNil(t, otel.Tracer("metry"))
-	require.NotNil(t, otel.Meter("metry"))
-	require.NotNil(t, genai.Default())
-}
-
-func TestInit_MissingServiceName_ReturnsError(t *testing.T) {
-	ctx := context.Background()
-	genaitest.InstallDefaultTrackerForTest(t, nil)
-	shutdown, err := Init(ctx, WithEnvironment("test"))
+func TestNew_MissingServiceName_ReturnsError(t *testing.T) {
+	provider, err := New(context.Background(), WithEnvironment("test"))
 	require.ErrorIs(t, err, ErrServiceNameRequired)
-	require.Nil(t, shutdown)
+	require.Nil(t, provider)
 }
 
-func TestInit_WithGenAIConfig_InstallsDefaultTracker(t *testing.T) {
+func TestNew_DoesNotMutateGlobalOTelState(t *testing.T) {
 	ctx := context.Background()
-	genaitest.InstallDefaultTrackerForTest(t, nil)
-	shutdown, err := Init(ctx,
+	prevTracerProvider := otel.GetTracerProvider()
+	prevMeterProvider := otel.GetMeterProvider()
+	prevPropagator := otel.GetTextMapPropagator()
+
+	provider, err := New(ctx, WithServiceName("test-svc"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
+
+	require.Same(t, prevTracerProvider, otel.GetTracerProvider())
+	require.Same(t, prevMeterProvider, otel.GetMeterProvider())
+	require.Same(t, prevPropagator, otel.GetTextMapPropagator())
+}
+
+func TestNew_ProviderWorksAndShutdownIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	traceExporter := tracetest.NewInMemoryExporter()
+	provider, err := New(
+		ctx,
 		WithServiceName("test-svc"),
-		WithGenAIConfig(
-			genai.WithRecordPayloads(true),
-			genai.WithMaxContextLength(96),
-		),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = shutdown(ctx) })
-
-	value, ok := recordInputMessagesAttribute(t, strings.Repeat("a", 256))
-	require.True(t, ok)
-	require.LessOrEqual(t, len(value), 96)
-	require.True(t, json.Valid([]byte(value)))
-}
-
-func TestShutdown_OldSessionDoesNotResetNewDefaultTracker(t *testing.T) {
-	ctx := context.Background()
-	genaitest.InstallDefaultTrackerForTest(t, nil)
-
-	shutdown1, err := Init(ctx,
-		WithServiceName("test-svc-1"),
-		WithGenAIConfig(genai.WithRecordPayloads(true), genai.WithMaxContextLength(128)),
+		WithExporter(traceExporter),
 	)
 	require.NoError(t, err)
 
-	shutdown2, err := Init(ctx,
-		WithServiceName("test-svc-2"),
-		WithGenAIConfig(genai.WithRecordPayloads(false), genai.WithMaxContextLength(32)),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = shutdown2(ctx) })
-
-	require.NoError(t, shutdown1(ctx))
-
-	_, ok := recordInputMessagesAttribute(t, "should-stay-hidden")
-	require.False(t, ok)
-}
-
-func TestInit_DoubleInitWithMetricExporter_ReplacesDefaultTracker(t *testing.T) {
-	ctx := context.Background()
-	genaitest.InstallDefaultTrackerForTest(t, nil)
-	firstMetrics := testutil.NewInMemoryMetricExporter()
-	shutdown1, err := Init(ctx,
-		WithServiceName("test-svc-1"),
-		WithMetricExporter(firstMetrics.Exporter()),
-		WithGenAIConfig(genai.WithRecordPayloads(true), genai.WithMaxContextLength(128)),
-	)
-	require.NoError(t, err)
-
-	secondMetrics := testutil.NewInMemoryMetricExporter()
-	shutdown2, err := Init(ctx,
-		WithServiceName("test-svc-2"),
-		WithMetricExporter(secondMetrics.Exporter()),
-		WithGenAIConfig(genai.WithRecordPayloads(false), genai.WithMaxContextLength(32)),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = shutdown2(ctx)
-		_ = shutdown1(ctx)
-	})
-
-	_, ok := recordInputMessagesAttribute(t, "should-be-hidden")
-	require.False(t, ok)
-}
-
-func recordInputMessagesAttribute(t *testing.T, text string) (string, bool) {
-	t.Helper()
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	_, span := tp.Tracer("config-test").Start(context.Background(), "span")
-	genai.RecordInteraction(context.Background(), span, genai.GenAIMeta{
-		Provider:      "openai",
-		Operation:     "chat",
-		RequestModel:  "gpt-4o-mini",
-		ResponseModel: "gpt-4o-mini",
-		Duration:      time.Second,
-	}, genai.GenAIPayload{
-		InputMessages: []genai.GenAIMessage{{
-			Role: "user",
-			Parts: []genai.GenAIContentPart{{
-				Type:    "text",
-				Content: text,
-			}},
-		}},
-	}, genai.GenAIUsage{})
+	_, span := provider.TracerProvider.Tracer("metry-test").Start(ctx, "span")
 	span.End()
 
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	value, ok := attrs.Value(genai.InputMessagesKey)
-	if !ok {
-		return "", false
-	}
-	return value.AsString(), true
+	tp := provider.TracerProvider.(*sdktrace.TracerProvider)
+	require.NoError(t, tp.ForceFlush(ctx))
+	require.Len(t, traceExporter.GetSpans(), 1)
+
+	require.NoError(t, provider.Shutdown(ctx))
+	require.NoError(t, provider.Shutdown(ctx))
+}
+
+func TestNew_NoTraceExporter_TracerStartsAndShutdowns(t *testing.T) {
+	ctx := context.Background()
+	provider, err := New(ctx, WithServiceName("test-svc"))
+	require.NoError(t, err)
+
+	_, span := provider.TracerProvider.Tracer("metry-test").Start(ctx, "span-no-exporter")
+	span.End()
+
+	require.NoError(t, provider.Shutdown(ctx))
+	require.NoError(t, provider.Shutdown(ctx))
+}
+
+func TestNew_MeterProvider_BehaviorWithAndWithoutMetricExporter(t *testing.T) {
+	ctx := context.Background()
+
+	withoutMetrics, err := New(ctx, WithServiceName("test-no-metrics"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = withoutMetrics.Shutdown(ctx) })
+	require.NotNil(t, withoutMetrics.MeterProvider)
+	require.Nil(t, withoutMetrics.mp)
+
+	metricExporter := testutil.NewInMemoryMetricExporter()
+	withMetrics, err := New(
+		ctx,
+		WithServiceName("test-with-metrics"),
+		WithMetricExporter(metricExporter.Exporter()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = withMetrics.Shutdown(ctx) })
+	require.NotNil(t, withMetrics.MeterProvider)
+	require.NotNil(t, withMetrics.mp)
+}
+
+func TestNew_NoMetricExporter_TrackerWorksViaPublicAPI(t *testing.T) {
+	ctx := context.Background()
+	traceExporter := tracetest.NewInMemoryExporter()
+
+	provider, err := New(
+		ctx,
+		WithServiceName("test-no-metrics-tracker"),
+		WithExporter(traceExporter),
+	)
+	require.NoError(t, err)
+
+	tracker, err := genai.NewTracker(
+		provider.MeterProvider.Meter("metry/genai"),
+		provider.TracerProvider.Tracer("metry/genai"),
+	)
+	require.NoError(t, err)
+
+	_, span := provider.TracerProvider.Tracer("metry-test").Start(ctx, "interaction-span")
+	tracker.RecordInteraction(ctx, span, genai.Meta{
+		Provider:  "openai",
+		Operation: "chat",
+	}, genai.Payload{}, genai.Usage{
+		InputTokens:  1,
+		OutputTokens: 1,
+	})
+	span.End()
+
+	tp := provider.TracerProvider.(*sdktrace.TracerProvider)
+	require.NoError(t, tp.ForceFlush(ctx))
+	require.NotEmpty(t, traceExporter.GetSpans())
+
+	require.NoError(t, provider.Shutdown(ctx))
+}
+
+func TestProvider_ContainsW3CPropagator(t *testing.T) {
+	ctx := context.Background()
+	provider, err := New(ctx, WithServiceName("test-svc"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
+
+	fields := provider.Propagator.Fields()
+	require.Contains(t, fields, propagation.TraceContext{}.Fields()[0])
+}
+
+func TestProvider_Shutdown_NilSafe(t *testing.T) {
+	var provider *Provider
+	require.NoError(t, provider.Shutdown(context.Background()))
+}
+
+func TestProvider_TracerProvider_IsSDKTracerProvider(t *testing.T) {
+	provider, err := New(context.Background(), WithServiceName("test-svc"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	_, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
+	require.True(t, ok)
 }

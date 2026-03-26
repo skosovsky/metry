@@ -7,4 +7,9 @@ go get github.com/skosovsky/metry
 go get github.com/skosovsky/metry/middleware/grpc
 ```
 
-Use `metrygrpc.ServerOptions()` on the server and `metrygrpc.ClientDialOption()` on the client after calling `metry.Init(...)` in your application.
+Use matching versions of both modules (for example, `v0.3.x` with `v0.3.x`).
+
+Create runtime with `metry.New(...)`, then pass `provider` directly:
+
+- `metrygrpc.ServerOptions(provider)`
+- `metrygrpc.ClientDialOption(provider)`

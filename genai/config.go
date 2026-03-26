@@ -1,6 +1,6 @@
 package genai
 
-const defaultMaxContextLength = 16384
+const defaultMaxContextLength = 65536
 
 // Option configures tracker runtime behavior.
 type Option func(*runtimeConfig)
