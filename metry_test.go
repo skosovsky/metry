@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/skosovsky/metry/genai"
 	"github.com/skosovsky/metry/testutil"
@@ -145,4 +146,100 @@ func TestProvider_TracerProvider_IsSDKTracerProvider(t *testing.T) {
 
 	_, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
 	require.True(t, ok)
+}
+
+func TestNew_WithSampler_OverridesTraceRatio(t *testing.T) {
+	ctx := context.Background()
+	traceExporter := tracetest.NewInMemoryExporter()
+
+	providerNever, err := New(
+		ctx,
+		WithServiceName("test-sampler-never"),
+		WithTraceRatio(1.0),
+		WithSampler(sdktrace.NeverSample()),
+		WithExporter(traceExporter),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = providerNever.Shutdown(ctx) })
+
+	_, spanNever := providerNever.TracerProvider.Tracer("metry-test").Start(ctx, "span-never")
+	spanNever.End()
+	require.NoError(t, providerNever.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
+	require.Empty(t, traceExporter.GetSpans())
+
+	providerAlways, err := New(
+		ctx,
+		WithServiceName("test-sampler-always"),
+		WithTraceRatio(0.0),
+		WithSampler(sdktrace.AlwaysSample()),
+		WithExporter(traceExporter),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = providerAlways.Shutdown(ctx) })
+
+	_, spanAlways := providerAlways.TracerProvider.Tracer("metry-test").Start(ctx, "span-always")
+	spanAlways.End()
+	require.NoError(t, providerAlways.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
+	require.Len(t, traceExporter.GetSpans(), 1)
+	require.Equal(t, "span-always", traceExporter.GetSpans()[0].Name)
+}
+
+func TestNew_WithHintSampler_RequiresKeepHintToExport(t *testing.T) {
+	ctx := context.Background()
+	traceExporter := tracetest.NewInMemoryExporter()
+
+	provider, err := New(
+		ctx,
+		WithServiceName("test-hint-sampler"),
+		WithSampler(genai.NewHintSampler(sdktrace.NeverSample())),
+		WithExporter(traceExporter),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
+
+	tracer := provider.TracerProvider.Tracer("metry-test")
+
+	_, dropped := tracer.Start(ctx, "span-without-hint")
+	dropped.End()
+
+	_, kept := tracer.Start(
+		ctx,
+		"span-with-hint",
+		trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
+	)
+	kept.End()
+
+	require.NoError(t, provider.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
+	spans := traceExporter.GetSpans()
+	require.Len(t, spans, 1)
+	require.Equal(t, "span-with-hint", spans[0].Name)
+}
+
+func TestNew_WithHintSampler_PropagatesSampledParentDecision(t *testing.T) {
+	ctx := context.Background()
+	traceExporter := tracetest.NewInMemoryExporter()
+
+	provider, err := New(
+		ctx,
+		WithServiceName("test-hint-parent"),
+		WithSampler(genai.NewHintSampler(sdktrace.NeverSample())),
+		WithExporter(traceExporter),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
+
+	tracer := provider.TracerProvider.Tracer("metry-test")
+
+	childCtx, root := tracer.Start(
+		ctx,
+		"root-with-hint",
+		trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
+	)
+	_, child := tracer.Start(childCtx, "child-without-hint")
+	child.End()
+	root.End()
+
+	require.NoError(t, provider.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
+	spans := traceExporter.GetSpans()
+	require.Len(t, spans, 2)
 }

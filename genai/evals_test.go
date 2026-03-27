@@ -2,7 +2,9 @@ package genai
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestRecordAsyncFeedback_InvalidParent_ReturnsError(t *testing.T) {
+func TestRecordEvaluations_InvalidParent_ReturnsError(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -22,14 +24,16 @@ func TestRecordAsyncFeedback_InvalidParent_ReturnsError(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
-	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
+	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
 	require.NoError(t, err)
 
-	err = tracker.RecordAsyncFeedback(context.Background(), trace.SpanContext{}, 0.5, "bad")
+	err = tracker.RecordEvaluations(context.Background(), trace.SpanContext{}, []Evaluation{
+		{Metric: EvaluationFaithfulness, Score: 0.8},
+	})
 	require.ErrorIs(t, err, ErrParentSpanContextRequired)
 }
 
-func TestRecordAsyncFeedback_ValidRemoteParent_AttachesSpan(t *testing.T) {
+func TestRecordEvaluations_ValidParent_AddsChildSpanAndEvents(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -38,25 +42,37 @@ func TestRecordAsyncFeedback_ValidRemoteParent_AttachesSpan(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
-	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
+	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
 	require.NoError(t, err)
 
 	parent := newParentSpanContext(true)
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 0.9, "should-not-export")
+	err = tracker.RecordEvaluations(context.Background(), parent, []Evaluation{
+		{Metric: EvaluationFaithfulness, Score: 0.91, Reasoning: "hidden"},
+		{Metric: EvaluationAnswerRelevance, Score: 0.76},
+	})
 	require.NoError(t, err)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	assert.Equal(t, "user_feedback", spans[0].Name)
+	assert.Equal(t, "llm_evaluations", spans[0].Name)
 	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
 	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.InDelta(t, 0.9, mustFloatAttr(t, attrs, EvaluationScoreKey), 1e-9)
-	_, ok := attrs.Value(EvaluationTextKey)
+
+	spanAttrs := attribute.NewSet(spans[0].Attributes...)
+	assert.Equal(t, PurposeQualityEvaluation, mustStringAttr(t, spanAttrs, OperationPurposeKey))
+
+	require.Len(t, spans[0].Events, 2)
+	assert.Equal(t, "evaluation", spans[0].Events[0].Name)
+	assert.Equal(t, "evaluation", spans[0].Events[1].Name)
+
+	firstAttrs := attribute.NewSet(spans[0].Events[0].Attributes...)
+	assert.Equal(t, string(EvaluationFaithfulness), mustStringAttr(t, firstAttrs, EvaluationMetricNameKey))
+	assert.InDelta(t, 0.91, mustFloatAttr(t, firstAttrs, EvaluationScoreKey), 1e-9)
+	_, ok := firstAttrs.Value(EvaluationReasoningKey)
 	assert.False(t, ok)
 }
 
-func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
+func TestRecordEvaluations_WithPayloadRecording_IncludesReasoning(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -66,45 +82,34 @@ func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
 	tracker, err := NewTracker(
-		mp.Meter("feedback"),
-		tp.Tracer("feedback"),
+		mp.Meter("evals"),
+		tp.Tracer("evals"),
 		WithRecordPayloads(true),
+		WithMaxContextLength(48),
 	)
 	require.NoError(t, err)
 
 	parent := newParentSpanContext(false)
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 1.0, "approved")
+	err = tracker.RecordEvaluations(context.Background(), parent, []Evaluation{
+		{
+			Metric:    EvaluationContextPrecision,
+			Score:     0.67,
+			Reasoning: strings.Repeat("x", 200),
+		},
+	})
 	require.NoError(t, err)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "approved", mustStringAttr(t, attrs, EvaluationTextKey))
+	require.Len(t, spans[0].Events, 1)
+
+	eventAttrs := attribute.NewSet(spans[0].Events[0].Attributes...)
+	reasoning := mustStringAttr(t, eventAttrs, EvaluationReasoningKey)
+	assert.LessOrEqual(t, len(reasoning), 48)
+	assert.True(t, utf8.ValidString(reasoning))
 }
 
-func TestRecordAsyncFeedback_ValidLocalParent_AttachesSpan(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
-	require.NoError(t, err)
-
-	parent := newParentSpanContext(false)
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 0.7, "local-parent")
-	require.NoError(t, err)
-
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
-	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
-}
-
-func TestRecordAsyncFeedback_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
+func TestRecordEvaluations_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -116,27 +121,26 @@ func TestRecordAsyncFeedback_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *tes
 	)
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
-	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
+	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
 	require.NoError(t, err)
 
 	parent := unsampledRemoteParentSpanContext()
-	err = tracker.RecordAsyncFeedback(
+	err = tracker.RecordEvaluations(
 		context.Background(),
 		parent,
-		0.2,
-		"negative",
+		[]Evaluation{{Metric: EvaluationFaithfulness, Score: 0.2}},
 		trace.WithAttributes(SamplingKeepKey.Bool(true)),
 	)
 	require.NoError(t, err)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	assert.Equal(t, "user_feedback", spans[0].Name)
+	assert.Equal(t, "llm_evaluations", spans[0].Name)
 	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
 	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
 }
 
-func TestRecordAsyncFeedback_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *testing.T) {
+func TestRecordEvaluations_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -148,23 +152,16 @@ func TestRecordAsyncFeedback_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *test
 	)
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
 
-	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
+	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
 	require.NoError(t, err)
 
 	parent := unsampledRemoteParentSpanContext()
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 0.2, "negative")
+	err = tracker.RecordEvaluations(
+		context.Background(),
+		parent,
+		[]Evaluation{{Metric: EvaluationFaithfulness, Score: 0.2}},
+	)
 	require.NoError(t, err)
 
 	require.Empty(t, mem.GetSpans())
-}
-
-func unsampledRemoteParentSpanContext() trace.SpanContext {
-	traceID := trace.TraceID{9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9}
-	spanID := trace.SpanID{8, 8, 8, 8, 8, 8, 8, 8}
-	return trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    traceID,
-		SpanID:     spanID,
-		TraceFlags: 0,
-		Remote:     true,
-	})
 }

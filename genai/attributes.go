@@ -24,6 +24,8 @@ const (
 	ToolError                = "gen_ai.tool.error"
 	EvaluationScore          = "gen_ai.evaluation.score"
 	EvaluationText           = "gen_ai.evaluation.text"
+	EvaluationMetricName     = "gen_ai.evaluation.metric"
+	EvaluationReasoning      = "gen_ai.evaluation.reasoning"
 	ServerAddress            = "server.address"
 	ServerPort               = "server.port"
 	ErrorType                = "error.type"
@@ -37,9 +39,15 @@ const (
 	ImageCount                 = "gen_ai.usage.image_count"
 	OperationPurpose           = "ai.operation.purpose"
 
-	RetrievalSource = "gen_ai.retrieval.source"
-	CacheHit        = "gen_ai.cache.hit"
-	EmbeddingModel  = "gen_ai.embedding.model"
+	RetrievalSource         = "gen_ai.retrieval.source"
+	RetrievalProvider       = "gen_ai.retrieval.provider"
+	RetrievalQuery          = "gen_ai.retrieval.query"
+	RetrievalTopK           = "gen_ai.retrieval.top_k"
+	RetrievalReturnedChunks = "gen_ai.retrieval.returned_chunks"
+	RetrievalDistances      = "gen_ai.retrieval.distances"
+	SamplingKeep            = "gen_ai.sampling.keep"
+	CacheHit                = "gen_ai.cache.hit"
+	EmbeddingModel          = "gen_ai.embedding.model"
 
 	AgentName      = "gen_ai.agent.name"
 	AgentRole      = "gen_ai.agent.role"
@@ -81,6 +89,8 @@ var (
 	ToolErrorKey                  = attribute.Key(ToolError)
 	EvaluationScoreKey            = attribute.Key(EvaluationScore)
 	EvaluationTextKey             = attribute.Key(EvaluationText)
+	EvaluationMetricNameKey       = attribute.Key(EvaluationMetricName)
+	EvaluationReasoningKey        = attribute.Key(EvaluationReasoning)
 	ServerAddressKey              = attribute.Key(ServerAddress)
 	ServerPortKey                 = attribute.Key(ServerPort)
 	ErrorTypeKey                  = attribute.Key(ErrorType)
@@ -93,6 +103,12 @@ var (
 	ImageCountKey                 = attribute.Key(ImageCount)
 	OperationPurposeKey           = attribute.Key(OperationPurpose)
 	RetrievalSourceKey            = attribute.Key(RetrievalSource)
+	RetrievalProviderKey          = attribute.Key(RetrievalProvider)
+	RetrievalQueryKey             = attribute.Key(RetrievalQuery)
+	RetrievalTopKKey              = attribute.Key(RetrievalTopK)
+	RetrievalReturnedChunksKey    = attribute.Key(RetrievalReturnedChunks)
+	RetrievalDistancesKey         = attribute.Key(RetrievalDistances)
+	SamplingKeepKey               = attribute.Key(SamplingKeep)
 	CacheHitKey                   = attribute.Key(CacheHit)
 	EmbeddingModelKey             = attribute.Key(EmbeddingModel)
 	AgentNameKey                  = attribute.Key(AgentName)

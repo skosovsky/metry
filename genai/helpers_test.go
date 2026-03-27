@@ -129,6 +129,109 @@ func TestStartToolSpan_AndRecordToolResult_SetToolAttributes(t *testing.T) {
 	assert.True(t, mustBoolAttr(t, attrs, ToolErrorKey))
 }
 
+func TestStartToolSpan_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSyncer(mem),
+		sdktrace.WithSampler(NewHintSampler(sdktrace.NeverSample())),
+	)
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	tracker, err := NewTracker(
+		mp.Meter("genai-test"),
+		tp.Tracer("genai-test"),
+	)
+	require.NoError(t, err)
+
+	_, span := tracker.StartToolSpan(
+		context.Background(),
+		"search",
+		"call-keep",
+		`{"q":"hint"}`,
+		trace.WithAttributes(SamplingKeepKey.Bool(true)),
+	)
+	span.End()
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := attribute.NewSet(spans[0].Attributes...)
+	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
+	assert.True(t, spans[0].SpanContext.IsSampled())
+}
+
+func TestStartToolSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	tracker, err := NewTracker(
+		mp.Meter("genai-test"),
+		tp.Tracer("genai-test"),
+	)
+	require.NoError(t, err)
+
+	callerKey := attribute.Key("test.caller.attr")
+	_, span := tracker.StartToolSpan(
+		context.Background(),
+		"search",
+		"call-attrs",
+		`{"q":"hello"}`,
+		trace.WithAttributes(callerKey.String("present")),
+	)
+	span.End()
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := attribute.NewSet(spans[0].Attributes...)
+	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
+	assert.Equal(t, "execute_tool", mustStringAttr(t, attrs, OperationNameKey))
+	assert.Equal(t, "present", mustStringAttr(t, attrs, callerKey))
+}
+
+func TestStartToolSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+
+	mem := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	tracker, err := NewTracker(
+		mp.Meter("genai-test"),
+		tp.Tracer("genai-test"),
+	)
+	require.NoError(t, err)
+
+	_, span := tracker.StartToolSpan(
+		context.Background(),
+		"search",
+		"call-dup",
+		`{"q":"hello"}`,
+		trace.WithAttributes(
+			OperationNameKey.String("override"),
+			ToolNameKey.String("override"),
+			ToolCallIDKey.String("override"),
+		),
+	)
+	span.End()
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	attrs := attribute.NewSet(spans[0].Attributes...)
+	assert.Equal(t, "execute_tool", mustStringAttr(t, attrs, OperationNameKey))
+	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
+	assert.Equal(t, "call-dup", mustStringAttr(t, attrs, ToolCallIDKey))
+}
+
 func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

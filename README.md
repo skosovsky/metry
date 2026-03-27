@@ -32,6 +32,8 @@ func setup(ctx context.Context) (*metry.Provider, *genai.Tracker, error) {
         ctx,
         metry.WithServiceName("my-ai-service"),
         metry.WithTraceRatio(1.0),
+        // Optional: override ratio with a custom head sampler.
+        // metry.WithSampler(genai.NewHintSampler(sdktrace.TraceIDRatioBased(0.1))),
         // metry.WithExporter(...),
         // metry.WithMetricExporter(...),
     )
@@ -54,6 +56,7 @@ func setup(ctx context.Context) (*metry.Provider, *genai.Tracker, error) {
 ```
 
 `metry.New(...)` is stateless and does not mutate global OTel providers.
+`WithSampler(...)` is head-based and takes precedence over `WithTraceRatio(...)`.
 
 ## Provider lifecycle
 
@@ -93,6 +96,9 @@ Runtime operations are available only as tracker instance methods:
 - `(*Tracker).StartToolSpan`
 - `(*Tracker).RecordToolResult`
 - `(*Tracker).RecordAsyncFeedback`
+- `(*Tracker).StartRetrievalSpan`
+- `(*Tracker).RecordRetrievalResult`
+- `(*Tracker).RecordEvaluations`
 
 Stateless helpers remain package-level:
 
@@ -110,6 +116,60 @@ noopMeter := noopmetric.NewMeterProvider().Meter("metry/genai")
 tracker, err := genai.NewTracker(noopMeter, provider.TracerProvider.Tracer("metry/genai"))
 ```
 
+## Sampling hints (head-based)
+
+Snippet note: examples in this section assume imports for `go.opentelemetry.io/otel/trace` and `go.opentelemetry.io/otel/sdk/trace`.
+
+```go
+provider, err := metry.New(
+    ctx,
+    metry.WithServiceName("my-ai-service"),
+    metry.WithSampler(genai.NewHintSampler(sdktrace.TraceIDRatioBased(0.1))),
+)
+if err != nil {
+    return err
+}
+
+_, span := provider.TracerProvider.Tracer("app").Start(
+    ctx,
+    "request",
+    trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
+)
+span.End()
+```
+
+`gen_ai.sampling.keep=true` is evaluated at span start in the SDK sampler.
+It does not depend on post-hoc status, token usage, or tail sampling.
+Without keep hint, sampled parent context is inherited; the base sampler is consulted for new root spans.
+Helpers that create spans internally also accept `trace.SpanStartOption`, so the same hint can be passed through `StartToolSpan(...)`, `StartRetrievalSpan(...)`, `RecordAsyncFeedback(...)`, and `RecordEvaluations(...)`.
+When caller options contain duplicate attribute keys, helper built-in keys win.
+
+## Retrieval spans
+
+Snippet note: this example also assumes import of `go.opentelemetry.io/otel/codes`.
+
+```go
+retrievalCtx, retrievalSpan := tracker.StartRetrievalSpan(ctx, "vector.search", genai.RetrievalRequest{
+    Provider: "qdrant",
+    Source:   "knowledge_base",
+    Query:    query,
+    TopK:     5,
+}, trace.WithAttributes(genai.SamplingKeepKey.Bool(true)))
+defer retrievalSpan.End()
+
+chunks, distances, err := retriever.Search(retrievalCtx, query)
+if err != nil {
+    retrievalSpan.RecordError(err)
+    retrievalSpan.SetStatus(codes.Error, "retrieval failed")
+    return err
+}
+
+tracker.RecordRetrievalResult(retrievalSpan, genai.RetrievalResult{
+    ReturnedChunks: len(chunks),
+    Distances:      distances,
+})
+```
+
 ## Async feedback
 
 ```go
@@ -119,12 +179,41 @@ parent := trace.NewSpanContext(trace.SpanContextConfig{
     Remote:  true,
 })
 
-if err := tracker.RecordAsyncFeedback(ctx, parent, 0.9, "approved"); err != nil {
+if err := tracker.RecordAsyncFeedback(
+    ctx,
+    parent,
+    0.9,
+    "approved",
+    trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
+); err != nil {
     return err
 }
 ```
 
 `RecordAsyncFeedback` requires a valid parent `trace.SpanContext`; it does not generate synthetic span IDs.
+
+## LLM evaluations
+
+```go
+if err := tracker.RecordEvaluations(
+    ctx,
+    parent,
+    []genai.Evaluation{
+        {
+            Metric:    genai.EvaluationFaithfulness,
+            Score:     0.91,
+            Reasoning: "Grounded in retrieved chunks.",
+        },
+        {
+            Metric: genai.EvaluationAnswerRelevance,
+            Score:  0.84,
+        },
+    },
+    trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
+); err != nil {
+    return err
+}
+```
 
 ## Payload truncation
 

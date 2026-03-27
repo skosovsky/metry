@@ -362,11 +362,14 @@ func recordIntHistogram(ctx context.Context, histogram metric.Int64Histogram, va
 }
 
 // StartToolSpan creates a child span for a tool execution using an explicit tracker.
+// Extra start options allow callers to add start-time sampling hints or attributes.
+//
+//nolint:spancheck // The span is returned to the caller, which is responsible for ending it.
 func (t *Tracker) StartToolSpan(
 	ctx context.Context,
 	toolName, toolCallID, argsJSON string,
+	startOpts ...trace.SpanStartOption,
 ) (context.Context, trace.Span) {
-	ctx, span := t.tracer.Start(ctx, "tool: "+toolName)
 	attrs := []attribute.KeyValue{
 		OperationNameKey.String("execute_tool"),
 		ToolNameKey.String(toolName),
@@ -375,6 +378,10 @@ func (t *Tracker) StartToolSpan(
 	if argsJSON != "" {
 		attrs = append(attrs, ToolCallArgumentsKey.String(truncateContextWithConfig(argsJSON, t.cfg)))
 	}
+	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
+	opts = append(opts, startOpts...)
+	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...)
+	// Preserve deterministic helper semantics when caller start options use duplicate keys.
 	span.SetAttributes(attrs...)
 	return ctx, span
 }

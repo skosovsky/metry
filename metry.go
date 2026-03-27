@@ -73,10 +73,14 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 	if exp == nil {
 		exp = noopSpanExporter{}
 	}
+	sampler := cfg.Sampler
+	if sampler == nil {
+		sampler = sdktrace.TraceIDRatioBased(cfg.TraceRatio)
+	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithResource(res),
 		sdktrace.WithBatcher(exp),
-		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(cfg.TraceRatio)),
+		sdktrace.WithSampler(sampler),
 	)
 
 	activeMeter := metric.MeterProvider(noopmetric.NewMeterProvider())

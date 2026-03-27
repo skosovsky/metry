@@ -15,6 +15,7 @@ type config struct {
 	ServiceVersion string
 	Environment    string
 	TraceRatio     float64
+	Sampler        sdktrace.Sampler
 	Exporter       sdktrace.SpanExporter
 	MetricExporter sdkmetric.Exporter
 }
@@ -26,6 +27,7 @@ func newConfig() *config {
 		ServiceVersion: "",
 		Environment:    "",
 		TraceRatio:     1.0,
+		Sampler:        nil,
 		Exporter:       nil,
 		MetricExporter: nil,
 	}
@@ -49,6 +51,12 @@ func WithEnvironment(env string) Option {
 // WithTraceRatio sets the fraction of traces to sample (1.0 = 100%, 0.0 = disable).
 func WithTraceRatio(ratio float64) Option {
 	return func(c *config) { c.TraceRatio = ratio }
+}
+
+// WithSampler sets a custom head-based sampler for tracing.
+// When provided, this sampler takes precedence over WithTraceRatio.
+func WithSampler(sampler sdktrace.Sampler) Option {
+	return func(c *config) { c.Sampler = sampler }
 }
 
 // WithExporter sets the span exporter. If not set, a no-op exporter is used.

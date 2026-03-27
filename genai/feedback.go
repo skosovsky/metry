@@ -19,6 +19,7 @@ func (t *Tracker) RecordAsyncFeedback(
 	parent trace.SpanContext,
 	score float64,
 	feedbackText string,
+	opts ...trace.SpanStartOption,
 ) error {
 	if !parent.IsValid() {
 		return ErrParentSpanContextRequired
@@ -30,7 +31,7 @@ func (t *Tracker) RecordAsyncFeedback(
 		ctx = trace.ContextWithSpanContext(ctx, parent)
 	}
 
-	_, span := t.tracer.Start(ctx, "user_feedback")
+	_, span := t.tracer.Start(ctx, "user_feedback", opts...)
 	defer span.End()
 
 	attrs := []attribute.KeyValue{
