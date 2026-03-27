@@ -61,6 +61,13 @@ type Payload struct {
 }
 
 // Usage captures billable and multimodal usage for one interaction.
+//
+// Flat design: fields are kept in one struct (no nested DTOs or pointers to sub-structs), which minimizes
+// allocations and GC work on hot paths compared to nested DTOs (zero-allocation-oriented layout, not a guarantee
+// that the surrounding call path allocates nothing). The shape maps 1:1 to flat OpenTelemetry GenAI semantic
+// attributes without embedding nested JSON. Zero values (0, "") mean "not set" and are the fastest idiom for
+// presence checks.
+//
 // InputTokens should include cached input tokens when the provider exposes a total.
 // OutputTokens should include reasoning output tokens when the provider exposes a total.
 // Cost must be non-negative; negative values are treated as invalid input and ignored.

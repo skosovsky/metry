@@ -62,7 +62,9 @@ func (t *Tracker) RecordEvaluations(
 			attrs = append(attrs, EvaluationMetricNameKey.String(string(evaluation.Metric)))
 		}
 		if t.cfg.RecordPayloads() && evaluation.Reasoning != "" {
-			attrs = append(attrs, EvaluationReasoningKey.String(truncateContextWithConfig(evaluation.Reasoning, t.cfg)))
+			attrs = append(attrs, EvaluationReasoningKey.String(
+				truncateContextWithLimit(evaluation.Reasoning, t.cfg.MaxEventLength()),
+			))
 		}
 		span.AddEvent("evaluation", trace.WithAttributes(attrs...))
 	}

@@ -221,6 +221,7 @@ Payload/tool attributes are written as strings and truncated with UTF-8-safe tru
 
 - Default max length: `65536` bytes.
 - Configure via `genai.WithMaxContextLength(bytes)`.
+- Span **event** text (e.g. LLM-judge reasoning on evaluation events when payloads are enabled) uses a separate, smaller default (`4096` bytes) via `genai.WithMaxEventLength`, because backends often cap event attributes more strictly than span attributes.
 - Truncated values may be non-valid JSON strings by design.
 
 ## HTTP middleware

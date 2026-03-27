@@ -39,7 +39,7 @@ jobs:
 
   test:
     name: Test
-    needs: [prepare-matrix, lint, check-core-deps]
+    needs: [prepare-matrix, lint]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
