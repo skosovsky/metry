@@ -1,5 +1,5 @@
-// Package security provides semantic convention constants and helpers for
-// AI security observability (tiers, validators, actions, shadow mode).
+// Package security provides semantic conventions and helpers for AI security
+// observability telemetry.
 package security
 
 import "go.opentelemetry.io/otel/attribute"
@@ -12,6 +12,8 @@ const (
 	ShadowMode = "ai.security.shadow_mode"
 	Score      = "ai.security.score"
 	Reason     = "ai.security.reason"
+	Code       = "ai.security.code"
+	Severity   = "ai.security.severity"
 )
 
 // Attribute keys as attribute.Key for type-safe span/event recording.
@@ -22,6 +24,8 @@ var (
 	ShadowModeKey = attribute.Key(ShadowMode)
 	ScoreKey      = attribute.Key(Score)
 	ReasonKey     = attribute.Key(Reason)
+	CodeKey       = attribute.Key(Code)
+	SeverityKey   = attribute.Key(Severity)
 )
 
 // Standard values for Action.
