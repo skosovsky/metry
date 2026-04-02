@@ -15,6 +15,8 @@ go get github.com/skosovsky/metry/middleware/grpc
 
 Use matching versions of `metry` and `metry/middleware/grpc` after the stateless API break.
 
+`middleware/http` and [`middleware/executor`](middleware/executor) live in the **same module** as the root import (`github.com/skosovsky/metry`); no extra `go get` is required beyond `go get github.com/skosovsky/metry`. Import them as `github.com/skosovsky/metry/middleware/http` and `github.com/skosovsky/metry/middleware/executor`.
+
 ## Quick start
 
 ```go
@@ -231,6 +233,48 @@ import metryhttp "github.com/skosovsky/metry/middleware/http"
 
 handler := metryhttp.Handler(provider, next, "http.request")
 ```
+
+## Generic execution telemetry
+
+Use `middleware/executor` to instrument any function with shape `func(context.Context, Req) (Res, error)` (database calls, LLM clients, internal pipelines) without tying it to HTTP or gRPC.
+
+**Logging:** structured logs (start, errors, panics) are emitted only when you pass `slog` via `executor.WithLogger`. Without a logger you still get **traces and metrics** only. Start and error/panic lines include `trace_id` when the span has a W3C trace id. **Request/response bodies are never logged** on purpose (PII / payload safety); this is library policy, not an omission.
+
+**Options:** `WithLogStart` / `WithLogError` map to optional telemetry in the task spec; there is no response-body logging (`LogResponses`) unless introduced in a separate change.
+
+```go
+import metryexec "github.com/skosovsky/metry/middleware/executor"
+
+run := metryexec.Wrap(provider, "my.pipeline.step", func(ctx context.Context, req MyReq) (MyRes, error) {
+    return doWork(ctx, req)
+})
+res, err := run(ctx, req)
+```
+
+Many frameworks expose `Execute(ctx, req) (res, err)` behind an interface. You can adapt `Wrap` without importing that framework:
+
+```go
+type Executor[Req, Res any] interface {
+    Execute(ctx context.Context, req Req) (Res, error)
+}
+
+type ExecutorFunc[Req, Res any] func(context.Context, Req) (Res, error)
+
+func (f ExecutorFunc[Req, Res]) Execute(ctx context.Context, req Req) (Res, error) {
+    return f(ctx, req)
+}
+
+wrapped := metryexec.Wrap(provider, "my_op", myLogic)
+var exec Executor[MyReq, MyRes] = ExecutorFunc[MyReq, MyRes](wrapped)
+res, err := exec.Execute(ctx, req)
+```
+
+Metrics use meter name `metry.executor`:
+
+- `executor.operation.duration` — histogram of wall time in seconds (`operation`, `status`).
+- `executor.operation.calls` — invocation counter with the same attributes (`status` is `success`, `error`, or `panic`).
+
+A minimal runnable sample lives in `examples/executor`.
 
 ## gRPC middleware
 
