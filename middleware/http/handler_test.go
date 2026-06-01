@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/skosovsky/metry"
@@ -52,4 +53,43 @@ func TestHTTPHandler_NilProvider_Panics(t *testing.T) {
 	require.Panics(t, func() {
 		_ = Handler(nil, next, "op")
 	})
+}
+
+func TestHTTPHandler_WithSpanNameFormatter(t *testing.T) {
+	ctx := context.Background()
+	mem := testutil.NewInMemoryTraceExporter()
+
+	provider, err := metry.New(
+		ctx,
+		metry.WithServiceName("test-http"),
+		metry.WithExporter(mem.SpanExporter()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /named", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := Handler(provider, mux, "ignored",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			if r.Pattern != "" {
+				return r.Pattern
+			}
+			return "fallback"
+		}),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/named", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	tp, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
+	require.True(t, ok)
+	require.NoError(t, tp.ForceFlush(ctx))
+	require.GreaterOrEqual(t, mem.Len(), 1)
+	spans := mem.GetSpans()
+	require.NotEmpty(t, spans)
+	assert.Equal(t, "GET /named", spans[len(spans)-1].Name)
 }

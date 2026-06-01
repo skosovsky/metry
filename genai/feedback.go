@@ -2,36 +2,31 @@ package genai
 
 import (
 	"context"
-	"errors"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
-var (
-	// ErrParentSpanContextRequired is returned when async feedback is recorded without a valid parent.
-	ErrParentSpanContextRequired = errors.New("genai: valid parent span context is required")
-)
-
-// RecordAsyncFeedback records delayed user feedback with an explicit tracker.
+// RecordAsyncFeedback records delayed user feedback as a new span linked to the original interaction.
+// The original span is never mutated; correlation is expressed via Span Links (OTLP immutable model).
 func (t *Tracker) RecordAsyncFeedback(
 	ctx context.Context,
-	parent trace.SpanContext,
+	linked trace.SpanContext,
 	score float64,
 	feedbackText string,
 	opts ...trace.SpanStartOption,
 ) error {
-	if !parent.IsValid() {
-		return ErrParentSpanContextRequired
+	if !linked.IsValid() {
+		return ErrInvalidSpanContext
 	}
 
-	if parent.IsRemote() {
-		ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
-	} else {
-		ctx = trace.ContextWithSpanContext(ctx, parent)
+	startOpts := []trace.SpanStartOption{
+		trace.WithNewRoot(),
+		trace.WithLinks(trace.Link{SpanContext: linked, Attributes: nil}),
 	}
+	startOpts = append(startOpts, opts...)
 
-	_, span := t.tracer.Start(ctx, "user_feedback", opts...)
+	_, span := t.tracer.Start(ctx, "user_feedback", startOpts...)
 	defer span.End()
 
 	attrs := []attribute.KeyValue{

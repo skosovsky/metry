@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestRecordAsyncFeedback_InvalidParent_ReturnsError(t *testing.T) {
+func TestRecordAsyncFeedback_InvalidLinkedContext_ReturnsError(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -26,10 +26,10 @@ func TestRecordAsyncFeedback_InvalidParent_ReturnsError(t *testing.T) {
 	require.NoError(t, err)
 
 	err = tracker.RecordAsyncFeedback(context.Background(), trace.SpanContext{}, 0.5, "bad")
-	require.ErrorIs(t, err, ErrParentSpanContextRequired)
+	require.ErrorIs(t, err, ErrInvalidSpanContext)
 }
 
-func TestRecordAsyncFeedback_ValidRemoteParent_AttachesSpan(t *testing.T) {
+func TestRecordAsyncFeedback_ValidRemoteLinked_AttachesSpanWithLink(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -41,15 +41,14 @@ func TestRecordAsyncFeedback_ValidRemoteParent_AttachesSpan(t *testing.T) {
 	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
 	require.NoError(t, err)
 
-	parent := newParentSpanContext(true)
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 0.9, "should-not-export")
+	linked := newParentSpanContext(true)
+	err = tracker.RecordAsyncFeedback(context.Background(), linked, 0.9, "should-not-export")
 	require.NoError(t, err)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "user_feedback", spans[0].Name)
-	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
-	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
+	assertLinkBasedAsyncSpan(t, spans[0], linked)
 	attrs := attribute.NewSet(spans[0].Attributes...)
 	assert.InDelta(t, 0.9, mustFloatAttr(t, attrs, EvaluationScoreKey), 1e-9)
 	_, ok := attrs.Value(EvaluationTextKey)
@@ -72,8 +71,8 @@ func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	parent := newParentSpanContext(false)
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 1.0, "approved")
+	linked := newParentSpanContext(false)
+	err = tracker.RecordAsyncFeedback(context.Background(), linked, 1.0, "approved")
 	require.NoError(t, err)
 
 	spans := mem.GetSpans()
@@ -82,7 +81,7 @@ func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
 	assert.Equal(t, "approved", mustStringAttr(t, attrs, EvaluationTextKey))
 }
 
-func TestRecordAsyncFeedback_ValidLocalParent_AttachesSpan(t *testing.T) {
+func TestRecordAsyncFeedback_IgnoresContextParent_UsesLinkOnly(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -94,14 +93,18 @@ func TestRecordAsyncFeedback_ValidLocalParent_AttachesSpan(t *testing.T) {
 	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
 	require.NoError(t, err)
 
-	parent := newParentSpanContext(false)
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 0.7, "local-parent")
+	ctx, active := tp.Tracer("feedback").Start(context.Background(), "interaction")
+	linked := newParentSpanContext(false)
+	active.End()
+
+	err = tracker.RecordAsyncFeedback(ctx, linked, 0.7, "local-parent")
 	require.NoError(t, err)
 
 	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
-	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
+	require.Len(t, spans, 2)
+	feedback := spans[1]
+	assert.Equal(t, "user_feedback", feedback.Name)
+	assertLinkBasedAsyncSpan(t, feedback, linked)
 }
 
 func TestRecordAsyncFeedback_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
@@ -119,10 +122,10 @@ func TestRecordAsyncFeedback_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *tes
 	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
 	require.NoError(t, err)
 
-	parent := unsampledRemoteParentSpanContext()
+	linked := unsampledRemoteParentSpanContext()
 	err = tracker.RecordAsyncFeedback(
 		context.Background(),
-		parent,
+		linked,
 		0.2,
 		"negative",
 		trace.WithAttributes(SamplingKeepKey.Bool(true)),
@@ -132,8 +135,7 @@ func TestRecordAsyncFeedback_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *tes
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "user_feedback", spans[0].Name)
-	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
-	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
+	assertLinkBasedAsyncSpan(t, spans[0], linked)
 }
 
 func TestRecordAsyncFeedback_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *testing.T) {
@@ -151,8 +153,8 @@ func TestRecordAsyncFeedback_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *test
 	tracker, err := NewTracker(mp.Meter("feedback"), tp.Tracer("feedback"))
 	require.NoError(t, err)
 
-	parent := unsampledRemoteParentSpanContext()
-	err = tracker.RecordAsyncFeedback(context.Background(), parent, 0.2, "negative")
+	linked := unsampledRemoteParentSpanContext()
+	err = tracker.RecordAsyncFeedback(context.Background(), linked, 0.2, "negative")
 	require.NoError(t, err)
 
 	require.Empty(t, mem.GetSpans())

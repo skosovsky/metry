@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestRecordEvaluations_InvalidParent_ReturnsError(t *testing.T) {
+func TestRecordEvaluations_InvalidLinkedContext_ReturnsError(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -30,10 +30,10 @@ func TestRecordEvaluations_InvalidParent_ReturnsError(t *testing.T) {
 	err = tracker.RecordEvaluations(context.Background(), trace.SpanContext{}, []Evaluation{
 		{Metric: EvaluationFaithfulness, Score: 0.8},
 	})
-	require.ErrorIs(t, err, ErrParentSpanContextRequired)
+	require.ErrorIs(t, err, ErrInvalidSpanContext)
 }
 
-func TestRecordEvaluations_ValidParent_AddsChildSpanAndEvents(t *testing.T) {
+func TestRecordEvaluations_ValidLinked_AddsSpanWithLinkAndEvents(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
@@ -55,8 +55,7 @@ func TestRecordEvaluations_ValidParent_AddsChildSpanAndEvents(t *testing.T) {
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "llm_evaluations", spans[0].Name)
-	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
-	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
+	assertLinkBasedAsyncSpan(t, spans[0], parent)
 
 	spanAttrs := attribute.NewSet(spans[0].Attributes...)
 	assert.Equal(t, PurposeQualityEvaluation, mustStringAttr(t, spanAttrs, OperationPurposeKey))
@@ -218,8 +217,7 @@ func TestRecordEvaluations_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testi
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "llm_evaluations", spans[0].Name)
-	assert.Equal(t, parent.TraceID(), spans[0].SpanContext.TraceID())
-	assert.Equal(t, parent.SpanID(), spans[0].Parent.SpanID())
+	assertLinkBasedAsyncSpan(t, spans[0], parent)
 }
 
 func TestRecordEvaluations_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *testing.T) {

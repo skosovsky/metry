@@ -93,6 +93,8 @@ span.End()
 Runtime operations are available only as tracker instance methods:
 
 - `(*Tracker).RecordInteraction`
+- `(*Tracker).RecordModelInteraction`
+- `(*Tracker).RecordTraceIO`
 - `(*Tracker).RecordTTFT`
 - `(*Tracker).RecordStreamingCompletion`
 - `(*Tracker).StartToolSpan`
@@ -116,6 +118,70 @@ import noopmetric "go.opentelemetry.io/otel/metric/noop"
 
 noopMeter := noopmetric.NewMeterProvider().Meter("metry/genai")
 tracker, err := genai.NewTracker(noopMeter, provider.TracerProvider.Tracer("metry/genai"))
+```
+
+## Trace context propagation (JSON)
+
+Use `github.com/skosovsky/metry/propagation` to move W3C trace context across async boundaries (queues, jobs, webhooks) without hand-rolling headers:
+
+```go
+import metryprop "github.com/skosovsky/metry/propagation"
+
+payload, err := metryprop.InjectToJSON(ctx)
+if err != nil {
+    return err
+}
+// publish payload to queue...
+
+consumerCtx := metryprop.ExtractFromJSON(context.Background(), payload)
+_, span := tracer.Start(consumerCtx, "consumer")
+defer span.End()
+```
+
+`InjectToJSON` / `ExtractFromJSON` use the global OTel `TextMapPropagator` (trace + baggage when configured). Invalid or empty JSON returns the input context unchanged.
+
+Advanced setups can pass an explicit propagator via `InjectToJSONWithPropagator` / `ExtractFromJSONWithPropagator`.
+
+## Adapter-first model interaction
+
+When your application already has vendor-specific request/response types, implement `genai.ProviderAdapter` at the boundary and call `RecordModelInteraction`:
+
+```go
+type fakeAdapter struct{}
+
+func (fakeAdapter) ParseRequest(req any) (genai.Payload, genai.Meta, error) {
+    r, ok := req.(string)
+    if !ok {
+        return genai.Payload{}, genai.Meta{}, fmt.Errorf("unexpected request type")
+    }
+    return genai.Payload{
+        InputMessages: []genai.Message{{Role: "user", Parts: []genai.ContentPart{{Type: "text", Content: r}}}},
+    }, genai.Meta{Provider: "fake", Operation: "chat", RequestModel: "fake-v1"}, nil
+}
+
+func (fakeAdapter) ParseResponse(resp any) (genai.Payload, genai.Usage, error) {
+    r, ok := resp.(string)
+    if !ok {
+        return genai.Payload{}, genai.Usage{}, fmt.Errorf("unexpected response type")
+    }
+    return genai.Payload{
+        OutputMessages: []genai.Message{{Role: "assistant", Parts: []genai.ContentPart{{Type: "text", Content: r}}}},
+    }, genai.Usage{InputTokens: 1, OutputTokens: 1}, nil
+}
+
+if err := tracker.RecordModelInteraction(ctx, span, fakeAdapter{}, rawReq, rawResp); err != nil {
+    return err
+}
+```
+
+Parse errors are returned to the caller and recorded on the span; `metry` does not ship vendor SDK adapters.
+
+## Trace I/O mirroring
+
+`RecordTraceIO` writes typed `genai.Payload` input/output onto span attributes using OTLP GenAI semconv keys. It respects `WithRecordPayloads` and truncation limits—the same rules as `RecordInteraction` payloads.
+
+```go
+tracker.RecordTraceIO(ctx, span, inputPayload, outputPayload)
 ```
 
 ## Sampling hints (head-based)
@@ -174,8 +240,10 @@ tracker.RecordRetrievalResult(retrievalSpan, genai.RetrievalResult{
 
 ## Async feedback
 
+Delayed user feedback is recorded as a **new root span** linked to the original interaction via OTLP **Span Links** (immutable model—completed spans are never mutated):
+
 ```go
-parent := trace.NewSpanContext(trace.SpanContextConfig{
+linked := trace.NewSpanContext(trace.SpanContextConfig{
     TraceID: traceID,
     SpanID:  spanID,
     Remote:  true,
@@ -183,7 +251,7 @@ parent := trace.NewSpanContext(trace.SpanContextConfig{
 
 if err := tracker.RecordAsyncFeedback(
     ctx,
-    parent,
+    linked,
     0.9,
     "approved",
     trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
@@ -192,14 +260,16 @@ if err := tracker.RecordAsyncFeedback(
 }
 ```
 
-`RecordAsyncFeedback` requires a valid parent `trace.SpanContext`; it does not generate synthetic span IDs.
+`RecordAsyncFeedback` requires a valid `trace.SpanContext` (`genai.ErrInvalidSpanContext` otherwise). Correlation is expressed through links, not parent-child hierarchy.
 
 ## LLM evaluations
+
+Evaluations follow the same link-based model:
 
 ```go
 if err := tracker.RecordEvaluations(
     ctx,
-    parent,
+    linked,
     []genai.Evaluation{
         {
             Metric:    genai.EvaluationFaithfulness,
@@ -216,6 +286,8 @@ if err := tracker.RecordEvaluations(
     return err
 }
 ```
+
+`metry` does not provide trace mutation / PATCH APIs for updating finished spans—use Span Links for post-hoc feedback and evaluations.
 
 ## Payload truncation
 

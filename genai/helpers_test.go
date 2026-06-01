@@ -364,3 +364,22 @@ func newParentSpanContext(remote bool) trace.SpanContext {
 		Remote:     remote,
 	})
 }
+
+func assertSpanLinksTo(t *testing.T, span tracetest.SpanStub, linked trace.SpanContext) {
+	t.Helper()
+	require.NotEmpty(t, span.Links, "expected span links")
+	for _, link := range span.Links {
+		sc := link.SpanContext
+		if sc.TraceID() == linked.TraceID() && sc.SpanID() == linked.SpanID() {
+			return
+		}
+	}
+	t.Fatalf("expected link to trace_id=%v span_id=%v, got links=%v", linked.TraceID(), linked.SpanID(), span.Links)
+}
+
+func assertLinkBasedAsyncSpan(t *testing.T, span tracetest.SpanStub, linked trace.SpanContext) {
+	t.Helper()
+	assertSpanLinksTo(t, span, linked)
+	assert.False(t, span.Parent.SpanID().IsValid(), "link-based async span must not set parent")
+	assert.NotEqual(t, linked.TraceID(), span.SpanContext.TraceID(), "async span should start a new trace")
+}

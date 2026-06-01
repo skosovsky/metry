@@ -26,33 +26,27 @@ type Evaluation struct {
 	Reasoning string
 }
 
-// RecordEvaluations records LLM-judge evaluations on a child span.
+// RecordEvaluations records LLM-judge evaluations on a new span linked to the original interaction.
 func (t *Tracker) RecordEvaluations(
 	ctx context.Context,
-	parent trace.SpanContext,
+	linked trace.SpanContext,
 	evaluations []Evaluation,
 	opts ...trace.SpanStartOption,
 ) error {
-	if !parent.IsValid() {
-		return ErrParentSpanContextRequired
+	if !linked.IsValid() {
+		return ErrInvalidSpanContext
 	}
 	if len(evaluations) == 0 {
 		return nil
 	}
 
-	if parent.IsRemote() {
-		ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
-	} else {
-		ctx = trace.ContextWithSpanContext(ctx, parent)
-	}
-
 	startOpts := []trace.SpanStartOption{
+		trace.WithNewRoot(),
+		trace.WithLinks(trace.Link{SpanContext: linked, Attributes: nil}),
 		trace.WithAttributes(OperationPurposeKey.String(PurposeQualityEvaluation)),
 	}
 	startOpts = append(startOpts, opts...)
 	_, span := t.tracer.Start(ctx, "llm_evaluations", startOpts...)
-	// Preserve deterministic helper semantics when caller start options use duplicate keys.
-	span.SetAttributes(OperationPurposeKey.String(PurposeQualityEvaluation))
 	defer span.End()
 
 	for _, evaluation := range evaluations {
