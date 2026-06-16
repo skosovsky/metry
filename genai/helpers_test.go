@@ -3,6 +3,7 @@ package genai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,68 +11,40 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/testutil"
 )
 
 func TestRecordInteraction_WithPayloadAndUsage_SetsAttributes(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
-		WithRecordPayloads(true),
-	)
-	require.NoError(t, err)
+	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
 
 	ctx := context.Background()
-	_, span := tp.Tracer("genai-test").Start(ctx, "span")
-	tracker.RecordInteraction(ctx, span, testMeta(), testPayload(), Usage{
+	require.NoError(t, tracker.RecordInteraction(ctx, testMeta(), testPayload(), Usage{
 		InputTokens:           10,
 		OutputTokens:          20,
 		ReasoningOutputTokens: 4,
 		Cost:                  0.25,
 		Currency:              "CREDITS",
-	})
-	span.End()
+	}))
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "openai", mustStringAttr(t, attrs, ProviderNameKey))
-	assert.Equal(t, "chat", mustStringAttr(t, attrs, OperationNameKey))
-	assert.Equal(t, int64(10), mustIntAttr(t, attrs, InputTokensKey))
-	assert.Equal(t, int64(20), mustIntAttr(t, attrs, OutputTokensKey))
-	assert.Equal(t, int64(4), mustIntAttr(t, attrs, UsageReasoningOutputTokensKey))
-	assert.InDelta(t, 0.25, mustFloatAttr(t, attrs, UsageCostKey), 1e-9)
-	assert.Equal(t, "CREDITS", mustStringAttr(t, attrs, CostCurrencyKey))
+	assert.Equal(t, "openai", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
+	assert.Equal(t, "chat", testutil.SpanStubStringAttr(t, spans[0], OperationName))
+	assert.Equal(t, int64(10), testutil.SpanStubInt64Attr(t, spans[0], InputTokens))
+	assert.Equal(t, int64(20), testutil.SpanStubInt64Attr(t, spans[0], OutputTokens))
+	assert.Equal(t, int64(4), testutil.SpanStubInt64Attr(t, spans[0], UsageReasoningOutputTokens))
+	assert.InDelta(t, 0.25, testutil.SpanStubFloat64Attr(t, spans[0], UsageCost), 1e-9)
+	assert.Equal(t, "CREDITS", testutil.SpanStubStringAttr(t, spans[0], CostCurrency))
 }
 
 func TestRecordInteraction_TruncatesPayloadString(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
+	tracker, provider, mem := newTestTracker(t,
 		WithRecordPayloads(true),
 		WithMaxContextLength(96),
 	)
-	require.NoError(t, err)
 
 	payload := Payload{
 		InputMessages: []Message{{
@@ -83,171 +56,166 @@ func TestRecordInteraction_TruncatesPayloadString(t *testing.T) {
 		}},
 	}
 
-	_, span := tp.Tracer("genai-test").Start(context.Background(), "span")
-	tracker.RecordInteraction(context.Background(), span, testMeta(), payload, Usage{})
-	span.End()
+	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), payload, Usage{}))
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	value := mustStringAttr(t, attrs, InputMessagesKey)
+	value := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(value), 96)
 	assert.True(t, utf8.ValidString(value))
 }
 
 func TestStartToolSpan_AndRecordToolResult_SetToolAttributes(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTracker(t, WithMaxContextLength(64))
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	ctx, end := tracker.StartToolSpan(context.Background(), "search", "call-1", `{"q":`)
+	tracker.RecordToolResult(ctx, `{"result":"`+strings.Repeat("b", 256)+`"}`, errors.New("tool execution failed"))
+	end()
 
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
-		WithMaxContextLength(64),
-	)
-	require.NoError(t, err)
-
-	_, span := tracker.StartToolSpan(context.Background(), "search", "call-1", `{"q":`)
-	tracker.RecordToolResult(span, `{"result":"`+strings.Repeat("b", 256)+`"}`, true)
-	span.End()
-
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "execute_tool", mustStringAttr(t, attrs, OperationNameKey))
-	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
-	assert.Equal(t, "call-1", mustStringAttr(t, attrs, ToolCallIDKey))
-	arguments := mustStringAttr(t, attrs, ToolCallArgumentsKey)
+	assert.Equal(t, "execute_tool", testutil.SpanStubStringAttr(t, spans[0], OperationName))
+	assert.Equal(t, "search", testutil.SpanStubStringAttr(t, spans[0], ToolName))
+	assert.Equal(t, "call-1", testutil.SpanStubStringAttr(t, spans[0], ToolCallID))
+	arguments := testutil.SpanStubStringAttr(t, spans[0], ToolCallArguments)
 	assert.NotEmpty(t, arguments)
 	assert.Contains(t, arguments, `{"q":`)
 	assert.False(t, json.Valid([]byte(arguments)))
-	assert.NotEmpty(t, mustStringAttr(t, attrs, ToolCallResultKey))
-	assert.True(t, mustBoolAttr(t, attrs, ToolErrorKey))
+	assert.NotEmpty(t, testutil.SpanStubStringAttr(t, spans[0], ToolCallResult))
+	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], ToolError))
+	testutil.AssertSpanStubErrorStatus(t, spans[0])
+}
+
+func TestRecordToolResult_Success_SetsOkStatus(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
+
+	ctx, end := tracker.StartToolSpan(context.Background(), "search", "call-ok", `{"q":"x"}`)
+	tracker.RecordToolResult(ctx, `{"result":"ok"}`, nil)
+	end()
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	assert.False(t, testutil.SpanStubBoolAttr(t, spans[0], ToolError))
+	testutil.AssertSpanStubOkStatus(t, spans[0])
+}
+
+func TestStartToolSpan_EndOnly_SetsOkStatus(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
+
+	_, end := tracker.StartToolSpan(context.Background(), "search", "call-end-only", `{"q":"x"}`)
+	end()
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	testutil.AssertSpanStubOkStatus(t, spans[0])
+}
+
+func TestRecordInteraction_ErrorType_SetsSpanErrorStatus(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
+
+	require.NoError(t, tracker.RecordInteraction(context.Background(), Meta{
+		Provider:  "openai",
+		Operation: "chat",
+		ErrorType: "timeout",
+	}, Payload{}, Usage{InputTokens: 1}))
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "timeout", testutil.SpanStubStringAttr(t, spans[0], ErrorType))
+	testutil.AssertSpanStubErrorStatus(t, spans[0])
+}
+
+func TestRecordInteraction_Success_SetsOkStatus(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
+
+	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{InputTokens: 1}))
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	testutil.AssertSpanStubOkStatus(t, spans[0])
+}
+
+func TestRecordCacheHit_NoSpan_NoPanic(t *testing.T) {
+	tracker, _, _ := newTestTracker(t)
+	require.NotPanics(t, func() {
+		tracker.RecordCacheHit(context.Background(), true, "cache")
+	})
 }
 
 func TestStartToolSpan_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSyncer(mem),
-		sdktrace.WithSampler(NewHintSampler(sdktrace.NeverSample())),
-	)
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
-	)
-	require.NoError(t, err)
-
-	_, span := tracker.StartToolSpan(
+	_, end := tracker.StartToolSpan(
 		context.Background(),
 		"search",
 		"call-keep",
 		`{"q":"hint"}`,
-		trace.WithAttributes(SamplingKeepKey.Bool(true)),
+		WithSpanSamplingKeep(),
 	)
-	span.End()
+	end()
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
+	assert.Equal(t, "search", testutil.SpanStubStringAttr(t, spans[0], ToolName))
 	assert.True(t, spans[0].SpanContext.IsSampled())
 }
 
 func TestStartToolSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTracker(t)
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
-	)
-	require.NoError(t, err)
-
-	callerKey := attribute.Key("test.caller.attr")
-	_, span := tracker.StartToolSpan(
+	_, end := tracker.StartToolSpan(
 		context.Background(),
 		"search",
 		"call-attrs",
 		`{"q":"hello"}`,
-		trace.WithAttributes(callerKey.String("present")),
+		WithSpanAttributes(metry.StringAttribute("test.caller.attr", "present")),
 	)
-	span.End()
+	end()
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
-	assert.Equal(t, "execute_tool", mustStringAttr(t, attrs, OperationNameKey))
-	assert.Equal(t, "present", mustStringAttr(t, attrs, callerKey))
+	assert.Equal(t, "search", testutil.SpanStubStringAttr(t, spans[0], ToolName))
+	assert.Equal(t, "execute_tool", testutil.SpanStubStringAttr(t, spans[0], OperationName))
+	assert.Equal(t, "present", testutil.SpanStubStringAttr(t, spans[0], "test.caller.attr"))
 }
 
 func TestStartToolSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTracker(t)
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
-	)
-	require.NoError(t, err)
-
-	_, span := tracker.StartToolSpan(
+	_, end := tracker.StartToolSpan(
 		context.Background(),
 		"search",
 		"call-dup",
 		`{"q":"hello"}`,
-		trace.WithAttributes(
-			OperationNameKey.String("override"),
-			ToolNameKey.String("override"),
-			ToolCallIDKey.String("override"),
+		WithSpanAttributes(
+			metry.StringAttribute(OperationName, "override"),
+			metry.StringAttribute(ToolName, "override"),
+			metry.StringAttribute(ToolCallID, "override"),
 		),
 	)
-	span.End()
+	end()
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "execute_tool", mustStringAttr(t, attrs, OperationNameKey))
-	assert.Equal(t, "search", mustStringAttr(t, attrs, ToolNameKey))
-	assert.Equal(t, "call-dup", mustStringAttr(t, attrs, ToolCallIDKey))
+	assert.Equal(t, "execute_tool", testutil.SpanStubStringAttr(t, spans[0], OperationName))
+	assert.Equal(t, "search", testutil.SpanStubStringAttr(t, spans[0], ToolName))
+	assert.Equal(t, "call-dup", testutil.SpanStubStringAttr(t, spans[0], ToolCallID))
 }
 
 func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("genai-test"),
-		tp.Tracer("genai-test"),
+	tracker, provider, mem := newTestTracker(t,
 		WithRecordPayloads(true),
 		WithMaxContextLength(80),
 	)
-	require.NoError(t, err)
 
 	payload := Payload{
 		InputMessages: []Message{{
@@ -259,14 +227,12 @@ func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *test
 		}},
 	}
 
-	_, span := tp.Tracer("genai-test").Start(context.Background(), "span")
-	tracker.RecordInteraction(context.Background(), span, testMeta(), payload, Usage{})
-	span.End()
+	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), payload, Usage{}))
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	value := mustStringAttr(t, attrs, InputMessagesKey)
+	value := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(value), 80)
 	assert.True(t, utf8.ValidString(value))
 	assert.True(t, strings.HasSuffix(value, truncationSuffix))
@@ -274,20 +240,19 @@ func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *test
 }
 
 func TestRecordCacheHit_AndRecordAgentStep(t *testing.T) {
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTracker(t)
 
-	_, span := tp.Tracer("genai-test").Start(context.Background(), "span")
-	RecordCacheHit(span, true, "pgvector_cache")
-	RecordAgentStep(span, "cardiologist", "specialist", "step-2")
-	span.End()
+	ctx, end, err := provider.StartSpan(context.Background(), "genai-test", "span")
+	require.NoError(t, err)
+	tracker.RecordCacheHit(ctx, true, "pgvector_cache")
+	tracker.RecordAgentStep(ctx, "cardiologist", "specialist", "step-2")
+	end()
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.True(t, mustBoolAttr(t, attrs, CacheHitKey))
-	assert.Equal(t, "pgvector_cache", mustStringAttr(t, attrs, RetrievalSourceKey))
+	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], CacheHit))
+	assert.Equal(t, "pgvector_cache", testutil.SpanStubStringAttr(t, spans[0], RetrievalSource))
 	require.Len(t, spans[0].Events, 1)
 	assert.Equal(t, AgentStepEvent, spans[0].Events[0].Name)
 }
@@ -324,62 +289,4 @@ func testPayload() Payload {
 			FinishReason: "stop",
 		}},
 	}
-}
-
-func mustStringAttr(t *testing.T, attrs attribute.Set, key attribute.Key) string {
-	t.Helper()
-	value, ok := attrs.Value(key)
-	require.True(t, ok)
-	return value.AsString()
-}
-
-func mustIntAttr(t *testing.T, attrs attribute.Set, key attribute.Key) int64 {
-	t.Helper()
-	value, ok := attrs.Value(key)
-	require.True(t, ok)
-	return value.AsInt64()
-}
-
-func mustFloatAttr(t *testing.T, attrs attribute.Set, key attribute.Key) float64 {
-	t.Helper()
-	value, ok := attrs.Value(key)
-	require.True(t, ok)
-	return value.AsFloat64()
-}
-
-func mustBoolAttr(t *testing.T, attrs attribute.Set, key attribute.Key) bool {
-	t.Helper()
-	value, ok := attrs.Value(key)
-	require.True(t, ok)
-	return value.AsBool()
-}
-
-func newParentSpanContext(remote bool) trace.SpanContext {
-	traceID := trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-	spanID := trace.SpanID{2, 2, 2, 2, 2, 2, 2, 2}
-	return trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    traceID,
-		SpanID:     spanID,
-		TraceFlags: trace.FlagsSampled,
-		Remote:     remote,
-	})
-}
-
-func assertSpanLinksTo(t *testing.T, span tracetest.SpanStub, linked trace.SpanContext) {
-	t.Helper()
-	require.NotEmpty(t, span.Links, "expected span links")
-	for _, link := range span.Links {
-		sc := link.SpanContext
-		if sc.TraceID() == linked.TraceID() && sc.SpanID() == linked.SpanID() {
-			return
-		}
-	}
-	t.Fatalf("expected link to trace_id=%v span_id=%v, got links=%v", linked.TraceID(), linked.SpanID(), span.Links)
-}
-
-func assertLinkBasedAsyncSpan(t *testing.T, span tracetest.SpanStub, linked trace.SpanContext) {
-	t.Helper()
-	assertSpanLinksTo(t, span, linked)
-	assert.False(t, span.Parent.SpanID().IsValid(), "link-based async span must not set parent")
-	assert.NotEqual(t, linked.TraceID(), span.SpanContext.TraceID(), "async span should start a new trace")
 }

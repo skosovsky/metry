@@ -7,11 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/skosovsky/metry/metrytest"
+	"github.com/skosovsky/metry/testutil"
 )
 
 type fakeProviderAdapter struct {
@@ -38,20 +36,7 @@ func (a fakeProviderAdapter) ParseResponse(_ any) (Payload, Usage, error) {
 }
 
 func TestRecordModelInteraction_HappyPath_MatchesDirectRecordInteraction(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("adapter"),
-		tp.Tracer("adapter"),
-		WithRecordPayloads(true),
-	)
-	require.NoError(t, err)
+	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t, WithRecordPayloads(true))
 
 	adapter := fakeProviderAdapter{
 		reqPayload: Payload{
@@ -64,63 +49,73 @@ func TestRecordModelInteraction_HappyPath_MatchesDirectRecordInteraction(t *test
 		respUsage: Usage{InputTokens: 10, OutputTokens: 20, Cost: 0.001},
 	}
 
-	ctx := context.Background()
-	_, span := tp.Tracer("adapter").Start(ctx, "chat")
-	err = tracker.RecordModelInteraction(ctx, span, adapter, "raw-req", "raw-resp")
+	err := tracker.RecordModelInteraction(context.Background(), adapter, "raw-req", "raw-resp")
 	require.NoError(t, err)
-	span.End()
 
-	spans := mem.GetSpans()
+	flushTestProvider(t, provider)
+	spans := memTrace.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, "openai", mustStringAttr(t, attrs, ProviderNameKey))
-	assert.Equal(t, int64(10), mustIntAttr(t, attrs, InputTokensKey))
-	assert.Equal(t, int64(20), mustIntAttr(t, attrs, OutputTokensKey))
-	assert.Contains(t, mustStringAttr(t, attrs, InputMessagesKey), "hi")
-	assert.Contains(t, mustStringAttr(t, attrs, OutputMessagesKey), "hello")
+	assert.Equal(t, "openai", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
+	assert.Equal(t, int64(10), testutil.SpanStubInt64Attr(t, spans[0], InputTokens))
+	assert.Equal(t, int64(20), testutil.SpanStubInt64Attr(t, spans[0], OutputTokens))
+	assert.Contains(t, testutil.SpanStubStringAttr(t, spans[0], InputMessages), "hi")
+	assert.Contains(t, testutil.SpanStubStringAttr(t, spans[0], OutputMessages), "hello")
 
-	rm := collectMetrics(t, reader)
-	assert.InDelta(t, 10, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInput), 1e-9)
-	assert.InDelta(t, 20, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeOutput), 1e-9)
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
+	assert.InDelta(
+		t,
+		10,
+		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeInput),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		20,
+		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		1e-9,
+	)
 }
 
-func TestRecordModelInteraction_ParseRequestError_SetsSpanError(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+func TestRecordModelInteraction_WithScope_UsesScopeDefaults(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	adapter := fakeProviderAdapter{
+		reqPayload:  testPayload(),
+		reqMeta:     Meta{},
+		respPayload: Payload{},
+		respUsage:   Usage{InputTokens: 1},
+	}
 
-	tracker, err := NewTracker(mp.Meter("adapter"), tp.Tracer("adapter"))
+	ctx := WithScope(context.Background(), Scope{
+		Provider:  "scope-openai",
+		Operation: "scope-chat",
+		Model:     "scope-model",
+	})
+	err := tracker.RecordModelInteraction(ctx, adapter, "raw-req", "raw-resp")
 	require.NoError(t, err)
+
+	flushTestProvider(t, provider)
+	span := mem.GetSpans()[0]
+	assert.Equal(t, "scope-openai", testutil.SpanStubStringAttr(t, span, ProviderName))
+	assert.Equal(t, "scope-chat", testutil.SpanStubStringAttr(t, span, OperationName))
+}
+
+func TestRecordModelInteraction_ParseRequestError_ReturnsError(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
 
 	parseErr := errors.New("bad request shape")
 	adapter := fakeProviderAdapter{reqErr: parseErr}
 
-	_, span := tp.Tracer("adapter").Start(context.Background(), "chat")
-	err = tracker.RecordModelInteraction(context.Background(), span, adapter, "raw", nil)
+	err := tracker.RecordModelInteraction(context.Background(), adapter, "raw", nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, parseErr)
-	span.End()
 
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Equal(t, codes.Error, spans[0].Status.Code)
+	flushTestProvider(t, provider)
+	assert.Empty(t, mem.GetSpans())
 }
 
-func TestRecordModelInteraction_ParseResponseError_SetsSpanError(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("adapter"), tp.Tracer("adapter"))
-	require.NoError(t, err)
+func TestRecordModelInteraction_ParseResponseError_ReturnsError(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
 
 	parseErr := errors.New("bad response shape")
 	adapter := fakeProviderAdapter{
@@ -128,30 +123,17 @@ func TestRecordModelInteraction_ParseResponseError_SetsSpanError(t *testing.T) {
 		respErr: parseErr,
 	}
 
-	_, span := tp.Tracer("adapter").Start(context.Background(), "chat")
-	err = tracker.RecordModelInteraction(context.Background(), span, adapter, "raw", "raw")
+	err := tracker.RecordModelInteraction(context.Background(), adapter, "raw", "raw")
 	require.Error(t, err)
 	require.ErrorIs(t, err, parseErr)
-	span.End()
 
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Equal(t, codes.Error, spans[0].Status.Code)
+	flushTestProvider(t, provider)
+	assert.Empty(t, mem.GetSpans())
 }
 
 func TestRecordModelInteraction_NilAdapter_ReturnsError(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, _, _ := newTestTracker(t)
 
-	tp := sdktrace.NewTracerProvider()
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("adapter"), tp.Tracer("adapter"))
-	require.NoError(t, err)
-
-	_, span := tp.Tracer("adapter").Start(context.Background(), "chat")
-	defer span.End()
-	err = tracker.RecordModelInteraction(context.Background(), span, nil, "raw", "raw")
-	require.Error(t, err)
+	err := tracker.RecordModelInteraction(context.Background(), nil, "raw", "raw")
+	require.ErrorIs(t, err, ErrAdapterRequired)
 }

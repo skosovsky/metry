@@ -8,27 +8,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/skosovsky/metry/testutil"
 )
 
 func TestRecordTraceIO_WritesInputAndOutputAttributes(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("trace-io"),
-		tp.Tracer("trace-io"),
-		WithRecordPayloads(true),
-	)
-	require.NoError(t, err)
+	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
 
 	input := Payload{
 		InputMessages: []Message{{Role: "user", Parts: []ContentPart{{Type: "text", Content: "question"}}}},
@@ -37,71 +22,53 @@ func TestRecordTraceIO_WritesInputAndOutputAttributes(t *testing.T) {
 		OutputMessages: []Message{{Role: "assistant", Parts: []ContentPart{{Type: "text", Content: "answer"}}}},
 	}
 
-	_, span := tp.Tracer("trace-io").Start(context.Background(), "mirror")
-	tracker.RecordTraceIO(context.Background(), span, input, output)
-	span.End()
+	ctx, end, err := provider.StartSpan(context.Background(), "trace-io", "mirror")
+	require.NoError(t, err)
+	tracker.RecordTraceIO(ctx, input, output)
+	end()
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Contains(t, mustStringAttr(t, attrs, InputMessagesKey), "question")
-	assert.Contains(t, mustStringAttr(t, attrs, OutputMessagesKey), "answer")
+	assert.Contains(t, testutil.SpanStubStringAttr(t, spans[0], InputMessages), "question")
+	assert.Contains(t, testutil.SpanStubStringAttr(t, spans[0], OutputMessages), "answer")
 }
 
 func TestRecordTraceIO_PayloadRecordingDisabled_SkipsAttributes(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTracker(t)
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("trace-io"), tp.Tracer("trace-io"))
+	ctx, end, err := provider.StartSpan(context.Background(), "trace-io", "mirror")
 	require.NoError(t, err)
+	tracker.RecordTraceIO(ctx, testPayload(), testPayload())
+	end()
 
-	_, span := tp.Tracer("trace-io").Start(context.Background(), "mirror")
-	tracker.RecordTraceIO(context.Background(), span, testPayload(), testPayload())
-	span.End()
-
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	_, ok := attrs.Value(InputMessagesKey)
-	assert.False(t, ok)
+	assert.False(t, testutil.SpanStubHasAttr(spans[0], InputMessages))
 }
 
 func TestRecordTraceIO_TruncatesLongPayload(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
 	const limit = 128
-	tracker, err := NewTracker(
-		mp.Meter("trace-io"),
-		tp.Tracer("trace-io"),
+	tracker, provider, mem := newTestTracker(t,
 		WithRecordPayloads(true),
 		WithMaxContextLength(limit),
 	)
-	require.NoError(t, err)
 
 	longText := strings.Repeat("x", limit+50)
 	input := Payload{
 		InputMessages: []Message{{Role: "user", Parts: []ContentPart{{Type: "text", Content: longText}}}},
 	}
 
-	_, span := tp.Tracer("trace-io").Start(context.Background(), "mirror")
-	tracker.RecordTraceIO(context.Background(), span, input, Payload{})
-	span.End()
+	ctx, end, err := provider.StartSpan(context.Background(), "trace-io", "mirror")
+	require.NoError(t, err)
+	tracker.RecordTraceIO(ctx, input, Payload{})
+	end()
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	attrs := attribute.NewSet(spans[0].Attributes...)
-	out := mustStringAttr(t, attrs, InputMessagesKey)
+	out := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(out), limit)
 	assert.True(t, strings.HasSuffix(out, truncationSuffix))
 	assert.True(t, utf8.ValidString(out))

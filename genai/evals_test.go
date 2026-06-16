@@ -8,89 +8,59 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/metrytest"
+	"github.com/skosovsky/metry/testutil"
 )
 
 func TestRecordEvaluations_InvalidLinkedContext_ReturnsError(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, _, _ := newTestTracker(t)
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
-	require.NoError(t, err)
-
-	err = tracker.RecordEvaluations(context.Background(), trace.SpanContext{}, []Evaluation{
+	err := tracker.RecordEvaluations(context.Background(), metry.AsyncHandle{}, []Evaluation{
 		{Metric: EvaluationFaithfulness, Score: 0.8},
 	})
-	require.ErrorIs(t, err, ErrInvalidSpanContext)
+	require.ErrorIs(t, err, ErrInvalidAsyncHandle)
 }
 
 func TestRecordEvaluations_ValidLinked_AddsSpanWithLinkAndEvents(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTracker(t)
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
-	require.NoError(t, err)
-
-	parent := newParentSpanContext(true)
-	err = tracker.RecordEvaluations(context.Background(), parent, []Evaluation{
+	linkedSC := testutil.NewTestParentSpanContext(true)
+	handle := metrytest.AsyncHandleFromSpanContext(t, linkedSC)
+	err := tracker.RecordEvaluations(context.Background(), handle, []Evaluation{
 		{Metric: EvaluationFaithfulness, Score: 0.91, Reasoning: "hidden"},
 		{Metric: EvaluationAnswerRelevance, Score: 0.76},
 	})
 	require.NoError(t, err)
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "llm_evaluations", spans[0].Name)
-	assertLinkBasedAsyncSpan(t, spans[0], parent)
+	testutil.AssertLinkBasedAsyncSpan(t, spans[0], testutil.ProducerSpanStub(linkedSC))
 
-	spanAttrs := attribute.NewSet(spans[0].Attributes...)
-	assert.Equal(t, PurposeQualityEvaluation, mustStringAttr(t, spanAttrs, OperationPurposeKey))
+	assert.Equal(t, PurposeQualityEvaluation, testutil.SpanStubStringAttr(t, spans[0], OperationPurpose))
 
 	require.Len(t, spans[0].Events, 2)
 	assert.Equal(t, "evaluation", spans[0].Events[0].Name)
 	assert.Equal(t, "evaluation", spans[0].Events[1].Name)
 
-	firstAttrs := attribute.NewSet(spans[0].Events[0].Attributes...)
-	assert.Equal(t, string(EvaluationFaithfulness), mustStringAttr(t, firstAttrs, EvaluationMetricNameKey))
-	assert.InDelta(t, 0.91, mustFloatAttr(t, firstAttrs, EvaluationScoreKey), 1e-9)
-	_, ok := firstAttrs.Value(EvaluationReasoningKey)
-	assert.False(t, ok)
+	firstEvent := testutil.AttrsStub(spans[0].Events[0].Attributes)
+	assert.Equal(t, string(EvaluationFaithfulness), testutil.SpanStubStringAttr(t, firstEvent, EvaluationMetricName))
+	assert.InDelta(t, 0.91, testutil.SpanStubFloat64Attr(t, firstEvent, EvaluationScore), 1e-9)
+	assert.False(t, testutil.SpanStubHasAttr(firstEvent, EvaluationReasoning))
 }
 
 func TestRecordEvaluations_WithPayloadRecording_IncludesReasoning(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("evals"),
-		tp.Tracer("evals"),
+	tracker, provider, mem := newTestTracker(t,
 		WithRecordPayloads(true),
 		WithMaxContextLength(1<<20), // span payload limit; event reasoning uses MaxEventLength instead
 		WithMaxEventLength(48),
 	)
-	require.NoError(t, err)
 
-	parent := newParentSpanContext(false)
-	err = tracker.RecordEvaluations(context.Background(), parent, []Evaluation{
+	handle := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
+	err := tracker.RecordEvaluations(context.Background(), handle, []Evaluation{
 		{
 			Metric:    EvaluationContextPrecision,
 			Score:     0.67,
@@ -99,37 +69,25 @@ func TestRecordEvaluations_WithPayloadRecording_IncludesReasoning(t *testing.T) 
 	})
 	require.NoError(t, err)
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	require.Len(t, spans[0].Events, 1)
 
-	eventAttrs := attribute.NewSet(spans[0].Events[0].Attributes...)
-	reasoning := mustStringAttr(t, eventAttrs, EvaluationReasoningKey)
+	event := testutil.AttrsStub(spans[0].Events[0].Attributes)
+	reasoning := testutil.SpanStubStringAttr(t, event, EvaluationReasoning)
 	assert.LessOrEqual(t, len(reasoning), 48)
 	assert.True(t, utf8.ValidString(reasoning))
 }
 
 func TestRecordEvaluations_ReasoningTruncatedToDefaultMaxEventLength(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(
-		mp.Meter("evals"),
-		tp.Tracer("evals"),
-		WithRecordPayloads(true),
-	)
-	require.NoError(t, err)
+	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
 
 	// defaultMaxEventLength (4096) = rune-safe prefix + len(truncationSuffix) (15 bytes).
 	require.Len(t, truncationSuffix, 15)
 
-	parent := newParentSpanContext(false)
-	err = tracker.RecordEvaluations(context.Background(), parent, []Evaluation{
+	handle := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
+	err := tracker.RecordEvaluations(context.Background(), handle, []Evaluation{
 		{
 			Metric:    EvaluationFaithfulness,
 			Score:     0.5,
@@ -138,34 +96,24 @@ func TestRecordEvaluations_ReasoningTruncatedToDefaultMaxEventLength(t *testing.
 	})
 	require.NoError(t, err)
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	require.Len(t, spans[0].Events, 1)
 
-	eventAttrs := attribute.NewSet(spans[0].Events[0].Attributes...)
-	reasoning := mustStringAttr(t, eventAttrs, EvaluationReasoningKey)
+	event := testutil.AttrsStub(spans[0].Events[0].Attributes)
+	reasoning := testutil.SpanStubStringAttr(t, event, EvaluationReasoning)
 	assert.Len(t, reasoning, defaultMaxEventLength)
 	assert.True(t, strings.HasSuffix(reasoning, truncationSuffix))
 	assert.True(t, utf8.ValidString(reasoning))
 }
 
 func TestRecordEvaluations_ReasoningTruncated_UTF8RuneBoundary(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
 	const eventLimit = 64
-	tracker, err := NewTracker(
-		mp.Meter("evals"),
-		tp.Tracer("evals"),
+	tracker, provider, mem := newTestTracker(t,
 		WithRecordPayloads(true),
 		WithMaxEventLength(eventLimit),
 	)
-	require.NoError(t, err)
 
 	// bodyBudget is the max bytes kept before the truncation suffix; place a 3-byte UTF-8 rune (世) so that
 	// byte index bodyBudget falls inside that rune and truncateAtRuneBoundary must back up to a rune start.
@@ -175,73 +123,84 @@ func TestRecordEvaluations_ReasoningTruncated_UTF8RuneBoundary(t *testing.T) {
 	prefix := strings.Repeat("b", prefixLen)
 	reasoning := prefix + "世" + strings.Repeat("c", 100)
 
-	parent := newParentSpanContext(false)
-	err = tracker.RecordEvaluations(context.Background(), parent, []Evaluation{
+	handle := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
+	err := tracker.RecordEvaluations(context.Background(), handle, []Evaluation{
 		{Metric: EvaluationFaithfulness, Score: 0.1, Reasoning: reasoning},
 	})
 	require.NoError(t, err)
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	eventAttrs := attribute.NewSet(spans[0].Events[0].Attributes...)
-	out := mustStringAttr(t, eventAttrs, EvaluationReasoningKey)
+	event := testutil.AttrsStub(spans[0].Events[0].Attributes)
+	out := testutil.SpanStubStringAttr(t, event, EvaluationReasoning)
 	assert.LessOrEqual(t, len(out), eventLimit)
 	assert.True(t, strings.HasSuffix(out, truncationSuffix))
 	assert.True(t, utf8.ValidString(out))
 }
 
 func TestRecordEvaluations_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSyncer(mem),
-		sdktrace.WithSampler(NewHintSampler(sdktrace.NeverSample())),
-	)
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
-	require.NoError(t, err)
-
-	parent := unsampledRemoteParentSpanContext()
-	err = tracker.RecordEvaluations(
+	linkedSC := testutil.NewUnsampledRemoteParentSpanContext()
+	handle := metrytest.AsyncHandleFromSpanContext(t, linkedSC)
+	err := tracker.RecordEvaluations(
 		context.Background(),
-		parent,
+		handle,
 		[]Evaluation{{Metric: EvaluationFaithfulness, Score: 0.2}},
-		trace.WithAttributes(SamplingKeepKey.Bool(true)),
+		WithSamplingKeep(),
 	)
 	require.NoError(t, err)
 
+	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "llm_evaluations", spans[0].Name)
-	assertLinkBasedAsyncSpan(t, spans[0], parent)
+	testutil.AssertLinkBasedAsyncSpan(t, spans[0], testutil.ProducerSpanStub(linkedSC))
 }
 
 func TestRecordEvaluations_WithoutKeepHint_DroppedWhenBaseSamplerDrops(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
 
-	mem := tracetest.NewInMemoryExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSyncer(mem),
-		sdktrace.WithSampler(NewHintSampler(sdktrace.NeverSample())),
-	)
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("evals"), tp.Tracer("evals"))
-	require.NoError(t, err)
-
-	parent := unsampledRemoteParentSpanContext()
-	err = tracker.RecordEvaluations(
+	handle := metrytest.AsyncHandleFromSpanContext(t, testutil.NewUnsampledRemoteParentSpanContext())
+	err := tracker.RecordEvaluations(
 		context.Background(),
-		parent,
+		handle,
 		[]Evaluation{{Metric: EvaluationFaithfulness, Score: 0.2}},
 	)
 	require.NoError(t, err)
 
+	flushTestProvider(t, provider)
 	require.Empty(t, mem.GetSpans())
+}
+
+func TestRecordEvaluations_EmptySlice_ReturnsErrNoEvaluations(t *testing.T) {
+	tracker, _, _ := newTestTracker(t)
+
+	handle := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(true))
+	err := tracker.RecordEvaluations(context.Background(), handle, nil)
+	require.ErrorIs(t, err, ErrNoEvaluations)
+}
+
+func TestRecordEvaluations_MetryAsyncHandle_RoundTrip(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
+
+	handle, originSC := metrytest.AsyncHandleFromProducerSpan(t, provider, mem, "producer", "enqueue")
+
+	token, err := handle.Marshal()
+	require.NoError(t, err)
+
+	parsed, err := metry.ParseAsyncHandle(token)
+	require.NoError(t, err)
+
+	err = tracker.RecordEvaluations(context.Background(), parsed, []Evaluation{
+		{Metric: EvaluationFaithfulness, Score: 0.85},
+	})
+	require.NoError(t, err)
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 2)
+	testutil.AssertLinkBasedAsyncSpan(t, spans[1], originSC)
+	assert.Equal(t, "llm_evaluations", spans[1].Name)
 }

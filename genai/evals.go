@@ -2,12 +2,15 @@ package genai
 
 import (
 	"context"
+	"errors"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/skosovsky/metry"
 )
 
 const evaluationEventAttrCap = 3
+
+// ErrNoEvaluations is returned when RecordEvaluations is called with an empty slice.
+var ErrNoEvaluations = errors.New("genai: no evaluations provided")
 
 // EvaluationMetric is a typed machine-evaluation metric name.
 type EvaluationMetric string
@@ -29,39 +32,34 @@ type Evaluation struct {
 // RecordEvaluations records LLM-judge evaluations on a new span linked to the original interaction.
 func (t *Tracker) RecordEvaluations(
 	ctx context.Context,
-	linked trace.SpanContext,
+	handle metry.AsyncHandle,
 	evaluations []Evaluation,
-	opts ...trace.SpanStartOption,
+	opts ...LinkedSpanOption,
 ) error {
-	if !linked.IsValid() {
-		return ErrInvalidSpanContext
+	if !handle.IsValid() {
+		return ErrInvalidAsyncHandle
 	}
 	if len(evaluations) == 0 {
+		return ErrNoEvaluations
+	}
+
+	spanOpts := append([]LinkedSpanOption{WithLinkedPurpose(PurposeQualityEvaluation)}, opts...)
+
+	return handle.RecordLinkedSpan(ctx, t.provider, "llm_evaluations", func(w metry.LinkedSpanWriter) error {
+		for _, evaluation := range evaluations {
+			attrs := make([]metry.Attribute, 0, evaluationEventAttrCap)
+			attrs = append(attrs, metry.FloatAttribute(EvaluationScore, evaluation.Score))
+			if evaluation.Metric != "" {
+				attrs = append(attrs, metry.StringAttribute(EvaluationMetricName, string(evaluation.Metric)))
+			}
+			if t.cfg.RecordPayloads() && evaluation.Reasoning != "" {
+				attrs = append(attrs, metry.StringAttribute(
+					EvaluationReasoning,
+					truncateContextWithLimit(evaluation.Reasoning, t.cfg.MaxEventLength()),
+				))
+			}
+			w.AddEvent("evaluation", attrs...)
+		}
 		return nil
-	}
-
-	startOpts := []trace.SpanStartOption{
-		trace.WithNewRoot(),
-		trace.WithLinks(trace.Link{SpanContext: linked, Attributes: nil}),
-		trace.WithAttributes(OperationPurposeKey.String(PurposeQualityEvaluation)),
-	}
-	startOpts = append(startOpts, opts...)
-	_, span := t.tracer.Start(ctx, "llm_evaluations", startOpts...)
-	defer span.End()
-
-	for _, evaluation := range evaluations {
-		attrs := make([]attribute.KeyValue, 0, evaluationEventAttrCap)
-		attrs = append(attrs, EvaluationScoreKey.Float64(evaluation.Score))
-		if evaluation.Metric != "" {
-			attrs = append(attrs, EvaluationMetricNameKey.String(string(evaluation.Metric)))
-		}
-		if t.cfg.RecordPayloads() && evaluation.Reasoning != "" {
-			attrs = append(attrs, EvaluationReasoningKey.String(
-				truncateContextWithLimit(evaluation.Reasoning, t.cfg.MaxEventLength()),
-			))
-		}
-		span.AddEvent("evaluation", trace.WithAttributes(attrs...))
-	}
-
-	return nil
+	}, spanOpts...)
 }

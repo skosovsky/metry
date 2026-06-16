@@ -509,3 +509,8 @@ linters:
       # Package name matches net/http import path; revive directives in tests are not a second package doc.
       - path: 'middleware/http/'
         linters: [ godoclint ]
+      # Import-cycle break: wire hooks assigned once from wire_init.go; type assertions are test-only bridges.
+      - path: '(wire_init\.go|internal/genaiwire/wire\.go|internal/metrytestwire/wire\.go)$'
+        linters: [ gochecknoglobals, gochecknoinits, reassign ]
+      - path: '(genai/sampler\.go|metrytest/exporter_bridge\.go|metrytest/provider_deps\.go)$'
+        linters: [ errcheck ]

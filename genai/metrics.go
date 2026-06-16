@@ -12,6 +12,7 @@ func (t *Tracker) RecordTTFT(ctx context.Context, meta Meta, duration time.Durat
 	if t.metrics == nil || t.metrics.TTFT == nil || duration <= 0 {
 		return
 	}
+	meta = mergeMetaFromScope(ctx, meta)
 	attrs, ok := metricAttributesFromMeta(meta)
 	if !ok {
 		return
@@ -36,6 +37,7 @@ func (t *Tracker) RecordStreamingCompletion(
 		return
 	}
 
+	meta = mergeMetaFromScope(ctx, meta)
 	attrs, ok := metricAttributesFromMeta(meta)
 	if !ok {
 		return

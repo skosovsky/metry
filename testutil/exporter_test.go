@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -30,28 +29,11 @@ func TestInMemoryTraceExporter_SpanExporter(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(mem.ex)),
 	)
-	otel.SetTracerProvider(tp)
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	tracer := otel.Tracer("metry")
+	tracer := tp.Tracer("metry")
 	_, span := tracer.Start(context.Background(), "op")
 	span.End()
 	assert.Equal(t, 1, mem.Len())
-}
-
-func TestSetupTestTracing_ReturnsExporter(t *testing.T) {
-	mem := SetupTestTracing(t)
-	require.NotNil(t, mem)
-	tracer := otel.Tracer("metry")
-	require.NotNil(t, tracer)
-	_, span := tracer.Start(context.Background(), "test")
-	span.End()
-	assert.Equal(t, 1, mem.Len())
-}
-
-func TestSetupTestMetrics_ReturnsReaderAndMeter(t *testing.T) {
-	reader, meter := SetupTestMetrics(t)
-	require.NotNil(t, reader)
-	require.NotNil(t, meter)
 }
 
 func TestInMemoryMetricExporter_GetMetrics_Reset_Len(t *testing.T) {
@@ -89,6 +71,17 @@ func getFirstSumInt64Value(rm metricdata.ResourceMetrics) (int64, bool) {
 		for _, m := range sm.Metrics {
 			if s, ok := m.Data.(metricdata.Sum[int64]); ok && len(s.DataPoints) > 0 {
 				return s.DataPoints[0].Value, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func getFirstGaugeFloat64Value(rm metricdata.ResourceMetrics) (float64, bool) {
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if g, ok := m.Data.(metricdata.Gauge[float64]); ok && len(g.DataPoints) > 0 {
+				return g.DataPoints[0].Value, true
 			}
 		}
 	}
@@ -364,8 +357,10 @@ func TestInMemoryMetricExporter_ExportPanicsForUnsupportedAggregationType(t *tes
 	rm := &metricdata.ResourceMetrics{
 		ScopeMetrics: []metricdata.ScopeMetrics{{
 			Metrics: []metricdata.Metrics{{
-				Name: "gauge.unsupported",
-				Data: metricdata.Gauge[int64]{DataPoints: []metricdata.DataPoint[int64]{{Value: 1}}},
+				Name: "exponential.unsupported",
+				Data: metricdata.ExponentialHistogram[int64]{
+					DataPoints: []metricdata.ExponentialHistogramDataPoint[int64]{{Count: 1}},
+				},
 			}},
 		}},
 	}
@@ -378,5 +373,35 @@ func TestInMemoryMetricExporter_ExportPanicsForUnsupportedAggregationType(t *tes
 	msg, ok := panicVal.(string)
 	require.True(t, ok, "panic value must be string")
 	assert.Contains(t, msg, "does not support", "panic message must describe unsupported type")
-	assert.Contains(t, msg, "Gauge", "panic message must include aggregation type name for diagnostics")
+	assert.Contains(t, msg, "ExponentialHistogram", "panic message must include aggregation type name for diagnostics")
+}
+
+func TestInMemoryMetricExporter_GaugeSnapshotIndependentOfOriginal(t *testing.T) {
+	mem := NewInMemoryMetricExporter()
+	ctx := context.Background()
+	rm := &metricdata.ResourceMetrics{
+		ScopeMetrics: []metricdata.ScopeMetrics{{
+			Metrics: []metricdata.Metrics{{
+				Name: "queue_depth",
+				Data: metricdata.Gauge[float64]{
+					DataPoints: []metricdata.DataPoint[float64]{{Value: 3}},
+				},
+			}},
+		}},
+	}
+	require.NoError(t, mem.Export(ctx, rm))
+
+	last := mem.LastResourceMetrics()
+	require.NotNil(t, last)
+	val, ok := getFirstGaugeFloat64Value(*last)
+	require.True(t, ok)
+	assert.InDelta(t, 3, val, 1e-9)
+
+	rm.ScopeMetrics[0].Metrics[0].Data = metricdata.Gauge[float64]{
+		DataPoints: []metricdata.DataPoint[float64]{{Value: 99}},
+	}
+	last2 := mem.LastResourceMetrics()
+	val2, ok := getFirstGaugeFloat64Value(*last2)
+	require.True(t, ok)
+	assert.InDelta(t, 3, val2, 1e-9, "mutating original must not affect stored snapshot")
 }

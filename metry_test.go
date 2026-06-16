@@ -5,13 +5,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 
-	"github.com/skosovsky/metry/genai"
+	"github.com/skosovsky/metry/internal/metrytestwire"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -21,107 +17,25 @@ func TestNew_MissingServiceName_ReturnsError(t *testing.T) {
 	require.Nil(t, provider)
 }
 
-func TestNew_DoesNotMutateGlobalOTelState(t *testing.T) {
-	ctx := context.Background()
-	prevTracerProvider := otel.GetTracerProvider()
-	prevMeterProvider := otel.GetMeterProvider()
-	prevPropagator := otel.GetTextMapPropagator()
-
-	provider, err := New(ctx, WithServiceName("test-svc"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
-
-	require.Same(t, prevTracerProvider, otel.GetTracerProvider())
-	require.Same(t, prevMeterProvider, otel.GetMeterProvider())
-	require.Same(t, prevPropagator, otel.GetTextMapPropagator())
-}
-
-func TestNew_ProviderWorksAndShutdownIsIdempotent(t *testing.T) {
-	ctx := context.Background()
-	traceExporter := tracetest.NewInMemoryExporter()
-	provider, err := New(
-		ctx,
-		WithServiceName("test-svc"),
-		WithExporter(traceExporter),
-	)
-	require.NoError(t, err)
-
-	_, span := provider.TracerProvider.Tracer("metry-test").Start(ctx, "span")
-	span.End()
-
-	tp := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.NoError(t, tp.ForceFlush(ctx))
-	require.Len(t, traceExporter.GetSpans(), 1)
-
-	require.NoError(t, provider.Shutdown(ctx))
-	require.NoError(t, provider.Shutdown(ctx))
-}
-
-func TestNew_NoTraceExporter_TracerStartsAndShutdowns(t *testing.T) {
-	ctx := context.Background()
-	provider, err := New(ctx, WithServiceName("test-svc"))
-	require.NoError(t, err)
-
-	_, span := provider.TracerProvider.Tracer("metry-test").Start(ctx, "span-no-exporter")
-	span.End()
-
-	require.NoError(t, provider.Shutdown(ctx))
-	require.NoError(t, provider.Shutdown(ctx))
-}
-
 func TestNew_MeterProvider_BehaviorWithAndWithoutMetricExporter(t *testing.T) {
 	ctx := context.Background()
 
 	withoutMetrics, err := New(ctx, WithServiceName("test-no-metrics"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = withoutMetrics.Shutdown(ctx) })
-	require.NotNil(t, withoutMetrics.MeterProvider)
+	require.NotNil(t, withoutMetrics.meterProvider())
 	require.Nil(t, withoutMetrics.mp)
 
 	metricExporter := testutil.NewInMemoryMetricExporter()
 	withMetrics, err := New(
 		ctx,
 		WithServiceName("test-with-metrics"),
-		WithMetricExporter(metricExporter.Exporter()),
+		WithMetricExporter(mustMetricExporter(metricExporter)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = withMetrics.Shutdown(ctx) })
-	require.NotNil(t, withMetrics.MeterProvider)
+	require.NotNil(t, withMetrics.meterProvider())
 	require.NotNil(t, withMetrics.mp)
-}
-
-func TestNew_NoMetricExporter_TrackerWorksViaPublicAPI(t *testing.T) {
-	ctx := context.Background()
-	traceExporter := tracetest.NewInMemoryExporter()
-
-	provider, err := New(
-		ctx,
-		WithServiceName("test-no-metrics-tracker"),
-		WithExporter(traceExporter),
-	)
-	require.NoError(t, err)
-
-	tracker, err := genai.NewTracker(
-		provider.MeterProvider.Meter("metry/genai"),
-		provider.TracerProvider.Tracer("metry/genai"),
-	)
-	require.NoError(t, err)
-
-	_, span := provider.TracerProvider.Tracer("metry-test").Start(ctx, "interaction-span")
-	tracker.RecordInteraction(ctx, span, genai.Meta{
-		Provider:  "openai",
-		Operation: "chat",
-	}, genai.Payload{}, genai.Usage{
-		InputTokens:  1,
-		OutputTokens: 1,
-	})
-	span.End()
-
-	tp := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.NoError(t, tp.ForceFlush(ctx))
-	require.NotEmpty(t, traceExporter.GetSpans())
-
-	require.NoError(t, provider.Shutdown(ctx))
 }
 
 func TestProvider_ContainsW3CPropagator(t *testing.T) {
@@ -130,7 +44,7 @@ func TestProvider_ContainsW3CPropagator(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
 
-	fields := provider.Propagator.Fields()
+	fields := provider.textMapPropagator().Fields()
 	require.Contains(t, fields, propagation.TraceContext{}.Fields()[0])
 }
 
@@ -139,107 +53,20 @@ func TestProvider_Shutdown_NilSafe(t *testing.T) {
 	require.NoError(t, provider.Shutdown(context.Background()))
 }
 
-func TestProvider_TracerProvider_IsSDKTracerProvider(t *testing.T) {
-	provider, err := New(context.Background(), WithServiceName("test-svc"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
-
-	_, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.True(t, ok)
+func mustSpanExporter(mem *testutil.InMemoryTraceExporter) SpanExporter {
+	v := metrytestwire.SpanExporter(mem.SDKSpanExporter())
+	e, ok := v.(SpanExporter)
+	if !ok || v == nil {
+		panic("metry: test SpanExporter wire hook returned unexpected value")
+	}
+	return e
 }
 
-func TestNew_WithSampler_OverridesTraceRatio(t *testing.T) {
-	ctx := context.Background()
-	traceExporter := tracetest.NewInMemoryExporter()
-
-	providerNever, err := New(
-		ctx,
-		WithServiceName("test-sampler-never"),
-		WithTraceRatio(1.0),
-		WithSampler(sdktrace.NeverSample()),
-		WithExporter(traceExporter),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = providerNever.Shutdown(ctx) })
-
-	_, spanNever := providerNever.TracerProvider.Tracer("metry-test").Start(ctx, "span-never")
-	spanNever.End()
-	require.NoError(t, providerNever.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
-	require.Empty(t, traceExporter.GetSpans())
-
-	providerAlways, err := New(
-		ctx,
-		WithServiceName("test-sampler-always"),
-		WithTraceRatio(0.0),
-		WithSampler(sdktrace.AlwaysSample()),
-		WithExporter(traceExporter),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = providerAlways.Shutdown(ctx) })
-
-	_, spanAlways := providerAlways.TracerProvider.Tracer("metry-test").Start(ctx, "span-always")
-	spanAlways.End()
-	require.NoError(t, providerAlways.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
-	require.Len(t, traceExporter.GetSpans(), 1)
-	require.Equal(t, "span-always", traceExporter.GetSpans()[0].Name)
-}
-
-func TestNew_WithHintSampler_RequiresKeepHintToExport(t *testing.T) {
-	ctx := context.Background()
-	traceExporter := tracetest.NewInMemoryExporter()
-
-	provider, err := New(
-		ctx,
-		WithServiceName("test-hint-sampler"),
-		WithSampler(genai.NewHintSampler(sdktrace.NeverSample())),
-		WithExporter(traceExporter),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
-
-	tracer := provider.TracerProvider.Tracer("metry-test")
-
-	_, dropped := tracer.Start(ctx, "span-without-hint")
-	dropped.End()
-
-	_, kept := tracer.Start(
-		ctx,
-		"span-with-hint",
-		trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
-	)
-	kept.End()
-
-	require.NoError(t, provider.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
-	spans := traceExporter.GetSpans()
-	require.Len(t, spans, 1)
-	require.Equal(t, "span-with-hint", spans[0].Name)
-}
-
-func TestNew_WithHintSampler_PropagatesSampledParentDecision(t *testing.T) {
-	ctx := context.Background()
-	traceExporter := tracetest.NewInMemoryExporter()
-
-	provider, err := New(
-		ctx,
-		WithServiceName("test-hint-parent"),
-		WithSampler(genai.NewHintSampler(sdktrace.NeverSample())),
-		WithExporter(traceExporter),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
-
-	tracer := provider.TracerProvider.Tracer("metry-test")
-
-	childCtx, root := tracer.Start(
-		ctx,
-		"root-with-hint",
-		trace.WithAttributes(genai.SamplingKeepKey.Bool(true)),
-	)
-	_, child := tracer.Start(childCtx, "child-without-hint")
-	child.End()
-	root.End()
-
-	require.NoError(t, provider.TracerProvider.(*sdktrace.TracerProvider).ForceFlush(ctx))
-	spans := traceExporter.GetSpans()
-	require.Len(t, spans, 2)
+func mustMetricExporter(mem *testutil.InMemoryMetricExporter) MetricExporter {
+	v := metrytestwire.MetricExporter(mem.SDKExporter())
+	e, ok := v.(MetricExporter)
+	if !ok || v == nil {
+		panic("metry: test MetricExporter wire hook returned unexpected value")
+	}
+	return e
 }

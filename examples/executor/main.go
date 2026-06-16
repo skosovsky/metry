@@ -1,3 +1,4 @@
+// Executor middleware example. Span status and metric assertions: see executor_middleware_test.go.
 package main
 
 import (
@@ -8,7 +9,6 @@ import (
 	"os"
 
 	"github.com/skosovsky/metry"
-	"github.com/skosovsky/metry/middleware/executor"
 )
 
 type request struct {
@@ -47,7 +47,7 @@ func run() int {
 		return response{OK: true}, nil
 	}
 
-	wrapped := executor.Wrap(provider, "example.operation", core)
+	wrapped := metry.ExecutorWrap(provider, "example.operation", core)
 	var exec Executor[request, response] = ExecutorFunc[request, response](wrapped)
 
 	out, err := exec.Execute(ctx, request{ID: "1"})

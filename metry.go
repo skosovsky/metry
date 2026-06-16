@@ -16,6 +16,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	"go.opentelemetry.io/otel/trace"
+	nooptrace "go.opentelemetry.io/otel/trace/noop"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -26,17 +27,45 @@ var (
 )
 
 // Provider is the stateless runtime object created by New.
-// It exposes OTel providers and propagator without mutating global state.
 type Provider struct {
-	TracerProvider trace.TracerProvider
-	MeterProvider  metric.MeterProvider
-	Propagator     propagation.TextMapPropagator
+	otelTracer trace.TracerProvider
+	otelMeter  metric.MeterProvider
+	propagator propagation.TextMapPropagator
 
 	tp *sdktrace.TracerProvider
 	mp *sdkmetric.MeterProvider
 
 	shutdownOnce sync.Once
 	shutdownErr  error
+}
+
+const (
+	genaiMeterName  = "metry/genai"
+	genaiTracerName = "metry/genai"
+)
+
+func (p *Provider) tracerProvider() trace.TracerProvider {
+	if p == nil || p.otelTracer == nil {
+		return nooptrace.NewTracerProvider()
+	}
+	return p.otelTracer
+}
+
+func (p *Provider) meterProvider() metric.MeterProvider {
+	if p == nil || p.otelMeter == nil {
+		return noopmetric.NewMeterProvider()
+	}
+	return p.otelMeter
+}
+
+func (p *Provider) textMapPropagator() propagation.TextMapPropagator {
+	if p == nil || p.propagator == nil {
+		return propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{},
+			propagation.Baggage{},
+		)
+	}
+	return p.propagator
 }
 
 // New creates a metry runtime provider.
@@ -69,11 +98,11 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 		return nil, fmt.Errorf("metry: merge resource: %w", err)
 	}
 
-	exp := cfg.Exporter
+	exp := spanExporterSDK(cfg.Exporter)
 	if exp == nil {
 		exp = noopSpanExporter{}
 	}
-	sampler := cfg.Sampler
+	sampler := traceSamplerSDK(cfg.Sampler)
 	if sampler == nil {
 		sampler = sdktrace.TraceIDRatioBased(cfg.TraceRatio)
 	}
@@ -85,10 +114,10 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 
 	activeMeter := metric.MeterProvider(noopmetric.NewMeterProvider())
 	var mp *sdkmetric.MeterProvider
-	if cfg.MetricExporter != nil {
+	if metricExp := metricExporterSDK(cfg.MetricExporter); metricExp != nil {
 		mp = sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
-			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(cfg.MetricExporter)),
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
 		)
 		activeMeter = mp
 	}
@@ -99,18 +128,36 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 	)
 
 	return &Provider{
-		TracerProvider: tp,
-		MeterProvider:  activeMeter,
-		Propagator:     propagator,
-		tp:             tp,
-		mp:             mp,
-		shutdownOnce:   sync.Once{},
-		shutdownErr:    nil,
+		otelTracer:   tp,
+		otelMeter:    activeMeter,
+		propagator:   propagator,
+		tp:           tp,
+		mp:           mp,
+		shutdownOnce: sync.Once{},
+		shutdownErr:  nil,
 	}, nil
 }
 
+// ForceFlush flushes pending trace and metric data.
+func (p *Provider) ForceFlush(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	var errs []error
+	if p.tp != nil {
+		if err := p.tp.ForceFlush(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("tracer force flush: %w", err))
+		}
+	}
+	if p.mp != nil {
+		if err := p.mp.ForceFlush(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("meter force flush: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Shutdown releases resources owned by this Provider.
-// Shutdown is idempotent.
 func (p *Provider) Shutdown(ctx context.Context) error {
 	if p == nil {
 		return nil

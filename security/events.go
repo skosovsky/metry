@@ -5,28 +5,50 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/internal/traceutil"
 )
 
-// RecordSecurityEvent adds a "Security Intervention" event to the span from ctx
-// with action, validator, reason and shadow mode attributes. The code and
-// severity attributes are added only when the corresponding argument is not an
-// empty string. Use for compliance and audit logging. If ctx has no span, the
-// call is a no-op.
-func RecordSecurityEvent(ctx context.Context, action, validator, reason, code, severity string, isShadow bool) {
+// RecordSecurityEventWithProvider records a security event using provider.StartSpan when
+// ctx has no active span, so hosts do not need direct TracerProvider access.
+func RecordSecurityEventWithProvider(
+	ctx context.Context,
+	provider *metry.Provider,
+	action, validator, reason, code, severity string,
+	isShadow bool,
+) error {
+	if provider == nil {
+		return metry.ErrNilProvider
+	}
 	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		addSecurityEvent(span, action, validator, reason, code, severity, isShadow)
+		return nil
+	}
+	ctx, end, err := provider.StartSpan(ctx, "metry/security", "security.intervention")
+	if err != nil {
+		return err
+	}
+	defer end()
+	addSecurityEvent(trace.SpanFromContext(ctx), action, validator, reason, code, severity, isShadow)
+	return nil
+}
 
+func addSecurityEvent(span trace.Span, action, validator, reason, code, severity string, isShadow bool) {
 	attrs := []attribute.KeyValue{
-		ActionKey.String(action),
-		ValidatorKey.String(validator),
-		ReasonKey.String(reason),
-		ShadowModeKey.Bool(isShadow),
+		attribute.String(Action, action),
+		attribute.String(Validator, validator),
+		attribute.String(Reason, reason),
+		attribute.Bool(ShadowMode, isShadow),
 	}
 	if code != "" {
-		attrs = append(attrs, CodeKey.String(code))
+		attrs = append(attrs, attribute.String(Code, code))
 	}
 	if severity != "" {
-		attrs = append(attrs, SeverityKey.String(severity))
+		attrs = append(attrs, attribute.String(Severity, severity))
 	}
-
-	span.AddEvent("Security Intervention", trace.WithAttributes(attrs...))
+	traceutil.MutateRecordingSpan(span, func(s trace.Span) {
+		s.AddEvent("Security Intervention", trace.WithAttributes(attrs...))
+	})
 }

@@ -7,49 +7,49 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/metrytest"
+	"github.com/skosovsky/metry/testutil"
 )
 
-func TestNewTracker_RequiresMeterAndTracer(t *testing.T) {
-	_, err := NewTracker(nil, nil)
-	require.ErrorIs(t, err, ErrMeterRequired)
+func TestNewTrackerFromProvider_RequiresProvider(t *testing.T) {
+	_, err := NewTrackerFromProvider(nil)
+	require.ErrorIs(t, err, ErrProviderRequired)
 
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	_, err = NewTracker(mp.Meter("tracker"), nil)
-	require.ErrorIs(t, err, ErrTracerRequired)
+	provider, _ := metrytest.NewTestProvider(t, metry.WithServiceName("genai-test"))
+	tracker, err := NewTrackerFromProvider(provider)
+	require.NoError(t, err)
+	require.NotNil(t, tracker)
 }
 
-func TestNewTracker_UsesExplicitTracerAndKeepsTrackersIsolated(t *testing.T) {
-	reader1 := sdkmetric.NewManualReader()
-	mp1 := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader1))
-	t.Cleanup(func() { _ = mp1.Shutdown(context.Background()) })
-	traceExporter1 := tracetest.NewInMemoryExporter()
-	tp1 := sdktrace.NewTracerProvider(sdktrace.WithSyncer(traceExporter1))
-	t.Cleanup(func() { _ = tp1.Shutdown(context.Background()) })
+func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
+	memMetric1 := testutil.NewInMemoryMetricExporter()
+	memTrace1 := testutil.NewInMemoryTraceExporter()
+	provider1, err := metry.New(context.Background(),
+		metry.WithServiceName("tracker-1"),
+		metry.WithExporter(metrytest.MetrySpanExporter(memTrace1)),
+		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric1)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider1.Shutdown(context.Background()) })
 
-	reader2 := sdkmetric.NewManualReader()
-	mp2 := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader2))
-	t.Cleanup(func() { _ = mp2.Shutdown(context.Background()) })
-	traceExporter2 := tracetest.NewInMemoryExporter()
-	tp2 := sdktrace.NewTracerProvider(sdktrace.WithSyncer(traceExporter2))
-	t.Cleanup(func() { _ = tp2.Shutdown(context.Background()) })
+	memMetric2 := testutil.NewInMemoryMetricExporter()
+	memTrace2 := testutil.NewInMemoryTraceExporter()
+	provider2, err := metry.New(context.Background(),
+		metry.WithServiceName("tracker-2"),
+		metry.WithExporter(metrytest.MetrySpanExporter(memTrace2)),
+		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric2)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = provider2.Shutdown(context.Background()) })
 
-	tracker1, err := NewTracker(
-		mp1.Meter("tracker-1"),
-		tp1.Tracer("tracker-1"),
+	tracker1, err := NewTrackerFromProvider(provider1,
 		WithRecordPayloads(true),
 		WithMaxContextLength(96),
 	)
 	require.NoError(t, err)
-	tracker2, err := NewTracker(
-		mp2.Meter("tracker-2"),
-		tp2.Tracer("tracker-2"),
+	tracker2, err := NewTrackerFromProvider(provider2,
 		WithRecordPayloads(false),
 		WithMaxContextLength(32),
 	)
@@ -57,62 +57,75 @@ func TestNewTracker_UsesExplicitTracerAndKeepsTrackersIsolated(t *testing.T) {
 
 	toolJSON := `{"prompt":"` + strings.Repeat("a", 512) + `"}`
 
-	ctx1, span1 := tracker1.StartToolSpan(context.Background(), "search", "call-1", toolJSON)
-	tracker1.RecordInteraction(ctx1, span1, testMeta(), testPayload(), Usage{
+	ctx1, end1 := tracker1.StartToolSpan(context.Background(), "search", "call-1", toolJSON)
+	require.NoError(t, tracker1.RecordInteraction(ctx1, testMeta(), testPayload(), Usage{
 		InputTokens:           12,
 		OutputTokens:          6,
 		CacheReadInputTokens:  3,
 		ReasoningOutputTokens: 2,
-	})
-	tracker1.RecordToolResult(span1, `{"result":"`+strings.Repeat("b", 512)+`"}`, false)
-	span1.End()
+	}))
+	tracker1.RecordToolResult(ctx1, `{"result":"`+strings.Repeat("b", 512)+`"}`, nil)
+	end1()
 
-	ctx2, span2 := tracker2.StartToolSpan(context.Background(), "search", "call-2", toolJSON)
-	tracker2.RecordInteraction(ctx2, span2, testMeta(), testPayload(), Usage{
+	ctx2, end2 := tracker2.StartToolSpan(context.Background(), "search", "call-2", toolJSON)
+	require.NoError(t, tracker2.RecordInteraction(ctx2, testMeta(), testPayload(), Usage{
 		InputTokens:  4,
 		OutputTokens: 2,
-	})
-	tracker2.RecordToolResult(span2, `{"result":"ok"}`, false)
-	span2.End()
+	}))
+	tracker2.RecordToolResult(ctx2, `{"result":"ok"}`, nil)
+	end2()
 
-	spans1 := traceExporter1.GetSpans()
-	require.Len(t, spans1, 1)
-	attrs1 := spanAttributes(spans1[0].Attributes)
-	_, ok := attrs1[InputMessagesKey]
-	require.True(t, ok)
+	flushTestProvider(t, provider1)
+	flushTestProvider(t, provider2)
 
-	spans2 := traceExporter2.GetSpans()
-	require.Len(t, spans2, 1)
-	attrs2 := spanAttributes(spans2[0].Attributes)
-	_, ok = attrs2[InputMessagesKey]
-	require.False(t, ok)
+	spans1 := memTrace1.GetSpans()
+	require.Len(t, spans1, 2)
+	chatSpan1 := testutil.SpanByName(t, spans1, "chat")
+	require.True(t, testutil.SpanStubHasAttr(chatSpan1, InputMessages))
 
-	rm1 := collectMetrics(t, reader1)
-	assert.InDelta(t, 12, int64HistogramSumByTokenType(t, rm1, TokenUsageMetricName, TokenTypeInput), 1e-9)
-	assert.InDelta(t, 6, int64HistogramSumByTokenType(t, rm1, TokenUsageMetricName, TokenTypeOutput), 1e-9)
+	spans2 := memTrace2.GetSpans()
+	require.Len(t, spans2, 2)
+	chatSpan2 := testutil.SpanByName(t, spans2, "chat")
+	require.False(t, testutil.SpanStubHasAttr(chatSpan2, InputMessages))
+
+	rm1 := metrytest.CollectResourceMetrics(t, provider1, memMetric1)
+	assert.InDelta(
+		t,
+		12,
+		metrytest.Int64HistogramSumByAttr(t, rm1, TokenUsageMetricName, TokenType, TokenTypeInput),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		6,
+		metrytest.Int64HistogramSumByAttr(t, rm1, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		1e-9,
+	)
 	assert.InDelta(
 		t,
 		3,
-		int64HistogramSumByTokenType(t, rm1, TokenComponentUsageMetricName, TokenTypeInputCacheRead),
+		metrytest.Int64HistogramSumByAttr(t, rm1, TokenComponentUsageMetricName, TokenType, TokenTypeInputCacheRead),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		2,
-		int64HistogramSumByTokenType(t, rm1, TokenComponentUsageMetricName, TokenTypeOutputReasoning),
+		metrytest.Int64HistogramSumByAttr(t, rm1, TokenComponentUsageMetricName, TokenType, TokenTypeOutputReasoning),
 		1e-9,
 	)
 
-	rm2 := collectMetrics(t, reader2)
-	assert.InDelta(t, 4, int64HistogramSumByTokenType(t, rm2, TokenUsageMetricName, TokenTypeInput), 1e-9)
-	assert.InDelta(t, 2, int64HistogramSumByTokenType(t, rm2, TokenUsageMetricName, TokenTypeOutput), 1e-9)
-	assertMetricAbsent(t, rm2, TokenComponentUsageMetricName)
-}
-
-func spanAttributes(attrs []attribute.KeyValue) map[attribute.Key]attribute.Value {
-	set := make(map[attribute.Key]attribute.Value, len(attrs))
-	for _, attr := range attrs {
-		set[attr.Key] = attr.Value
-	}
-	return set
+	rm2 := metrytest.CollectResourceMetrics(t, provider2, memMetric2)
+	assert.InDelta(
+		t,
+		4,
+		metrytest.Int64HistogramSumByAttr(t, rm2, TokenUsageMetricName, TokenType, TokenTypeInput),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		2,
+		metrytest.Int64HistogramSumByAttr(t, rm2, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		1e-9,
+	)
+	metrytest.AssertMetricAbsent(t, rm2, TokenComponentUsageMetricName)
 }

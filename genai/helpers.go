@@ -3,14 +3,16 @@ package genai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry/internal/traceutil"
 )
 
 const truncationSuffix = "... [truncated]"
@@ -28,6 +30,7 @@ const (
 type Meta struct {
 	Provider      string
 	Operation     string
+	Purpose       string
 	RequestModel  string
 	ResponseModel string
 	ServerAddress string
@@ -145,14 +148,32 @@ func normalizeCurrency(currency string) string {
 	return currency
 }
 
-// RecordInteraction records one GenAI interaction on an explicit tracker.
+// RecordInteraction records one GenAI interaction, creating a span when needed.
 func (t *Tracker) RecordInteraction(
+	ctx context.Context,
+	meta Meta,
+	payload Payload,
+	usage Usage,
+) error {
+	scope, hasScope := ScopeFromContext(ctx)
+	meta = mergeMetaFromScopeWithScope(meta, scope, hasScope)
+	spanName := interactionSpanNameFromMeta(meta, scope, hasScope)
+	ctx, span := t.tracer.Start(ctx, spanName)
+	defer span.End()
+	t.recordInteractionOnSpan(ctx, span, meta, payload, usage)
+	return nil
+}
+
+func (t *Tracker) recordInteractionOnSpan(
 	ctx context.Context,
 	span trace.Span,
 	meta Meta,
 	payload Payload,
 	usage Usage,
 ) {
+	if usage.Purpose == "" && meta.Purpose != "" {
+		usage.Purpose = meta.Purpose
+	}
 	attrs := make([]attribute.KeyValue, 0, attrCapInteractionAttrs)
 	attrs = append(attrs, buildMetaAttributes(meta)...)
 	if t.cfg.RecordPayloads() {
@@ -164,33 +185,51 @@ func (t *Tracker) RecordInteraction(
 	if len(attrs) > 0 {
 		span.SetAttributes(attrs...)
 	}
+	if meta.ErrorType != "" {
+		traceutil.SpanError(span, errors.New(meta.ErrorType))
+	} else {
+		traceutil.SpanOK(span)
+	}
 
 	t.recordUsageMetrics(ctx, meta, usage)
 	t.recordOperationDuration(ctx, meta)
 }
 
+func interactionSpanNameFromMeta(meta Meta, scope Scope, hasScope bool) string {
+	if meta.Operation != "" {
+		return meta.Operation
+	}
+	if hasScope && scope.Operation != "" {
+		return scope.Operation
+	}
+	return "genai.interaction"
+}
+
 func buildMetaAttributes(meta Meta) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapMetaAttrs)
 	if meta.Provider != "" {
-		attrs = append(attrs, ProviderNameKey.String(meta.Provider))
+		attrs = append(attrs, attribute.Key(ProviderName).String(meta.Provider))
 	}
 	if meta.Operation != "" {
-		attrs = append(attrs, OperationNameKey.String(meta.Operation))
+		attrs = append(attrs, attribute.Key(OperationName).String(meta.Operation))
 	}
 	if meta.RequestModel != "" {
-		attrs = append(attrs, RequestModelKey.String(meta.RequestModel))
+		attrs = append(attrs, attribute.Key(RequestModel).String(meta.RequestModel))
 	}
 	if meta.ResponseModel != "" {
-		attrs = append(attrs, ResponseModelKey.String(meta.ResponseModel))
+		attrs = append(attrs, attribute.Key(ResponseModel).String(meta.ResponseModel))
 	}
 	if meta.ServerAddress != "" {
-		attrs = append(attrs, ServerAddressKey.String(meta.ServerAddress))
+		attrs = append(attrs, attribute.Key(ServerAddress).String(meta.ServerAddress))
 	}
 	if meta.ServerPort > 0 {
-		attrs = append(attrs, ServerPortKey.Int(meta.ServerPort))
+		attrs = append(attrs, attribute.Key(ServerPort).Int(meta.ServerPort))
 	}
 	if meta.ErrorType != "" {
-		attrs = append(attrs, ErrorTypeKey.String(meta.ErrorType))
+		attrs = append(attrs, attribute.Key(ErrorType).String(meta.ErrorType))
+	}
+	if meta.Purpose != "" {
+		attrs = append(attrs, attribute.Key(OperationPurpose).String(meta.Purpose))
 	}
 	return attrs
 }
@@ -198,13 +237,13 @@ func buildMetaAttributes(meta Meta) []attribute.KeyValue {
 func buildPayloadAttributes(payload Payload, cfg runtimeConfig) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapPayloadAttrs)
 	if value := marshalPayloadValue(payload.SystemInstructions, cfg); value != "" {
-		attrs = append(attrs, SystemInstructionsKey.String(value))
+		attrs = append(attrs, attribute.Key(SystemInstructions).String(value))
 	}
 	if value := marshalPayloadValue(payload.InputMessages, cfg); value != "" {
-		attrs = append(attrs, InputMessagesKey.String(value))
+		attrs = append(attrs, attribute.Key(InputMessages).String(value))
 	}
 	if value := marshalPayloadValue(payload.OutputMessages, cfg); value != "" {
-		attrs = append(attrs, OutputMessagesKey.String(value))
+		attrs = append(attrs, attribute.Key(OutputMessages).String(value))
 	}
 	return attrs
 }
@@ -223,40 +262,40 @@ func marshalPayloadValue(value any, cfg runtimeConfig) string {
 func buildUsageAttributes(usage Usage) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapUsageAttrs)
 	if usage.InputTokens > 0 {
-		attrs = append(attrs, InputTokensKey.Int(usage.InputTokens))
+		attrs = append(attrs, attribute.Key(InputTokens).Int(usage.InputTokens))
 	}
 	if usage.OutputTokens > 0 {
-		attrs = append(attrs, OutputTokensKey.Int(usage.OutputTokens))
+		attrs = append(attrs, attribute.Key(OutputTokens).Int(usage.OutputTokens))
 	}
 	if usage.CacheCreationInputTokens > 0 {
-		attrs = append(attrs, CacheCreationInputTokensKey.Int(usage.CacheCreationInputTokens))
+		attrs = append(attrs, attribute.Key(CacheCreationInputTokens).Int(usage.CacheCreationInputTokens))
 	}
 	if usage.CacheReadInputTokens > 0 {
-		attrs = append(attrs, CacheReadInputTokensKey.Int(usage.CacheReadInputTokens))
+		attrs = append(attrs, attribute.Key(CacheReadInputTokens).Int(usage.CacheReadInputTokens))
 	}
 	if usage.ReasoningOutputTokens > 0 {
-		attrs = append(attrs, UsageReasoningOutputTokensKey.Int(usage.ReasoningOutputTokens))
+		attrs = append(attrs, attribute.Key(UsageReasoningOutputTokens).Int(usage.ReasoningOutputTokens))
 	}
 	if usage.AudioSeconds > 0 {
-		attrs = append(attrs, AudioSecondsKey.Float64(usage.AudioSeconds))
+		attrs = append(attrs, attribute.Key(AudioSeconds).Float64(usage.AudioSeconds))
 	}
 	if usage.ImageCount > 0 {
-		attrs = append(attrs, ImageCountKey.Int(usage.ImageCount))
+		attrs = append(attrs, attribute.Key(ImageCount).Int(usage.ImageCount))
 	}
 	if usage.VideoSeconds > 0 {
-		attrs = append(attrs, UsageVideoSecondsKey.Float64(usage.VideoSeconds))
+		attrs = append(attrs, attribute.Key(UsageVideoSeconds).Float64(usage.VideoSeconds))
 	}
 	if usage.VideoFrames > 0 {
-		attrs = append(attrs, UsageVideoFramesKey.Int(usage.VideoFrames))
+		attrs = append(attrs, attribute.Key(UsageVideoFrames).Int(usage.VideoFrames))
 	}
 	if usage.Cost > 0 {
 		attrs = append(attrs,
-			UsageCostKey.Float64(usage.Cost),
-			CostCurrencyKey.String(normalizeCurrency(usage.Currency)),
-			OperationPurposeKey.String(normalizePurpose(usage.Purpose)),
+			attribute.Key(UsageCost).Float64(usage.Cost),
+			attribute.Key(CostCurrency).String(normalizeCurrency(usage.Currency)),
+			attribute.Key(OperationPurpose).String(normalizePurpose(usage.Purpose)),
 		)
 	} else if usage.Purpose != "" {
-		attrs = append(attrs, OperationPurposeKey.String(usage.Purpose))
+		attrs = append(attrs, attribute.Key(OperationPurpose).String(usage.Purpose))
 	}
 	return attrs
 }
@@ -272,13 +311,13 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage
 			ctx,
 			t.metrics.TokenUsage,
 			usage.InputTokens,
-			appendAttribute(baseAttrs, TokenTypeKey.String(TokenTypeInput)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeInput)),
 		)
 		recordIntHistogram(
 			ctx,
 			t.metrics.TokenUsage,
 			usage.OutputTokens,
-			appendAttribute(baseAttrs, TokenTypeKey.String(TokenTypeOutput)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeOutput)),
 		)
 	}
 	if ok && t.metrics.TokenComponentUsage != nil {
@@ -286,25 +325,25 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage
 			ctx,
 			t.metrics.TokenComponentUsage,
 			usage.CacheCreationInputTokens,
-			appendAttribute(baseAttrs, TokenTypeKey.String(TokenTypeInputCacheCreation)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeInputCacheCreation)),
 		)
 		recordIntHistogram(
 			ctx,
 			t.metrics.TokenComponentUsage,
 			usage.CacheReadInputTokens,
-			appendAttribute(baseAttrs, TokenTypeKey.String(TokenTypeInputCacheRead)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeInputCacheRead)),
 		)
 		recordIntHistogram(
 			ctx,
 			t.metrics.TokenComponentUsage,
 			usage.ReasoningOutputTokens,
-			appendAttribute(baseAttrs, TokenTypeKey.String(TokenTypeOutputReasoning)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeOutputReasoning)),
 		)
 	}
 
 	customAttrs := append([]attribute.KeyValue{}, baseAttrs...)
-	customAttrs = append(customAttrs, OperationPurposeKey.String(normalizePurpose(usage.Purpose)))
-	customAttrs = append(customAttrs, CostCurrencyKey.String(normalizeCurrency(usage.Currency)))
+	customAttrs = append(customAttrs, attribute.Key(OperationPurpose).String(normalizePurpose(usage.Purpose)))
+	customAttrs = append(customAttrs, attribute.Key(CostCurrency).String(normalizeCurrency(usage.Currency)))
 
 	if t.metrics.Cost != nil && usage.Cost > 0 {
 		t.metrics.Cost.Add(ctx, usage.Cost, metric.WithAttributes(customAttrs...))
@@ -326,7 +365,7 @@ func (t *Tracker) recordOperationDuration(ctx context.Context, meta Meta) {
 		return
 	}
 	if meta.ErrorType != "" {
-		attrs = append(attrs, ErrorTypeKey.String(meta.ErrorType))
+		attrs = append(attrs, attribute.Key(ErrorType).String(meta.ErrorType))
 	}
 	t.metrics.OperationDuration.Record(ctx, meta.Duration.Seconds(), metric.WithAttributes(attrs...))
 }
@@ -336,20 +375,20 @@ func metricAttributesFromMeta(meta Meta) ([]attribute.KeyValue, bool) {
 		return nil, false
 	}
 	attrs := []attribute.KeyValue{
-		ProviderNameKey.String(meta.Provider),
-		OperationNameKey.String(meta.Operation),
+		attribute.Key(ProviderName).String(meta.Provider),
+		attribute.Key(OperationName).String(meta.Operation),
 	}
 	if meta.RequestModel != "" {
-		attrs = append(attrs, RequestModelKey.String(meta.RequestModel))
+		attrs = append(attrs, attribute.Key(RequestModel).String(meta.RequestModel))
 	}
 	if meta.ResponseModel != "" {
-		attrs = append(attrs, ResponseModelKey.String(meta.ResponseModel))
+		attrs = append(attrs, attribute.Key(ResponseModel).String(meta.ResponseModel))
 	}
 	if meta.ServerAddress != "" {
-		attrs = append(attrs, ServerAddressKey.String(meta.ServerAddress))
+		attrs = append(attrs, attribute.Key(ServerAddress).String(meta.ServerAddress))
 	}
 	if meta.ServerPort > 0 {
-		attrs = append(attrs, ServerPortKey.Int(meta.ServerPort))
+		attrs = append(attrs, attribute.Key(ServerPort).Int(meta.ServerPort))
 	}
 	return attrs, true
 }
@@ -368,58 +407,65 @@ func recordIntHistogram(ctx context.Context, histogram metric.Int64Histogram, va
 	histogram.Record(ctx, int64(value), metric.WithAttributes(attrs...))
 }
 
-// StartToolSpan creates a child span for a tool execution using an explicit tracker.
+// StartToolSpan creates a child span for a tool execution and returns an end callback.
+// Call RecordToolResult before end() for explicit I/O completion semantics.
+// The end callback sets Ok when span status is still Unset.
 // Extra start options allow callers to add start-time sampling hints or attributes.
-//
-//nolint:spancheck // The span is returned to the caller, which is responsible for ending it.
 func (t *Tracker) StartToolSpan(
 	ctx context.Context,
 	toolName, toolCallID, argsJSON string,
-	startOpts ...trace.SpanStartOption,
-) (context.Context, trace.Span) {
+	startOpts ...ChildSpanOption,
+) (context.Context, func()) {
 	attrs := []attribute.KeyValue{
-		OperationNameKey.String("execute_tool"),
-		ToolNameKey.String(toolName),
-		ToolCallIDKey.String(toolCallID),
+		attribute.Key(OperationName).String("execute_tool"),
+		attribute.Key(ToolName).String(toolName),
+		attribute.Key(ToolCallID).String(toolCallID),
 	}
 	if argsJSON != "" {
-		attrs = append(attrs, ToolCallArgumentsKey.String(truncateContextWithConfig(argsJSON, t.cfg)))
+		attrs = append(attrs, attribute.Key(ToolCallArguments).String(truncateContextWithConfig(argsJSON, t.cfg)))
 	}
+	otelOpts := childSpanOptionsToOTel(startOpts...)
 	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
-	opts = append(opts, startOpts...)
-	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...)
+	opts = append(opts, otelOpts...)
+	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...) //nolint:spancheck // caller ends span via callback
 	// Preserve deterministic helper semantics when caller start options use duplicate keys.
 	span.SetAttributes(attrs...)
-	return ctx, span
+	return ctx, func() { traceutil.EndSpanOKIfUnset(span) } //nolint:spancheck // caller ends span via callback
 }
 
-// RecordToolResult records tool output and status using an explicit tracker config.
-func (t *Tracker) RecordToolResult(span trace.Span, resultJSON string, isError bool) {
-	if resultJSON != "" {
-		span.SetAttributes(ToolCallResultKey.String(truncateContextWithConfig(resultJSON, t.cfg)))
-	}
-	if isError {
-		span.SetAttributes(ToolErrorKey.Bool(true))
-		span.SetStatus(codes.Error, "tool execution failed")
-		return
-	}
-	span.SetAttributes(ToolErrorKey.Bool(false))
-	span.SetStatus(codes.Ok, "")
+// RecordToolResult records tool output and status on the span stored in ctx.
+func (t *Tracker) RecordToolResult(ctx context.Context, resultJSON string, err error) {
+	mutateSpan(ctx, func(span trace.Span) {
+		if resultJSON != "" {
+			span.SetAttributes(attribute.Key(ToolCallResult).String(truncateContextWithConfig(resultJSON, t.cfg)))
+		}
+		if err != nil {
+			span.SetAttributes(attribute.Key(ToolError).Bool(true))
+			traceutil.SpanError(span, err)
+			return
+		}
+		span.SetAttributes(attribute.Key(ToolError).Bool(false))
+		traceutil.SpanOK(span)
+	})
 }
 
-// RecordCacheHit records cache metadata on the provided span.
-func RecordCacheHit(span trace.Span, hit bool, source string) {
-	span.SetAttributes(
-		attribute.Bool(CacheHit, hit),
-		attribute.String(RetrievalSource, source),
-	)
+// RecordCacheHit records cache metadata on the span stored in ctx.
+func (t *Tracker) RecordCacheHit(ctx context.Context, hit bool, source string) {
+	mutateSpan(ctx, func(span trace.Span) {
+		span.SetAttributes(
+			attribute.Bool(CacheHit, hit),
+			attribute.String(RetrievalSource, source),
+		)
+	})
 }
 
-// RecordAgentStep appends one agent-step event on the provided span.
-func RecordAgentStep(span trace.Span, agentName, agentRole, step string) {
-	span.AddEvent(AgentStepEvent, trace.WithAttributes(
-		AgentNameKey.String(agentName),
-		AgentRoleKey.String(agentRole),
-		WorkflowStepKey.String(step),
-	))
+// RecordAgentStep appends one agent-step event on the span stored in ctx.
+func (t *Tracker) RecordAgentStep(ctx context.Context, agentName, agentRole, step string) {
+	mutateSpan(ctx, func(span trace.Span) {
+		span.AddEvent(AgentStepEvent, trace.WithAttributes(
+			attribute.Key(AgentName).String(agentName),
+			attribute.Key(AgentRole).String(agentRole),
+			attribute.Key(WorkflowStep).String(step),
+		))
+	})
 }

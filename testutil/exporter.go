@@ -5,12 +5,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"testing"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -42,14 +38,20 @@ func (e *InMemoryTraceExporter) Len() int {
 	return len(e.ex.GetSpans())
 }
 
-// SpanExporter returns the underlying sdktrace.SpanExporter.
+// SDKSpanExporter returns the underlying OpenTelemetry SDK span exporter.
+func (e *InMemoryTraceExporter) SDKSpanExporter() sdktrace.SpanExporter {
+	return e.ex
+}
+
+// SpanExporter returns the underlying OpenTelemetry SDK span exporter.
+// Use metrytest.MetrySpanExporter(exporter) for metry.WithExporter.
 func (e *InMemoryTraceExporter) SpanExporter() sdktrace.SpanExporter {
 	return e.ex
 }
 
 // InMemoryMetricExporter stores the count of Export calls and the last ResourceMetrics
 // for test assertions (e.g. lifecycle tests that need to assert on datapoints).
-// Contract: unsupported aggregation types (e.g. Gauge) cause panic in Export (fail-fast by design).
+// Contract: unsupported aggregation types (e.g. ExponentialHistogram) cause panic in Export (fail-fast by design).
 type InMemoryMetricExporter struct {
 	mu     sync.Mutex
 	count  int
@@ -73,7 +75,7 @@ func (e *InMemoryMetricExporter) Aggregation(k sdkmetric.InstrumentKind) sdkmetr
 
 // Export implements sdkmetric.Exporter; it increments the export count and stores a deep copy of the payload.
 // A snapshot is required because the SDK may reuse the same *ResourceMetrics buffer across export cycles.
-// Unsupported aggregation types (e.g. Gauge) cause panic before copy (fail-fast contract).
+// Unsupported aggregation types (e.g. ExponentialHistogram) cause panic before copy (fail-fast contract).
 func (e *InMemoryMetricExporter) Export(_ context.Context, rm *metricdata.ResourceMetrics) error {
 	checkSupportedAggregations(rm)
 	e.mu.Lock()
@@ -94,10 +96,12 @@ func checkSupportedAggregations(rm *metricdata.ResourceMetrics) {
 			case metricdata.Sum[int64],
 				metricdata.Sum[float64],
 				metricdata.Histogram[int64],
-				metricdata.Histogram[float64]:
+				metricdata.Histogram[float64],
+				metricdata.Gauge[int64],
+				metricdata.Gauge[float64]:
 				continue
 			default:
-				panic(fmt.Sprintf("testutil: Export does not support aggregation type %T (e.g. Gauge)", m.Data))
+				panic(fmt.Sprintf("testutil: Export does not support aggregation type %T", m.Data))
 			}
 		}
 	}
@@ -142,7 +146,13 @@ func (e *InMemoryMetricExporter) Len() int {
 	return e.count
 }
 
-// Exporter returns the underlying sdkmetric.Exporter.
+// SDKExporter returns the underlying OpenTelemetry SDK metric exporter.
+func (e *InMemoryMetricExporter) SDKExporter() sdkmetric.Exporter {
+	return e
+}
+
+// Exporter returns the underlying OpenTelemetry SDK metric exporter.
+// Use metrytest.MetryMetricExporter(exporter) for metry.WithMetricExporter.
 func (e *InMemoryMetricExporter) Exporter() sdkmetric.Exporter {
 	return e
 }
@@ -174,7 +184,7 @@ func deepCopyScopeMetrics(sm metricdata.ScopeMetrics) metricdata.ScopeMetrics {
 }
 
 // deepCopyMetrics returns an independent copy of the metric. Unsupported aggregation types
-// (e.g. Gauge) cause panic by design (fail-fast contract for testutil).
+// (e.g. ExponentialHistogram) cause panic by design (fail-fast contract for testutil).
 func deepCopyMetrics(m metricdata.Metrics) metricdata.Metrics {
 	out := metricdata.Metrics{
 		Name:        m.Name,
@@ -190,6 +200,10 @@ func deepCopyMetrics(m metricdata.Metrics) metricdata.Metrics {
 		out.Data = deepCopyHistogramInt64(d)
 	case metricdata.Histogram[float64]:
 		out.Data = deepCopyHistogramFloat64(d)
+	case metricdata.Gauge[int64]:
+		out.Data = deepCopyGaugeInt64(d)
+	case metricdata.Gauge[float64]:
+		out.Data = deepCopyGaugeFloat64(d)
 	default:
 		panic(fmt.Sprintf("testutil: deepCopyMetrics does not support aggregation type %T", d))
 	}
@@ -336,32 +350,22 @@ func deepCopyHistogramFloat64(h metricdata.Histogram[float64]) metricdata.Histog
 	return out
 }
 
-// SetupTestTracing configures the global tracer with an in-memory exporter using
-// a synchronous SimpleSpanProcessor so spans are available immediately for assertions.
-// Registers cleanup on t. Returns the InMemoryTraceExporter for assertions.
-func SetupTestTracing(t *testing.T) *InMemoryTraceExporter {
-	t.Helper()
-	mem := NewInMemoryTraceExporter()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(mem.ex)),
-	)
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	return mem
+func deepCopyGaugeInt64(g metricdata.Gauge[int64]) metricdata.Gauge[int64] {
+	out := metricdata.Gauge[int64]{
+		DataPoints: make([]metricdata.DataPoint[int64], len(g.DataPoints)),
+	}
+	for i := range g.DataPoints {
+		out.DataPoints[i] = deepCopyDataPointInt64(g.DataPoints[i])
+	}
+	return out
 }
 
-// SetupTestMetrics configures the global meter provider with a ManualReader so tests can
-// collect metrics synchronously via reader.Collect. Registers cleanup on t.
-// Returns the reader (for Collect and assertions) and the meter (for creating instruments).
-func SetupTestMetrics(t *testing.T) (*sdkmetric.ManualReader, metric.Meter) {
-	t.Helper()
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetMeterProvider(mp)
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-	return reader, mp.Meter("test")
+func deepCopyGaugeFloat64(g metricdata.Gauge[float64]) metricdata.Gauge[float64] {
+	out := metricdata.Gauge[float64]{
+		DataPoints: make([]metricdata.DataPoint[float64], len(g.DataPoints)),
+	}
+	for i := range g.DataPoints {
+		out.DataPoints[i] = deepCopyDataPointFloat64(g.DataPoints[i])
+	}
+	return out
 }

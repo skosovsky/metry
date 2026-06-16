@@ -9,10 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -23,7 +22,7 @@ func TestHTTPHandler_WrapsHandler(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-http"),
-		metry.WithExporter(mem.SpanExporter()),
+		metry.WithExporter(metrytest.MetrySpanExporter(mem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -38,9 +37,7 @@ func TestHTTPHandler_WrapsHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	tp, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.True(t, ok)
-	require.NoError(t, tp.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "ok", rec.Body.String())
 	assert.GreaterOrEqual(t, mem.Len(), 1, "otelhttp should create at least 1 span")
@@ -62,7 +59,7 @@ func TestHTTPHandler_WithSpanNameFormatter(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-http"),
-		metry.WithExporter(mem.SpanExporter()),
+		metry.WithExporter(metrytest.MetrySpanExporter(mem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -73,7 +70,7 @@ func TestHTTPHandler_WithSpanNameFormatter(t *testing.T) {
 	})
 
 	h := Handler(provider, mux, "ignored",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+		WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			if r.Pattern != "" {
 				return r.Pattern
 			}
@@ -85,9 +82,7 @@ func TestHTTPHandler_WithSpanNameFormatter(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	tp, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.True(t, ok)
-	require.NoError(t, tp.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
 	require.GreaterOrEqual(t, mem.Len(), 1)
 	spans := mem.GetSpans()
 	require.NotEmpty(t, spans)

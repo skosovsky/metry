@@ -7,191 +7,107 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	"go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/skosovsky/metry/metrytest"
+	"github.com/skosovsky/metry/testutil"
 )
 
 func TestRecordInteraction_RecordsTokenHistogramAndCost(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
-	tracker, err := NewTracker(mp.Meter("genai-test"), noop.NewTracerProvider().Tracer("genai-test"))
-	require.NoError(t, err)
-
-	span := noop.Span{}
-	tracker.RecordInteraction(context.Background(), &span, testMeta(), Payload{}, Usage{
+	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{
 		InputTokens:  10,
 		OutputTokens: 20,
 		Cost:         0.001,
-	})
+	}))
 
-	rm := collectMetrics(t, reader)
-	assert.InDelta(t, 10, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeInput), 1e-9)
-	assert.InDelta(t, 20, int64HistogramSumByTokenType(t, rm, TokenUsageMetricName, TokenTypeOutput), 1e-9)
-	assert.InDelta(t, 0.001, float64SumValue(t, rm, CostMetricName), 1e-9)
-	assert.Equal(t, "USD", firstFloat64SumAttr(t, rm, CostMetricName, CostCurrencyKey))
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
+	assert.InDelta(
+		t,
+		10,
+		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeInput),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		20,
+		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		1e-9,
+	)
+	assert.InDelta(t, 0.001, metrytest.Float64SumValue(t, rm, CostMetricName), 1e-9)
+	assert.Equal(t, "USD", metrytest.FirstFloat64SumAttr(t, rm, CostMetricName, CostCurrency))
 }
 
 func TestRecordInteraction_NegativeCost_IsIgnored(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
 
-	tracker, err := NewTracker(mp.Meter("genai-test"), noop.NewTracerProvider().Tracer("genai-test"))
-	require.NoError(t, err)
-
-	rec := &recordingSpan{attrs: make(map[attribute.Key]attribute.Value)}
-	tracker.RecordInteraction(context.Background(), rec, testMeta(), Payload{}, Usage{
+	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{
 		InputTokens:  10,
 		OutputTokens: 20,
 		Cost:         -0.25,
 		Currency:     "USD",
-	})
+	}))
 
-	_, ok := rec.attrs[UsageCostKey]
-	assert.False(t, ok)
-	rm := collectMetrics(t, reader)
-	assertMetricAbsent(t, rm, CostMetricName)
+	flushTestProvider(t, provider)
+	spans := memTrace.GetSpans()
+	require.Len(t, spans, 1)
+	assert.False(t, testutil.SpanStubHasAttr(spans[0], UsageCost))
+
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
+	metrytest.AssertMetricAbsent(t, rm, CostMetricName)
 }
 
 func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
-
-	tracker, err := NewTracker(mp.Meter("genai-test"), noop.NewTracerProvider().Tracer("genai-test"))
-	require.NoError(t, err)
+	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
 	tracker.RecordTTFT(context.Background(), testMeta(), 420*time.Millisecond)
 	tracker.RecordStreamingCompletion(context.Background(), testMeta(), 11, time.Second, 6*time.Second)
 
-	rm := collectMetrics(t, reader)
-	assert.InDelta(t, 0.42, float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
-	assert.InDelta(t, 2.2, float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
-	assert.InDelta(t, 0.5, float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
+	assert.InDelta(t, 0.42, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
+	assert.InDelta(t, 2.2, metrytest.Float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
+	assert.InDelta(t, 0.5, metrytest.Float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
 }
 
-func collectMetrics(t *testing.T, reader *sdkmetric.ManualReader) metricdata.ResourceMetrics {
-	t.Helper()
-	var rm metricdata.ResourceMetrics
-	require.NoError(t, reader.Collect(context.Background(), &rm))
-	return rm
+func TestRecordTTFT_WithScope_UsesScopeProviderInMetrics(t *testing.T) {
+	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
+
+	ctx := WithScope(context.Background(), Scope{Provider: "scope-provider", Operation: "chat"})
+	tracker.RecordTTFT(ctx, Meta{}, 100*time.Millisecond)
+
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
+	hist := metrytest.FindFloat64Histogram(t, rm, TTFTMetricName)
+	require.NotEmpty(t, hist.DataPoints)
+	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
 
-func int64HistogramSumByTokenType(t *testing.T, rm metricdata.ResourceMetrics, name, tokenType string) float64 {
-	t.Helper()
-	hist := findInt64Histogram(t, rm, name)
-	var total int64
-	for _, dp := range hist.DataPoints {
-		if v, ok := dp.Attributes.Value(TokenTypeKey); ok && v.AsString() == tokenType {
-			total += dp.Sum
-		}
-	}
-	return float64(total)
+func TestRecordStreamingCompletion_WithScope_UsesScopeProviderInMetrics(t *testing.T) {
+	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
+
+	ctx := WithScope(context.Background(), Scope{Provider: "scope-provider", Operation: "chat"})
+	tracker.RecordStreamingCompletion(ctx, Meta{}, 10, time.Second, 5*time.Second)
+
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
+	hist := metrytest.FindFloat64Histogram(t, rm, StreamingTPSMetricName)
+	require.NotEmpty(t, hist.DataPoints)
+	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
 
-func float64HistogramSum(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
-	t.Helper()
-	hist := findFloat64Histogram(t, rm, name)
-	var total float64
-	for _, dp := range hist.DataPoints {
-		total += dp.Sum
-	}
-	return total
-}
+func TestRecordInteraction_WithScopeModelOnly_SkipsTokenMetrics(t *testing.T) {
+	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
-func float64SumValue(t *testing.T, rm metricdata.ResourceMetrics, name string) float64 {
-	t.Helper()
-	sum := findFloat64Sum(t, rm, name)
-	var total float64
-	for _, dp := range sum.DataPoints {
-		total += dp.Value
-	}
-	return total
-}
+	ctx := WithScope(context.Background(), Scope{Model: "gpt-4o-mini"})
+	require.NoError(t, tracker.RecordInteraction(ctx, Meta{}, Payload{}, Usage{
+		InputTokens:  10,
+		OutputTokens: 5,
+	}))
 
-func firstFloat64SumAttr(t *testing.T, rm metricdata.ResourceMetrics, name string, key attribute.Key) string {
-	t.Helper()
-	sum := findFloat64Sum(t, rm, name)
-	require.NotEmpty(t, sum.DataPoints)
-	value, ok := sum.DataPoints[0].Attributes.Value(key)
-	require.True(t, ok)
-	return value.AsString()
-}
-
-func assertMetricAbsent(t *testing.T, rm metricdata.ResourceMetrics, name string) {
-	t.Helper()
+	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if m.Name == name {
-				t.Fatalf("metric %q unexpectedly found", name)
+			if m.Name == TokenUsageMetricName {
+				t.Fatalf("expected %q to be skipped when scope has Model only", TokenUsageMetricName)
 			}
 		}
-	}
-}
-
-func findInt64Histogram(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Histogram[int64] {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			hist, ok := m.Data.(metricdata.Histogram[int64])
-			require.True(t, ok)
-			return hist
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return metricdata.Histogram[int64]{}
-}
-
-func findFloat64Histogram(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Histogram[float64] {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			hist, ok := m.Data.(metricdata.Histogram[float64])
-			require.True(t, ok)
-			return hist
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return metricdata.Histogram[float64]{}
-}
-
-func findFloat64Sum(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Sum[float64] {
-	t.Helper()
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != name {
-				continue
-			}
-			sum, ok := m.Data.(metricdata.Sum[float64])
-			require.True(t, ok)
-			return sum
-		}
-	}
-	t.Fatalf("metric %q not found", name)
-	return metricdata.Sum[float64]{}
-}
-
-type recordingSpan struct {
-	noop.Span
-
-	attrs map[attribute.Key]attribute.Value
-}
-
-func (r *recordingSpan) SetAttributes(kv ...attribute.KeyValue) {
-	if r.attrs == nil {
-		r.attrs = make(map[attribute.Key]attribute.Value)
-	}
-	for _, item := range kv {
-		r.attrs[item.Key] = item.Value
 	}
 }

@@ -1,11 +1,6 @@
 // Package metry provides a zero-boilerplate OpenTelemetry and LLMOps hub for Go AI applications.
 package metry
 
-import (
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-)
-
 // Option configures New. Use WithServiceName, WithTraceRatio, etc.
 type Option func(*config)
 
@@ -15,21 +10,20 @@ type config struct {
 	ServiceVersion string
 	Environment    string
 	TraceRatio     float64
-	Sampler        sdktrace.Sampler
-	Exporter       sdktrace.SpanExporter
-	MetricExporter sdkmetric.Exporter
+	Sampler        TraceSampler
+	Exporter       SpanExporter
+	MetricExporter MetricExporter
 }
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
+//
+//nolint:exhaustruct // opaque sampler/exporter wrappers default to zero values
 func newConfig() *config {
 	return &config{
 		ServiceName:    "",
 		ServiceVersion: "",
 		Environment:    "",
 		TraceRatio:     1.0,
-		Sampler:        nil,
-		Exporter:       nil,
-		MetricExporter: nil,
 	}
 }
 
@@ -55,16 +49,16 @@ func WithTraceRatio(ratio float64) Option {
 
 // WithSampler sets a custom head-based sampler for tracing.
 // When provided, this sampler takes precedence over WithTraceRatio.
-func WithSampler(sampler sdktrace.Sampler) Option {
+func WithSampler(sampler TraceSampler) Option {
 	return func(c *config) { c.Sampler = sampler }
 }
 
 // WithExporter sets the span exporter. If not set, a no-op exporter is used.
-func WithExporter(exp sdktrace.SpanExporter) Option {
+func WithExporter(exp SpanExporter) Option {
 	return func(c *config) { c.Exporter = exp }
 }
 
 // WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
-func WithMetricExporter(exp sdkmetric.Exporter) Option {
+func WithMetricExporter(exp MetricExporter) Option {
 	return func(c *config) { c.MetricExporter = exp }
 }

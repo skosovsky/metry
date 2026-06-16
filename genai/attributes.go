@@ -1,8 +1,6 @@
 // Package genai defines GenAI semantic-convention constants and helpers for metry.
 package genai
 
-import "go.opentelemetry.io/otel/attribute"
-
 // GenAI attribute names emitted by metry.
 const (
 	ProviderName             = "gen_ai.provider.name"
@@ -66,54 +64,6 @@ const (
 	StreamingTBTMetricName        = "metry.gen_ai.client.tbt"
 	VideoSecondsMetricName        = "metry.gen_ai.client.video.seconds"
 	VideoFramesMetricName         = "metry.gen_ai.client.video.frames"
-)
-
-// Attribute keys derived from the string constants above.
-var (
-	ProviderNameKey               = attribute.Key(ProviderName)
-	OperationNameKey              = attribute.Key(OperationName)
-	RequestModelKey               = attribute.Key(RequestModel)
-	ResponseModelKey              = attribute.Key(ResponseModel)
-	SystemInstructionsKey         = attribute.Key(SystemInstructions)
-	InputMessagesKey              = attribute.Key(InputMessages)
-	OutputMessagesKey             = attribute.Key(OutputMessages)
-	InputTokensKey                = attribute.Key(InputTokens)
-	OutputTokensKey               = attribute.Key(OutputTokens)
-	CacheCreationInputTokensKey   = attribute.Key(CacheCreationInputTokens)
-	CacheReadInputTokensKey       = attribute.Key(CacheReadInputTokens)
-	TokenTypeKey                  = attribute.Key(TokenType)
-	ToolNameKey                   = attribute.Key(ToolName)
-	ToolCallIDKey                 = attribute.Key(ToolCallID)
-	ToolCallArgumentsKey          = attribute.Key(ToolCallArguments)
-	ToolCallResultKey             = attribute.Key(ToolCallResult)
-	ToolErrorKey                  = attribute.Key(ToolError)
-	EvaluationScoreKey            = attribute.Key(EvaluationScore)
-	EvaluationTextKey             = attribute.Key(EvaluationText)
-	EvaluationMetricNameKey       = attribute.Key(EvaluationMetricName)
-	EvaluationReasoningKey        = attribute.Key(EvaluationReasoning)
-	ServerAddressKey              = attribute.Key(ServerAddress)
-	ServerPortKey                 = attribute.Key(ServerPort)
-	ErrorTypeKey                  = attribute.Key(ErrorType)
-	UsageCostKey                  = attribute.Key(UsageCost)
-	CostCurrencyKey               = attribute.Key(CostCurrency)
-	UsageReasoningOutputTokensKey = attribute.Key(UsageReasoningOutputTokens)
-	UsageVideoSecondsKey          = attribute.Key(UsageVideoSeconds)
-	UsageVideoFramesKey           = attribute.Key(UsageVideoFrames)
-	AudioSecondsKey               = attribute.Key(AudioSeconds)
-	ImageCountKey                 = attribute.Key(ImageCount)
-	OperationPurposeKey           = attribute.Key(OperationPurpose)
-	RetrievalSourceKey            = attribute.Key(RetrievalSource)
-	RetrievalProviderKey          = attribute.Key(RetrievalProvider)
-	RetrievalQueryKey             = attribute.Key(RetrievalQuery)
-	RetrievalTopKKey              = attribute.Key(RetrievalTopK)
-	RetrievalReturnedChunksKey    = attribute.Key(RetrievalReturnedChunks)
-	RetrievalDistancesKey         = attribute.Key(RetrievalDistances)
-	SamplingKeepKey               = attribute.Key(SamplingKeep)
-	CacheHitKey                   = attribute.Key(CacheHit)
-	EmbeddingModelKey             = attribute.Key(EmbeddingModel)
-	AgentNameKey                  = attribute.Key(AgentName)
-	AgentRoleKey                  = attribute.Key(AgentRole)
-	WorkflowStepKey               = attribute.Key(WorkflowStep)
 )
 
 // Well-known and custom token-type values for the token usage histogram.

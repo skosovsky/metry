@@ -5,20 +5,26 @@ import (
 
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/internal/genaiwire"
 )
 
 var (
-	// ErrMeterRequired is returned when NewTracker is called with a nil meter.
+	// ErrMeterRequired is returned when NewTrackerFromProvider is called with a provider without a meter.
 	ErrMeterRequired = errors.New("genai: meter is required")
-	// ErrTracerRequired is returned when NewTracker is called with a nil tracer.
+	// ErrTracerRequired is returned when NewTrackerFromProvider is called with a provider without a tracer.
 	ErrTracerRequired = errors.New("genai: tracer is required")
+	// ErrProviderRequired is returned when NewTrackerFromProvider is called with a nil provider.
+	ErrProviderRequired = errors.New("genai: provider is required")
 )
 
 // Tracker owns GenAI runtime config, metric instruments, and the tracer used for tool spans.
 type Tracker struct {
-	cfg     runtimeConfig
-	metrics *metricsHolder
-	tracer  trace.Tracer
+	cfg      runtimeConfig
+	metrics  *metricsHolder
+	tracer   trace.Tracer
+	provider *metry.Provider
 }
 
 type metricsHolder struct {
@@ -33,13 +39,20 @@ type metricsHolder struct {
 	VideoFrames         metric.Int64Histogram
 }
 
-// NewTracker creates an explicit GenAI tracker with its own config, instruments, and tracer.
-func NewTracker(meter metric.Meter, tracer trace.Tracer, opts ...Option) (*Tracker, error) {
-	if meter == nil {
-		return nil, ErrMeterRequired
+// NewTrackerFromProvider creates a GenAI tracker using the provider meter and tracer.
+func NewTrackerFromProvider(p *metry.Provider, opts ...Option) (*Tracker, error) {
+	if p == nil {
+		return nil, ErrProviderRequired
 	}
-	if tracer == nil {
-		return nil, ErrTracerRequired
+	meter, tracer, err := genaiwire.MeterTracer(p)
+	if err != nil {
+		if errors.Is(err, metry.ErrNilMeterProvider) {
+			return nil, ErrMeterRequired
+		}
+		if errors.Is(err, metry.ErrNilTracerProvider) {
+			return nil, ErrTracerRequired
+		}
+		return nil, err
 	}
 
 	cfg := buildRuntimeConfig(opts...)
@@ -49,9 +62,10 @@ func NewTracker(meter metric.Meter, tracer trace.Tracer, opts ...Option) (*Track
 	}
 
 	return &Tracker{
-		cfg:     cfg,
-		metrics: holder,
-		tracer:  tracer,
+		cfg:      cfg,
+		metrics:  holder,
+		tracer:   tracer,
+		provider: p,
 	}, nil
 }
 

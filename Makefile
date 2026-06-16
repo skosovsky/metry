@@ -1,7 +1,7 @@
 GO      := go
 MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \;)
 
-.PHONY: lint fix test bench bench-hotpath fuzz cover release-patch release-break
+.PHONY: lint fix test test-examples check-task14 bench bench-hotpath fuzz cover release-patch release-break
 
 lint:
 	@for dir in $(MODULES); do \
@@ -22,6 +22,16 @@ test:
 		echo "test - $$dir"; \
 		(cd "$$dir" && $(GO) test -v -race ./...) || exit 1; \
 	done
+
+test-examples:
+	@for d in examples/enrich examples/propagation_map examples/async_handle examples/metrics_registry examples/scope examples/executor; do \
+		echo "test-example - $$d"; \
+		(cd "$$d" && $(GO) run .) || exit 1; \
+	done
+
+check-task14:
+	@chmod +x ./scripts/check-task14.sh
+	@./scripts/check-task14.sh
 
 bench:
 	@for dir in $(MODULES); do \

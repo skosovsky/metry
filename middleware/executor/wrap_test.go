@@ -10,13 +10,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -27,13 +25,11 @@ func TestWrap_NilOrIncompleteProvider_Panics(t *testing.T) {
 		_ = Wrap(nil, "op", next)
 	})
 	require.Panics(t, func() {
-		_ = Wrap(&metry.Provider{}, "op", next)
+		_ = Wrap[int, int](&metry.Provider{}, "op", nil)
 	})
-	tp := sdktrace.NewTracerProvider()
-	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	require.Panics(t, func() {
-		_ = Wrap(&metry.Provider{TracerProvider: tp}, "op", next)
-	})
+	provider, _ := metrytest.NewTestProvider(t)
+	wrapped := Wrap(provider, "op", next)
+	require.NotNil(t, wrapped)
 }
 
 func TestWrap_NilNext_Panics(t *testing.T) {
@@ -55,8 +51,8 @@ func TestWrap_Success_RecordsSpanAndMetrics(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-ok"),
-		metry.WithExporter(traceMem.SpanExporter()),
-		metry.WithMetricExporter(metricMem.Exporter()),
+		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
+		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -70,13 +66,8 @@ func TestWrap_Success_RecordsSpanAndMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 42, got)
 
-	tp, ok := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.True(t, ok)
-	require.NoError(t, tp.ForceFlush(ctx))
-
-	mpSDK, ok := provider.MeterProvider.(*sdkmetric.MeterProvider)
-	require.True(t, ok)
-	require.NoError(t, mpSDK.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
 
 	spans := traceMem.GetSpans()
 	require.Len(t, spans, 1)
@@ -86,7 +77,7 @@ func TestWrap_Success_RecordsSpanAndMetrics(t *testing.T) {
 	rm := metricMem.LastResourceMetrics()
 	require.NotNil(t, rm)
 	assert.InDelta(t, 1, int64CounterValue(t, *rm, op, "success"), 0)
-	h := float64HistogramFor(t, *rm, durationMetricName, op, "success")
+	h := float64HistogramFor(t, *rm, metry.ExecutorDurationMetricName, op, "success")
 	require.GreaterOrEqual(t, h.Count, uint64(1))
 	assert.Greater(t, h.Sum, 0.0)
 }
@@ -99,8 +90,8 @@ func TestWrap_Error_RecordsSpanErrorAndMetrics(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-err"),
-		metry.WithExporter(traceMem.SpanExporter()),
-		metry.WithMetricExporter(metricMem.Exporter()),
+		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
+		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -114,9 +105,8 @@ func TestWrap_Error_RecordsSpanErrorAndMetrics(t *testing.T) {
 	_, err = wrapped(ctx, struct{}{})
 	require.ErrorIs(t, err, wantErr)
 
-	tp := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.NoError(t, tp.ForceFlush(ctx))
-	require.NoError(t, provider.MeterProvider.(*sdkmetric.MeterProvider).ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
 
 	spans := traceMem.GetSpans()
 	require.Len(t, spans, 1)
@@ -125,7 +115,7 @@ func TestWrap_Error_RecordsSpanErrorAndMetrics(t *testing.T) {
 	rm := metricMem.LastResourceMetrics()
 	require.NotNil(t, rm)
 	assert.InDelta(t, 1, int64CounterValue(t, *rm, op, "error"), 0)
-	h := float64HistogramFor(t, *rm, durationMetricName, op, "error")
+	h := float64HistogramFor(t, *rm, metry.ExecutorDurationMetricName, op, "error")
 	require.GreaterOrEqual(t, h.Count, uint64(1))
 }
 
@@ -137,8 +127,8 @@ func TestWrap_Panic_RecordsMetricsAndReraises(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-panic"),
-		metry.WithExporter(traceMem.SpanExporter()),
-		metry.WithMetricExporter(metricMem.Exporter()),
+		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
+		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -150,9 +140,8 @@ func TestWrap_Panic_RecordsMetricsAndReraises(t *testing.T) {
 
 	require.Panics(t, func() { _, _ = wrapped(ctx, 0) })
 
-	tp := provider.TracerProvider.(*sdktrace.TracerProvider)
-	require.NoError(t, tp.ForceFlush(ctx))
-	require.NoError(t, provider.MeterProvider.(*sdkmetric.MeterProvider).ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
 
 	spans := traceMem.GetSpans()
 	require.Len(t, spans, 1)
@@ -161,7 +150,7 @@ func TestWrap_Panic_RecordsMetricsAndReraises(t *testing.T) {
 	rm := metricMem.LastResourceMetrics()
 	require.NotNil(t, rm)
 	assert.InDelta(t, 1, int64CounterValue(t, *rm, op, "panic"), 0)
-	h := float64HistogramFor(t, *rm, durationMetricName, op, "panic")
+	h := float64HistogramFor(t, *rm, metry.ExecutorDurationMetricName, op, "panic")
 	require.GreaterOrEqual(t, h.Count, uint64(1))
 }
 
@@ -202,7 +191,7 @@ func TestWrap_ErrorLog_ContainsTraceID(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-log"),
-		metry.WithExporter(traceMem.SpanExporter()),
+		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -238,7 +227,7 @@ func TestWrap_TwoWrapsSameProvider_ShareInstrumentCache(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-shared-instr"),
-		metry.WithMetricExporter(metricMem.Exporter()),
+		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -251,9 +240,7 @@ func TestWrap_TwoWrapsSameProvider_ShareInstrumentCache(t *testing.T) {
 	_, err = wB(ctx, 0)
 	require.NoError(t, err)
 
-	mpSDK, ok := provider.MeterProvider.(*sdkmetric.MeterProvider)
-	require.True(t, ok)
-	require.NoError(t, mpSDK.ForceFlush(ctx))
+	require.NoError(t, provider.ForceFlush(ctx))
 
 	rm := metricMem.LastResourceMetrics()
 	require.NotNil(t, rm)
@@ -289,20 +276,20 @@ func int64CounterValue(t *testing.T, rm metricdata.ResourceMetrics, operation, s
 	t.Helper()
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
-			if m.Name != callsMetricName {
+			if m.Name != metry.ExecutorCallsMetricName {
 				continue
 			}
 			sum, ok := m.Data.(metricdata.Sum[int64])
 			require.True(t, ok)
 			for _, dp := range sum.DataPoints {
-				if attrString(dp.Attributes, "operation") == operation &&
-					attrString(dp.Attributes, "status") == status {
+				if int64SumAttrString(t, dp, "operation") == operation &&
+					int64SumAttrString(t, dp, "status") == status {
 					return dp.Value
 				}
 			}
 		}
 	}
-	t.Fatalf("counter %q for operation=%q status=%q not found", callsMetricName, operation, status)
+	t.Fatalf("counter %q for operation=%q status=%q not found", metry.ExecutorCallsMetricName, operation, status)
 	return 0
 }
 
@@ -320,8 +307,8 @@ func float64HistogramFor(
 			hist, ok := m.Data.(metricdata.Histogram[float64])
 			require.True(t, ok)
 			for _, dp := range hist.DataPoints {
-				if attrString(dp.Attributes, "operation") == operation &&
-					attrString(dp.Attributes, "status") == status {
+				if metricAttrString(t, dp, "operation") == operation &&
+					metricAttrString(t, dp, "status") == status {
 					return dp
 				}
 			}
@@ -331,10 +318,18 @@ func float64HistogramFor(
 	return metricdata.HistogramDataPoint[float64]{}
 }
 
-func attrString(attrs attribute.Set, key string) string {
-	v, ok := attrs.Value(attribute.Key(key))
-	if !ok {
+func int64SumAttrString(t *testing.T, dp metricdata.DataPoint[int64], key string) string {
+	t.Helper()
+	if !testutil.SpanHasAttr(dp.Attributes, key) {
 		return ""
 	}
-	return v.AsString()
+	return testutil.SpanStringAttr(t, dp.Attributes, key)
+}
+
+func metricAttrString(t *testing.T, dp metricdata.HistogramDataPoint[float64], key string) string {
+	t.Helper()
+	if !testutil.SpanHasAttr(dp.Attributes, key) {
+		return ""
+	}
+	return testutil.SpanStringAttr(t, dp.Attributes, key)
 }

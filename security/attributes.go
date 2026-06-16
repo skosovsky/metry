@@ -2,8 +2,6 @@
 // observability telemetry.
 package security
 
-import "go.opentelemetry.io/otel/attribute"
-
 // Security semantic convention attribute keys for traces and events.
 const (
 	Tier       = "ai.security.tier"
@@ -14,18 +12,6 @@ const (
 	Reason     = "ai.security.reason"
 	Code       = "ai.security.code"
 	Severity   = "ai.security.severity"
-)
-
-// Attribute keys as attribute.Key for type-safe span/event recording.
-var (
-	TierKey       = attribute.Key(Tier)
-	ValidatorKey  = attribute.Key(Validator)
-	ActionKey     = attribute.Key(Action)
-	ShadowModeKey = attribute.Key(ShadowMode)
-	ScoreKey      = attribute.Key(Score)
-	ReasonKey     = attribute.Key(Reason)
-	CodeKey       = attribute.Key(Code)
-	SeverityKey   = attribute.Key(Severity)
 )
 
 // Standard values for Action.

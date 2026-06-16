@@ -6,18 +6,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRecordSecurityEvent_AddsEventToSpan(t *testing.T) {
-	mem := testutil.SetupTestTracing(t)
-	tracer := otel.Tracer("metry")
-	ctx, span := tracer.Start(context.Background(), "test-op")
-	RecordSecurityEvent(
+func TestRecordSecurityEventWithProvider_ActiveSpan_AddsEvent(t *testing.T) {
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
+	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
+	require.NoError(t, err)
+	err = RecordSecurityEventWithProvider(
 		ctx,
+		provider,
 		ActionBlock,
 		"pii_masking",
 		"PII detected in prompt",
@@ -25,7 +26,9 @@ func TestRecordSecurityEvent_AddsEventToSpan(t *testing.T) {
 		"HIGH",
 		false,
 	)
-	span.End()
+	require.NoError(t, err)
+	end()
+	flushSpans(t, provider)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
@@ -34,33 +37,22 @@ func TestRecordSecurityEvent_AddsEventToSpan(t *testing.T) {
 	assert.Equal(t, "Security Intervention", evt.Name)
 	require.Len(t, evt.Attributes, 6)
 
-	attrs := attribute.NewSet(evt.Attributes...)
-	actionVal, ok := attrs.Value(ActionKey)
-	require.True(t, ok)
-	assert.Equal(t, ActionBlock, actionVal.AsString())
-	validatorVal, ok := attrs.Value(ValidatorKey)
-	require.True(t, ok)
-	assert.Equal(t, "pii_masking", validatorVal.AsString())
-	reasonVal, ok := attrs.Value(ReasonKey)
-	require.True(t, ok)
-	assert.Equal(t, "PII detected in prompt", reasonVal.AsString())
-	shadowVal, ok := attrs.Value(ShadowModeKey)
-	require.True(t, ok)
-	assert.False(t, shadowVal.AsBool())
-	codeVal, ok := attrs.Value(CodeKey)
-	require.True(t, ok)
-	assert.Equal(t, "POLICY_VIOLATION", codeVal.AsString())
-	severityVal, ok := attrs.Value(SeverityKey)
-	require.True(t, ok)
-	assert.Equal(t, "HIGH", severityVal.AsString())
+	assert.Equal(t, ActionBlock, testutil.SpanEventStringAttr(t, evt.Attributes, Action))
+	assert.Equal(t, "pii_masking", testutil.SpanEventStringAttr(t, evt.Attributes, Validator))
+	assert.Equal(t, "PII detected in prompt", testutil.SpanEventStringAttr(t, evt.Attributes, Reason))
+	assert.False(t, testutil.SpanStubBoolAttr(t, testutil.AttrsStub(evt.Attributes), ShadowMode))
+	assert.Equal(t, "POLICY_VIOLATION", testutil.SpanEventStringAttr(t, evt.Attributes, Code))
+	assert.Equal(t, "HIGH", testutil.SpanEventStringAttr(t, evt.Attributes, Severity))
+	testutil.AssertSpanStubOkStatus(t, spans[0])
 }
 
-func TestRecordSecurityEvent_EmptyCodeAndSeverity_AreNotAdded(t *testing.T) {
-	mem := testutil.SetupTestTracing(t)
-	tracer := otel.Tracer("metry")
-	ctx, span := tracer.Start(context.Background(), "test-op")
-	RecordSecurityEvent(
+func TestRecordSecurityEventWithProvider_EmptyCodeAndSeverity_AreNotAdded(t *testing.T) {
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
+	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
+	require.NoError(t, err)
+	err = RecordSecurityEventWithProvider(
 		ctx,
+		provider,
 		ActionBlock,
 		"pii_masking",
 		"PII detected in prompt",
@@ -68,7 +60,9 @@ func TestRecordSecurityEvent_EmptyCodeAndSeverity_AreNotAdded(t *testing.T) {
 		"",
 		false,
 	)
-	span.End()
+	require.NoError(t, err)
+	end()
+	flushSpans(t, provider)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
@@ -76,19 +70,18 @@ func TestRecordSecurityEvent_EmptyCodeAndSeverity_AreNotAdded(t *testing.T) {
 	evt := spans[0].Events[0]
 	require.Len(t, evt.Attributes, 4)
 
-	attrs := attribute.NewSet(evt.Attributes...)
-	_, ok := attrs.Value(CodeKey)
-	assert.False(t, ok)
-	_, ok = attrs.Value(SeverityKey)
-	assert.False(t, ok)
+	eventStub := testutil.AttrsStub(evt.Attributes)
+	assert.False(t, testutil.SpanStubHasAttr(eventStub, Code))
+	assert.False(t, testutil.SpanStubHasAttr(eventStub, Severity))
 }
 
-func TestRecordSecurityEvent_OnlyCode_IsAdded(t *testing.T) {
-	mem := testutil.SetupTestTracing(t)
-	tracer := otel.Tracer("metry")
-	ctx, span := tracer.Start(context.Background(), "test-op")
-	RecordSecurityEvent(
+func TestRecordSecurityEventWithProvider_OnlyCode_IsAdded(t *testing.T) {
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
+	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
+	require.NoError(t, err)
+	err = RecordSecurityEventWithProvider(
 		ctx,
+		provider,
 		ActionBlock,
 		"pii_masking",
 		"PII detected in prompt",
@@ -96,7 +89,9 @@ func TestRecordSecurityEvent_OnlyCode_IsAdded(t *testing.T) {
 		"",
 		false,
 	)
-	span.End()
+	require.NoError(t, err)
+	end()
+	flushSpans(t, provider)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
@@ -104,20 +99,17 @@ func TestRecordSecurityEvent_OnlyCode_IsAdded(t *testing.T) {
 	evt := spans[0].Events[0]
 	require.Len(t, evt.Attributes, 5)
 
-	attrs := attribute.NewSet(evt.Attributes...)
-	codeVal, ok := attrs.Value(CodeKey)
-	require.True(t, ok)
-	assert.Equal(t, "POLICY_VIOLATION", codeVal.AsString())
-	_, ok = attrs.Value(SeverityKey)
-	assert.False(t, ok)
+	assert.Equal(t, "POLICY_VIOLATION", testutil.SpanEventStringAttr(t, evt.Attributes, Code))
+	assert.False(t, testutil.SpanStubHasAttr(testutil.AttrsStub(evt.Attributes), Severity))
 }
 
-func TestRecordSecurityEvent_OnlySeverity_IsAdded(t *testing.T) {
-	mem := testutil.SetupTestTracing(t)
-	tracer := otel.Tracer("metry")
-	ctx, span := tracer.Start(context.Background(), "test-op")
-	RecordSecurityEvent(
+func TestRecordSecurityEventWithProvider_OnlySeverity_IsAdded(t *testing.T) {
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
+	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
+	require.NoError(t, err)
+	err = RecordSecurityEventWithProvider(
 		ctx,
+		provider,
 		ActionBlock,
 		"pii_masking",
 		"PII detected in prompt",
@@ -125,7 +117,9 @@ func TestRecordSecurityEvent_OnlySeverity_IsAdded(t *testing.T) {
 		"HIGH",
 		false,
 	)
-	span.End()
+	require.NoError(t, err)
+	end()
+	flushSpans(t, provider)
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
@@ -133,16 +127,63 @@ func TestRecordSecurityEvent_OnlySeverity_IsAdded(t *testing.T) {
 	evt := spans[0].Events[0]
 	require.Len(t, evt.Attributes, 5)
 
-	attrs := attribute.NewSet(evt.Attributes...)
-	severityVal, ok := attrs.Value(SeverityKey)
-	require.True(t, ok)
-	assert.Equal(t, "HIGH", severityVal.AsString())
-	_, ok = attrs.Value(CodeKey)
-	assert.False(t, ok)
+	assert.Equal(t, "HIGH", testutil.SpanEventStringAttr(t, evt.Attributes, Severity))
+	assert.False(t, testutil.SpanStubHasAttr(testutil.AttrsStub(evt.Attributes), Code))
 }
 
-func TestRecordSecurityEvent_NoSpanInContext_DoesNotPanic(t *testing.T) {
-	require.NotPanics(t, func() {
-		RecordSecurityEvent(context.Background(), ActionPass, "test", "no span", "CODE", "HIGH", false)
-	})
+func flushSpans(t *testing.T, provider *metry.Provider) {
+	t.Helper()
+	require.NoError(t, provider.ForceFlush(context.Background()))
+}
+
+func TestRecordSecurityEventWithProvider_NilProvider_ReturnsErrNilProvider(t *testing.T) {
+	err := RecordSecurityEventWithProvider(
+		context.Background(),
+		nil,
+		ActionPass,
+		"test",
+		"no provider",
+		"",
+		"",
+		false,
+	)
+	require.ErrorIs(t, err, metry.ErrNilProvider)
+}
+
+func TestRecordSecurityEventWithProvider_NoSpan_CreatesSpan(t *testing.T) {
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-withprovider"))
+	err := RecordSecurityEventWithProvider(
+		context.Background(),
+		provider,
+		ActionBlock,
+		"pii_masking",
+		"PII detected",
+		"POLICY_VIOLATION",
+		"HIGH",
+		false,
+	)
+	require.NoError(t, err)
+	flushSpans(t, provider)
+
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "security.intervention", spans[0].Name)
+	require.Len(t, spans[0].Events, 1)
+	assert.Equal(t, "Security Intervention", spans[0].Events[0].Name)
+	testutil.AssertSpanStubOkStatus(t, spans[0])
+}
+
+func TestRecordSecurityEventWithProvider_NilTracer_ReturnsErrNilTracerProvider(t *testing.T) {
+	provider := metrytest.NewProviderWithDeps(nil, nil)
+	err := RecordSecurityEventWithProvider(
+		context.Background(),
+		provider,
+		ActionPass,
+		"test",
+		"no tracer",
+		"",
+		"",
+		false,
+	)
+	require.ErrorIs(t, err, metry.ErrNilTracerProvider)
 }
