@@ -12,9 +12,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestTask14_FullQueueFlow(t *testing.T) {
+func TestPropagation_QueueWorkerFlow(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("task14-e2e"))
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-e2e"))
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	require.NoError(t, err)
@@ -69,9 +69,9 @@ func TestTask14_FullQueueFlow(t *testing.T) {
 	assert.Equal(t, int64(5), testutil.SpanStubInt64Attr(t, outcome, "retrieval_top_k"))
 }
 
-func TestTask14_LinkedSpanCallbackFlow(t *testing.T) {
+func TestAsyncHandle_LinkedSpanCallback(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("task14-linked-span-e2e"))
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("async-handle-e2e"))
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	require.NoError(t, err)

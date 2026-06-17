@@ -13,9 +13,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestTask14_EvaluationsQueueFlow(t *testing.T) {
+func TestEvaluations_QueueWorkerFlow(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("task14-evaluations-e2e"))
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("evaluations-e2e"))
 
 	tracker, err := genai.NewTrackerFromProvider(provider)
 	require.NoError(t, err)

@@ -12,11 +12,11 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestTask14_MetricsRegistryInWorkerContext(t *testing.T) {
+func TestMetricsRegistry_QueueWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	memMetric := testutil.NewInMemoryMetricExporter()
 	provider, err := metry.New(ctx,
-		metry.WithServiceName("task14-metrics-e2e"),
+		metry.WithServiceName("metrics-registry-e2e"),
 		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric)),
 	)
 	require.NoError(t, err)

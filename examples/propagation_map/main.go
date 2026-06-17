@@ -1,4 +1,4 @@
-// Map-carrier propagation example. Full AsyncHandle queue flow: see task14_e2e_test.go.
+// Map-carrier propagation example. Full AsyncHandle queue flow: see propagation_e2e_test.go.
 package main
 
 import (

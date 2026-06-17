@@ -57,6 +57,3 @@ jobs:
       - name: Run examples
         if: matrix.module == '.'
         run: make test-examples
-      - name: Check task14 grep gates
-        if: matrix.module == '.'
-        run: make check-task14

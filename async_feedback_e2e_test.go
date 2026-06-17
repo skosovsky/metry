@@ -13,9 +13,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestTask14_AsyncFeedbackQueueFlow(t *testing.T) {
+func TestAsyncFeedback_QueueWorkerFlow(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("task14-async-feedback-e2e"))
+	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("async-feedback-e2e"))
 
 	tracker, err := genai.NewTrackerFromProvider(provider)
 	require.NoError(t, err)

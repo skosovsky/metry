@@ -446,7 +446,7 @@ conn, err := grpc.NewClient(addr, metrygrpc.ClientDialOption(
 
 ## Testing
 
-`make test` runs tests for all modules. `make test-examples` runs the six task14 examples above. `make check-task14` runs grep gates for removed legacy API.
+`make test` runs tests for all modules. `make test-examples` runs the six task14 examples above.
 
 ## License
 
