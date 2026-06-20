@@ -11,6 +11,7 @@ type Option func(*runtimeConfig)
 
 type runtimeConfig struct {
 	recordPayloads   bool
+	payloadPolicy    PayloadPolicy
 	maxContextLength int
 	maxEventLength   int
 }
@@ -18,6 +19,7 @@ type runtimeConfig struct {
 func defaultRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
 		recordPayloads:   false,
+		payloadPolicy:    RedactPayloadPolicy(),
 		maxContextLength: defaultMaxContextLength,
 		maxEventLength:   defaultMaxEventLength,
 	}
@@ -43,6 +45,13 @@ func (c runtimeConfig) RecordPayloads() bool {
 	return c.recordPayloads
 }
 
+func (c runtimeConfig) PayloadPolicy() PayloadPolicy {
+	if c.payloadPolicy == nil {
+		return RedactPayloadPolicy()
+	}
+	return c.payloadPolicy
+}
+
 func (c runtimeConfig) MaxContextLength() int {
 	if c.maxContextLength <= 0 {
 		return defaultMaxContextLength
@@ -58,11 +67,20 @@ func (c runtimeConfig) MaxEventLength() int {
 	return c.maxEventLength
 }
 
-// WithRecordPayloads enables payload recording on spans for this tracker.
-func WithRecordPayloads(enabled bool) Option {
+// WithPayloadPolicy enables payload recording with an explicit sanitizer policy.
+func WithPayloadPolicy(policy PayloadPolicy) Option {
 	return func(c *runtimeConfig) {
-		c.recordPayloads = enabled
+		if policy == nil {
+			return
+		}
+		c.recordPayloads = true
+		c.payloadPolicy = policy
 	}
+}
+
+// WithRawPayloads enables raw payload export explicitly.
+func WithRawPayloads() Option {
+	return WithPayloadPolicy(RawPayloadPolicy())
 }
 
 // WithMaxContextLength sets the payload truncation limit for this tracker.

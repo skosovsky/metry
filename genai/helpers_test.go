@@ -17,7 +17,7 @@ import (
 )
 
 func TestRecordInteraction_WithPayloadAndUsage_SetsAttributes(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
+	tracker, provider, mem := newTestTracker(t, WithRawPayloads())
 
 	ctx := context.Background()
 	require.NoError(t, tracker.RecordInteraction(ctx, testMeta(), testPayload(), Usage{
@@ -42,7 +42,7 @@ func TestRecordInteraction_WithPayloadAndUsage_SetsAttributes(t *testing.T) {
 
 func TestRecordInteraction_TruncatesPayloadString(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
-		WithRecordPayloads(true),
+		WithRawPayloads(),
 		WithMaxContextLength(96),
 	)
 
@@ -66,11 +66,19 @@ func TestRecordInteraction_TruncatesPayloadString(t *testing.T) {
 	assert.True(t, utf8.ValidString(value))
 }
 
-func TestStartToolSpan_AndRecordToolResult_SetToolAttributes(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithMaxContextLength(64))
+func TestRecorderTool_SetToolAttributes(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
+	recorder := tracker.Recorder()
 
-	ctx, end := tracker.StartToolSpan(context.Background(), "search", "call-1", `{"q":`)
-	tracker.RecordToolResult(ctx, `{"result":"`+strings.Repeat("b", 256)+`"}`, errors.New("tool execution failed"))
+	ctx, end := recorder.StartTool(context.Background(), ToolCall{
+		Name:      "search",
+		CallID:    "call-1",
+		Arguments: `{"q":`,
+	})
+	recorder.RecordToolResult(ctx, ToolResult{
+		Result: `{"result":"` + strings.Repeat("b", 256) + `"}`,
+		Err:    errors.New("tool execution failed"),
+	})
 	end()
 
 	flushTestProvider(t, provider)
@@ -90,9 +98,14 @@ func TestStartToolSpan_AndRecordToolResult_SetToolAttributes(t *testing.T) {
 
 func TestRecordToolResult_Success_SetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
+	recorder := tracker.Recorder()
 
-	ctx, end := tracker.StartToolSpan(context.Background(), "search", "call-ok", `{"q":"x"}`)
-	tracker.RecordToolResult(ctx, `{"result":"ok"}`, nil)
+	ctx, end := recorder.StartTool(context.Background(), ToolCall{
+		Name:      "search",
+		CallID:    "call-ok",
+		Arguments: `{"q":"x"}`,
+	})
+	recorder.RecordToolResult(ctx, ToolResult{Result: `{"result":"ok"}`})
 	end()
 
 	flushTestProvider(t, provider)
@@ -102,10 +115,15 @@ func TestRecordToolResult_Success_SetsOkStatus(t *testing.T) {
 	testutil.AssertSpanStubOkStatus(t, spans[0])
 }
 
-func TestStartToolSpan_EndOnly_SetsOkStatus(t *testing.T) {
+func TestRecorderTool_EndOnly_SetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
+	recorder := tracker.Recorder()
 
-	_, end := tracker.StartToolSpan(context.Background(), "search", "call-end-only", `{"q":"x"}`)
+	_, end := recorder.StartTool(context.Background(), ToolCall{
+		Name:      "search",
+		CallID:    "call-end-only",
+		Arguments: `{"q":"x"}`,
+	})
 	end()
 
 	flushTestProvider(t, provider)
@@ -130,6 +148,23 @@ func TestRecordInteraction_ErrorType_SetsSpanErrorStatus(t *testing.T) {
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
 }
 
+func TestRecordInteraction_ErrorType_NormalizesUnboundedText(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t)
+
+	require.NoError(t, tracker.RecordInteraction(context.Background(), Meta{
+		Provider:  "openai",
+		Operation: "chat",
+		ErrorType: "timeout for user bob@example.com",
+	}, Payload{}, Usage{InputTokens: 1}))
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, OperationStatusError, testutil.SpanStubStringAttr(t, spans[0], ErrorType))
+	assert.NotContains(t, spans[0].Status.Description, "bob@example.com")
+	testutil.AssertSpanStubErrorStatus(t, spans[0])
+}
+
 func TestRecordInteraction_Success_SetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
@@ -148,14 +183,17 @@ func TestRecordCacheHit_NoSpan_NoPanic(t *testing.T) {
 	})
 }
 
-func TestStartToolSpan_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
+func TestRecorderTool_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
 	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
+	recorder := tracker.Recorder()
 
-	_, end := tracker.StartToolSpan(
+	_, end := recorder.StartTool(
 		context.Background(),
-		"search",
-		"call-keep",
-		`{"q":"hint"}`,
+		ToolCall{
+			Name:      "search",
+			CallID:    "call-keep",
+			Arguments: `{"q":"hint"}`,
+		},
 		WithSpanSamplingKeep(),
 	)
 	end()
@@ -167,14 +205,17 @@ func TestStartToolSpan_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T
 	assert.True(t, spans[0].SpanContext.IsSampled())
 }
 
-func TestStartToolSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
+func TestRecorderTool_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
+	recorder := tracker.Recorder()
 
-	_, end := tracker.StartToolSpan(
+	_, end := recorder.StartTool(
 		context.Background(),
-		"search",
-		"call-attrs",
-		`{"q":"hello"}`,
+		ToolCall{
+			Name:      "search",
+			CallID:    "call-attrs",
+			Arguments: `{"q":"hello"}`,
+		},
 		WithSpanAttributes(metry.StringAttribute("test.caller.attr", "present")),
 	)
 	end()
@@ -187,14 +228,17 @@ func TestStartToolSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *testin
 	assert.Equal(t, "present", testutil.SpanStubStringAttr(t, spans[0], "test.caller.attr"))
 }
 
-func TestStartToolSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
+func TestRecorderTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
+	recorder := tracker.Recorder()
 
-	_, end := tracker.StartToolSpan(
+	_, end := recorder.StartTool(
 		context.Background(),
-		"search",
-		"call-dup",
-		`{"q":"hello"}`,
+		ToolCall{
+			Name:      "search",
+			CallID:    "call-dup",
+			Arguments: `{"q":"hello"}`,
+		},
 		WithSpanAttributes(
 			metry.StringAttribute(OperationName, "override"),
 			metry.StringAttribute(ToolName, "override"),
@@ -213,7 +257,7 @@ func TestStartToolSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 
 func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
-		WithRecordPayloads(true),
+		WithRawPayloads(),
 		WithMaxContextLength(80),
 	)
 

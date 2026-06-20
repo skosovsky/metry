@@ -37,6 +37,7 @@ type metricsHolder struct {
 	TBT                 metric.Float64Histogram
 	VideoSeconds        metric.Float64Histogram
 	VideoFrames         metric.Int64Histogram
+	ToolDuration        metric.Float64Histogram
 }
 
 // NewTrackerFromProvider creates a GenAI tracker using the provider meter and tracer.
@@ -212,6 +213,30 @@ func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
 	if err != nil {
 		return nil, err
 	}
+	toolDuration, err := meter.Float64Histogram(
+		ToolDurationMetricName,
+		metric.WithUnit("s"),
+		metric.WithDescription("Tool execution duration observed by metry."),
+		metric.WithExplicitBucketBoundaries(
+			0.001,
+			0.005,
+			0.01,
+			0.025,
+			0.05,
+			0.1,
+			0.25,
+			0.5,
+			1,
+			2.5,
+			5,
+			10,
+			30,
+			60,
+		),
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	return &metricsHolder{
 		TokenUsage:          tokenUsage,
@@ -223,5 +248,6 @@ func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
 		TBT:                 tbt,
 		VideoSeconds:        videoSeconds,
 		VideoFrames:         videoFrames,
+		ToolDuration:        toolDuration,
 	}, nil
 }

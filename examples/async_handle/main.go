@@ -29,9 +29,14 @@ func run() int {
 		log.Println(err)
 		return 1
 	}
-	ctx = metry.Enrich(ctx, metry.TenantID("t-1"))
-	carrier := map[string]any{"order_id": "ord-1"}
-	provider.InjectToMap(ctx, carrier)
+	const orderID = "ord-1"
+	const tenantID = "t-1"
+	ctx = metry.Enrich(ctx, metry.TenantID(tenantID))
+	snapshotToken, err := captureTraceSnapshotToken(ctx)
+	if err != nil {
+		log.Println("capture trace snapshot:", err)
+		return 1
+	}
 	handle, err := metry.NewAsyncHandle(ctx)
 	if err != nil {
 		log.Println("capture handle:", err)
@@ -49,17 +54,41 @@ func run() int {
 		log.Println("parse handle:", err)
 		return 1
 	}
-	workerCtx := provider.ExtractFromMap(context.Background(), carrier)
+	workerCtx, err := restoreTraceSnapshot(context.Background(), provider, snapshotToken)
+	if err != nil {
+		log.Println("restore trace snapshot:", err)
+		return 1
+	}
 	if err := parsed.RecordLinkedOutcomeWithProvider(workerCtx, provider, "delivery.success",
-		metry.TenantID("t-1"),
+		metry.TenantID(tenantID),
 	); err != nil {
 		log.Println("record outcome:", err)
 		return 1
 	}
+	if err := provider.ForceFlush(ctx); err != nil {
+		log.Println("flush:", err)
+		return 1
+	}
 
 	fmt.Printf("exported spans: %d\n", len(mem.GetSpans()))
-	fmt.Printf("carrier order_id: %v\n", carrier["order_id"])
+	fmt.Printf("job order_id: %s\n", orderID)
 	return 0
+}
+
+func captureTraceSnapshotToken(ctx context.Context) (string, error) {
+	snapshot, err := metry.TraceSnapshotFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.Marshal()
+}
+
+func restoreTraceSnapshot(ctx context.Context, provider *metry.Provider, token string) (context.Context, error) {
+	snapshot, err := metry.ParseTraceSnapshot(token)
+	if err != nil {
+		return ctx, err
+	}
+	return provider.ContextWithTraceSnapshot(ctx, snapshot)
 }
 
 func main() {

@@ -171,6 +171,9 @@ func (t *Tracker) recordInteractionOnSpan(
 	payload Payload,
 	usage Usage,
 ) {
+	if meta.ErrorType != "" {
+		meta.ErrorType = normalizeErrorType(meta.ErrorType)
+	}
 	if usage.Purpose == "" && meta.Purpose != "" {
 		usage.Purpose = meta.Purpose
 	}
@@ -235,6 +238,7 @@ func buildMetaAttributes(meta Meta) []attribute.KeyValue {
 }
 
 func buildPayloadAttributes(payload Payload, cfg runtimeConfig) []attribute.KeyValue {
+	payload = cfg.PayloadPolicy().SanitizePayload(payload)
 	attrs := make([]attribute.KeyValue, 0, attrCapPayloadAttrs)
 	if value := marshalPayloadValue(payload.SystemInstructions, cfg); value != "" {
 		attrs = append(attrs, attribute.Key(SystemInstructions).String(value))
@@ -405,48 +409,6 @@ func recordIntHistogram(ctx context.Context, histogram metric.Int64Histogram, va
 		return
 	}
 	histogram.Record(ctx, int64(value), metric.WithAttributes(attrs...))
-}
-
-// StartToolSpan creates a child span for a tool execution and returns an end callback.
-// Call RecordToolResult before end() for explicit I/O completion semantics.
-// The end callback sets Ok when span status is still Unset.
-// Extra start options allow callers to add start-time sampling hints or attributes.
-func (t *Tracker) StartToolSpan(
-	ctx context.Context,
-	toolName, toolCallID, argsJSON string,
-	startOpts ...ChildSpanOption,
-) (context.Context, func()) {
-	attrs := []attribute.KeyValue{
-		attribute.Key(OperationName).String("execute_tool"),
-		attribute.Key(ToolName).String(toolName),
-		attribute.Key(ToolCallID).String(toolCallID),
-	}
-	if argsJSON != "" {
-		attrs = append(attrs, attribute.Key(ToolCallArguments).String(truncateContextWithConfig(argsJSON, t.cfg)))
-	}
-	otelOpts := childSpanOptionsToOTel(startOpts...)
-	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
-	opts = append(opts, otelOpts...)
-	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...) //nolint:spancheck // caller ends span via callback
-	// Preserve deterministic helper semantics when caller start options use duplicate keys.
-	span.SetAttributes(attrs...)
-	return ctx, func() { traceutil.EndSpanOKIfUnset(span) } //nolint:spancheck // caller ends span via callback
-}
-
-// RecordToolResult records tool output and status on the span stored in ctx.
-func (t *Tracker) RecordToolResult(ctx context.Context, resultJSON string, err error) {
-	mutateSpan(ctx, func(span trace.Span) {
-		if resultJSON != "" {
-			span.SetAttributes(attribute.Key(ToolCallResult).String(truncateContextWithConfig(resultJSON, t.cfg)))
-		}
-		if err != nil {
-			span.SetAttributes(attribute.Key(ToolError).Bool(true))
-			traceutil.SpanError(span, err)
-			return
-		}
-		span.SetAttributes(attribute.Key(ToolError).Bool(false))
-		traceutil.SpanOK(span)
-	})
 }
 
 // RecordCacheHit records cache metadata on the span stored in ctx.

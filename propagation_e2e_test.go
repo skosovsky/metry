@@ -12,11 +12,11 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestPropagation_QueueWorkerFlow(t *testing.T) {
+func TestPropagation_ProtocolCarrierBoundary(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-e2e"))
 
-	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
+	ctx, end, err := provider.StartSpan(ctx, "producer", "send")
 	require.NoError(t, err)
 	ctx = metry.Enrich(ctx,
 		metry.TenantID("t-1"),
@@ -25,48 +25,33 @@ func TestPropagation_QueueWorkerFlow(t *testing.T) {
 		metry.IntAttribute("retrieval_top_k", 5),
 	)
 
-	carrier := map[string]any{"order_id": "ord-99"}
-	provider.InjectToMap(ctx, carrier)
-	handle, err := metry.NewAsyncHandle(ctx)
-	require.NoError(t, err)
-	token, err := handle.Marshal()
-	require.NoError(t, err)
+	headers := map[string]any{"x-request-id": "req-99"}
+	provider.InjectToMap(ctx, headers)
 	end()
 
-	workerCtx := provider.ExtractFromMap(context.Background(), carrier)
-	assert.Equal(t, "t-1", metrytest.BaggageMember(workerCtx, "tenant_id"))
-	assert.Equal(t, "0.91", metrytest.BaggageMember(workerCtx, "score"))
-	assert.Equal(t, "true", metrytest.BaggageMember(workerCtx, "passed"))
-	assert.Equal(t, "5", metrytest.BaggageMember(workerCtx, "retrieval_top_k"))
+	consumerCtx := provider.ExtractFromMap(context.Background(), headers)
+	assert.Equal(t, "req-99", headers["x-request-id"])
+	assert.Equal(t, "t-1", metrytest.BaggageMember(consumerCtx, "tenant_id"))
+	assert.Equal(t, "0.91", metrytest.BaggageMember(consumerCtx, "score"))
+	assert.Equal(t, "true", metrytest.BaggageMember(consumerCtx, "passed"))
+	assert.Equal(t, "5", metrytest.BaggageMember(consumerCtx, "retrieval_top_k"))
 
-	parsed, err := metry.ParseAsyncHandle(token)
+	_, consumerEnd, err := provider.StartSpan(consumerCtx, "consumer", "receive")
 	require.NoError(t, err)
-	err = parsed.RecordLinkedOutcomeWithProvider(workerCtx, provider, "delivery.success",
-		metry.TenantID("t-1"),
-		metry.FloatAttribute("score", 0.91),
-		metry.BoolAttribute("passed", true),
-		metry.IntAttribute("retrieval_top_k", 5),
-	)
-	require.NoError(t, err)
+	consumerEnd()
 
 	require.NoError(t, provider.ForceFlush(ctx))
 
 	spans := mem.GetSpans()
-	require.GreaterOrEqual(t, len(spans), 2)
+	require.Len(t, spans, 2)
 	producer := spans[0]
-	outcome := spans[len(spans)-1]
-	assert.Equal(t, "enqueue", producer.Name)
+	consumer := spans[1]
+	assert.Equal(t, "send", producer.Name)
 	testutil.AssertSpanStubOkStatus(t, producer)
-	assert.Equal(t, "delivery.success", outcome.Name)
-	testutil.AssertSpanStubOkStatus(t, outcome)
-	require.False(t, outcome.Parent.SpanID().IsValid())
-	require.NotEmpty(t, outcome.Links)
-	assert.Equal(t, producer.SpanContext.SpanID(), outcome.Links[0].SpanContext.SpanID())
-
-	assert.Equal(t, "t-1", testutil.SpanStubStringAttr(t, outcome, "tenant_id"))
-	assert.InDelta(t, 0.91, testutil.SpanStubFloat64Attr(t, outcome, "score"), 1e-9)
-	assert.True(t, testutil.SpanStubBoolAttr(t, outcome, "passed"))
-	assert.Equal(t, int64(5), testutil.SpanStubInt64Attr(t, outcome, "retrieval_top_k"))
+	assert.Equal(t, "receive", consumer.Name)
+	testutil.AssertSpanStubOkStatus(t, consumer)
+	assert.Equal(t, producer.SpanContext.TraceID(), consumer.SpanContext.TraceID())
+	assert.Equal(t, producer.SpanContext.SpanID(), consumer.Parent.SpanID())
 }
 
 func TestAsyncHandle_LinkedSpanCallback(t *testing.T) {

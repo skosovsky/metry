@@ -45,34 +45,43 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	t.Cleanup(func() { _ = provider2.Shutdown(context.Background()) })
 
 	tracker1, err := NewTrackerFromProvider(provider1,
-		WithRecordPayloads(true),
+		WithPayloadPolicy(RedactPayloadPolicy()),
 		WithMaxContextLength(96),
 	)
 	require.NoError(t, err)
 	tracker2, err := NewTrackerFromProvider(provider2,
-		WithRecordPayloads(false),
 		WithMaxContextLength(32),
 	)
 	require.NoError(t, err)
 
 	toolJSON := `{"prompt":"` + strings.Repeat("a", 512) + `"}`
+	recorder1 := tracker1.Recorder()
+	recorder2 := tracker2.Recorder()
 
-	ctx1, end1 := tracker1.StartToolSpan(context.Background(), "search", "call-1", toolJSON)
+	ctx1, end1 := recorder1.StartTool(context.Background(), ToolCall{
+		Name:      "search",
+		CallID:    "call-1",
+		Arguments: toolJSON,
+	})
 	require.NoError(t, tracker1.RecordInteraction(ctx1, testMeta(), testPayload(), Usage{
 		InputTokens:           12,
 		OutputTokens:          6,
 		CacheReadInputTokens:  3,
 		ReasoningOutputTokens: 2,
 	}))
-	tracker1.RecordToolResult(ctx1, `{"result":"`+strings.Repeat("b", 512)+`"}`, nil)
+	recorder1.RecordToolResult(ctx1, ToolResult{Result: `{"result":"` + strings.Repeat("b", 512) + `"}`})
 	end1()
 
-	ctx2, end2 := tracker2.StartToolSpan(context.Background(), "search", "call-2", toolJSON)
+	ctx2, end2 := recorder2.StartTool(context.Background(), ToolCall{
+		Name:      "search",
+		CallID:    "call-2",
+		Arguments: toolJSON,
+	})
 	require.NoError(t, tracker2.RecordInteraction(ctx2, testMeta(), testPayload(), Usage{
 		InputTokens:  4,
 		OutputTokens: 2,
 	}))
-	tracker2.RecordToolResult(ctx2, `{"result":"ok"}`, nil)
+	recorder2.RecordToolResult(ctx2, ToolResult{Result: `{"result":"ok"}`})
 	end2()
 
 	flushTestProvider(t, provider1)

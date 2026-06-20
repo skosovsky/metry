@@ -13,7 +13,7 @@ import (
 )
 
 func TestRecordTraceIO_WritesInputAndOutputAttributes(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
+	tracker, provider, mem := newTestTracker(t, WithRawPayloads())
 
 	input := Payload{
 		InputMessages: []Message{{Role: "user", Parts: []ContentPart{{Type: "text", Content: "question"}}}},
@@ -51,7 +51,7 @@ func TestRecordTraceIO_PayloadRecordingDisabled_SkipsAttributes(t *testing.T) {
 func TestRecordTraceIO_TruncatesLongPayload(t *testing.T) {
 	const limit = 128
 	tracker, provider, mem := newTestTracker(t,
-		WithRecordPayloads(true),
+		WithRawPayloads(),
 		WithMaxContextLength(limit),
 	)
 

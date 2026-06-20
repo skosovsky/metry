@@ -37,7 +37,7 @@ func TestRecordAsyncFeedback_ValidRemoteLinked_AttachesSpanWithLink(t *testing.T
 }
 
 func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
+	tracker, provider, mem := newTestTracker(t, WithRawPayloads())
 
 	linked := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
 	err := tracker.RecordAsyncFeedback(context.Background(), linked, 1.0, "approved")
@@ -47,6 +47,19 @@ func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "approved", testutil.SpanStubStringAttr(t, spans[0], EvaluationText))
+}
+
+func TestRecordAsyncFeedback_WithDefaultPayloadPolicy_RedactsText(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t, WithPayloadPolicy(RedactPayloadPolicy()))
+
+	linked := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
+	err := tracker.RecordAsyncFeedback(context.Background(), linked, 1.0, "approved")
+	require.NoError(t, err)
+
+	flushTestProvider(t, provider)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, redactedPayloadText, testutil.SpanStubStringAttr(t, spans[0], EvaluationText))
 }
 
 func TestRecordAsyncFeedback_IgnoresContextParent_UsesLinkOnly(t *testing.T) {

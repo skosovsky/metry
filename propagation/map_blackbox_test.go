@@ -18,25 +18,25 @@ func TestProviderInjectExtractMap_WithEnrich_RoundTripBaggage(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-blackbox"))
 
-	ctx, end, err := provider.StartSpan(ctx, "test", "producer")
+	ctx, end, err := provider.StartSpan(ctx, "client", "send")
 	require.NoError(t, err)
-	ctx = metry.Enrich(ctx, metry.SubjectID("job-42"))
+	ctx = metry.Enrich(ctx, metry.SubjectID("request-42"))
 	end()
 
-	carrier := map[string]any{"order_id": "ord-1"}
-	provider.InjectToMap(ctx, carrier)
+	headers := map[string]any{"x-request-id": "req-1"}
+	provider.InjectToMap(ctx, headers)
 
-	outCtx := provider.ExtractFromMap(context.Background(), carrier)
-	_, workerEnd, err := provider.StartSpan(outCtx, "worker", "consume")
+	outCtx := provider.ExtractFromMap(context.Background(), headers)
+	_, serverEnd, err := provider.StartSpan(outCtx, "server", "receive")
 	require.NoError(t, err)
-	workerEnd()
+	serverEnd()
 	require.NoError(t, provider.ForceFlush(ctx))
 
 	spans := mem.GetSpans()
 	require.Len(t, spans, 2)
 	assert.Equal(t, spans[0].SpanContext.TraceID(), spans[1].SpanContext.TraceID())
-	assert.Equal(t, "job-42", metry.BaggageMember(outCtx, "subject_id"))
-	assert.Equal(t, "ord-1", carrier["order_id"])
+	assert.Equal(t, "request-42", metry.BaggageMember(outCtx, "subject_id"))
+	assert.Equal(t, "req-1", headers["x-request-id"])
 }
 
 func TestProviderInjectExtractMap_PreservesTypedBaggage(t *testing.T) {
@@ -91,7 +91,7 @@ func TestProviderInjectExtractMap_ContextHandlerTypedFieldsAfterRoundTrip(t *tes
 
 	var buf bytes.Buffer
 	logger := slog.New(metry.ContextHandler{Handler: slog.NewJSONHandler(&buf, nil)})
-	logger.InfoContext(outCtx, "worker")
+	logger.InfoContext(outCtx, "server")
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &payload))
@@ -100,21 +100,21 @@ func TestProviderInjectExtractMap_ContextHandlerTypedFieldsAfterRoundTrip(t *tes
 	assert.InDelta(t, float64(5), payload["retrieval_top_k"], 1e-9)
 }
 
-func TestProviderInjectExtractMap_TraceContextViaWorkerSpan(t *testing.T) {
+func TestProviderInjectExtractMap_TraceContextViaServerSpan(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-trace"))
 
-	ctx, end, err := provider.StartSpan(ctx, "test", "producer")
+	ctx, end, err := provider.StartSpan(ctx, "client", "send")
 	require.NoError(t, err)
 	end()
 
-	carrier := map[string]any{"biz": "payload"}
-	provider.InjectToMap(ctx, carrier)
-	outCtx := provider.ExtractFromMap(context.Background(), carrier)
+	headers := map[string]any{"x-request-id": "req-2"}
+	provider.InjectToMap(ctx, headers)
+	outCtx := provider.ExtractFromMap(context.Background(), headers)
 
-	_, workerEnd, err := provider.StartSpan(outCtx, "worker", "job")
+	_, serverEnd, err := provider.StartSpan(outCtx, "server", "receive")
 	require.NoError(t, err)
-	workerEnd()
+	serverEnd()
 	require.NoError(t, provider.ForceFlush(ctx))
 
 	spans := mem.GetSpans()

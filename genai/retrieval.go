@@ -52,7 +52,8 @@ func (t *Tracker) StartRetrievalSpan(
 		attrs = append(attrs, attribute.Key(RetrievalTopK).Int(req.TopK))
 	}
 	if t.cfg.RecordPayloads() && req.Query != "" {
-		attrs = append(attrs, attribute.Key(RetrievalQuery).String(truncateContextWithConfig(req.Query, t.cfg)))
+		query := sanitizeTextWithConfig(req.Query, t.cfg)
+		attrs = append(attrs, attribute.Key(RetrievalQuery).String(truncateContextWithConfig(query, t.cfg)))
 	}
 
 	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}

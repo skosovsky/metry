@@ -21,7 +21,7 @@ func TestInjectExtractMap_RoundTrip_PreservesTraceAndBaggage(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	member, err := baggage.NewMember("subject_id", "job-42")
+	member, err := baggage.NewMember("subject_id", "request-42")
 	require.NoError(t, err)
 	b, err := baggage.New()
 	require.NoError(t, err)
@@ -32,11 +32,11 @@ func TestInjectExtractMap_RoundTrip_PreservesTraceAndBaggage(t *testing.T) {
 	mem := testutil.NewInMemoryTraceExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem.SDKSpanExporter()))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
-	ctx, span := tp.Tracer("propagation-test").Start(ctx, "producer")
+	ctx, span := tp.Tracer("propagation-test").Start(ctx, "client")
 	sc := span.SpanContext()
 	span.End()
 
-	carrier := map[string]any{"order_id": "ord-1", "payload": 123}
+	carrier := map[string]any{"x-request-id": "req-1"}
 	InjectToMap(ctx, prop, carrier)
 
 	outCtx := ExtractFromMap(context.Background(), prop, carrier)
@@ -44,9 +44,8 @@ func TestInjectExtractMap_RoundTrip_PreservesTraceAndBaggage(t *testing.T) {
 	require.True(t, outSc.IsValid())
 	assert.Equal(t, sc.TraceID(), outSc.TraceID())
 	assert.Equal(t, sc.SpanID(), outSc.SpanID())
-	assert.Equal(t, "job-42", baggage.FromContext(outCtx).Member("subject_id").Value())
-	assert.Equal(t, "ord-1", carrier["order_id"])
-	assert.Equal(t, 123, carrier["payload"])
+	assert.Equal(t, "request-42", baggage.FromContext(outCtx).Member("subject_id").Value())
+	assert.Equal(t, "req-1", carrier["x-request-id"])
 }
 
 func TestExtractFromMap_EmptyCarrier_ReturnsOriginalContext(t *testing.T) {

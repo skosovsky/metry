@@ -15,7 +15,7 @@ go get github.com/skosovsky/metry/middleware/grpc
 
 Use matching versions of `metry` and `metry/middleware/grpc` after the stateless API break.
 
-**Migration (task14):** see [docs/task14-migration.md](docs/task14-migration.md) for breaking changes (Enrich, map propagation, AsyncHandle, Scope, MetricsRegistry).
+**Migration (task15):** use `genai.Recorder`, explicit `PayloadPolicy`, `TraceSnapshot` for durable resume, and built-in tool metrics. Historical task14 notes live in [`.cursor/docs/task14-migration.md`](.cursor/docs/task14-migration.md), but task15 supersedes carrier-map queue guidance.
 
 `middleware/http` and [`middleware/executor`](middleware/executor) are thin aliases for root APIs `metry.HTTPHandler` and `metry.ExecutorWrap`. Prefer the root imports when starting new code; subpackages remain for stable import paths.
 
@@ -31,7 +31,7 @@ import (
     "github.com/skosovsky/metry/genai"
 )
 
-func setup(ctx context.Context) (*metry.Provider, *genai.Tracker, error) {
+func setup(ctx context.Context) (*metry.Provider, genai.Recorder, error) {
     provider, err := metry.New(
         ctx,
         metry.WithServiceName("my-ai-service"),
@@ -45,13 +45,13 @@ func setup(ctx context.Context) (*metry.Provider, *genai.Tracker, error) {
         return nil, nil, err
     }
 
-    tracker, err := genai.NewTrackerFromProvider(provider, genai.WithRecordPayloads(true))
+    recorder, err := genai.NewRecorderFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
     if err != nil {
         _ = provider.Shutdown(ctx)
         return nil, nil, err
     }
 
-    return provider, tracker, nil
+    return provider, recorder, nil
 }
 ```
 
@@ -61,7 +61,7 @@ func setup(ctx context.Context) (*metry.Provider, *genai.Tracker, error) {
 ## Provider lifecycle
 
 ```go
-provider, tracker, err := setup(ctx)
+provider, recorder, err := setup(ctx)
 if err != nil {
     return err
 }
@@ -73,52 +73,83 @@ if err != nil {
 }
 defer end()
 
-err = tracker.RecordInteraction(ctx,
-    genai.Meta{
-        Provider:      "openai",
-        Operation:     "chat",
-        RequestModel:  "gpt-4o-mini",
-        ResponseModel: "gpt-4o-mini",
+err = recorder.RecordOperation(ctx,
+    genai.Operation{
+        Provider: "provider",
+        Name:     "chat",
+        Model:    "model",
+        Purpose:  genai.PurposeGeneration,
     },
-    genai.Payload{
-        InputMessages: []genai.Message{{
-            Role: "user",
-            Parts: []genai.ContentPart{{Type: "text", Content: "Summarize this"}},
-        }},
+    genai.OperationResult{
+        Status: genai.OperationStatusOK,
+        Usage:  genai.Usage{InputTokens: 150, OutputTokens: 50},
+        Payload: genai.Payload{
+            InputMessages: []genai.Message{{
+                Role: "user",
+                Parts: []genai.ContentPart{{Type: "text", Content: "Summarize this"}},
+            }},
+        },
     },
-    genai.Usage{InputTokens: 150, OutputTokens: 50, Cost: 0.002},
 )
 if err != nil {
     return err
 }
 ```
 
-`RecordInteraction` creates its own span — use `provider.StartSpan` when you need a shared parent span for sibling work (middleware, custom tracing).
+`Recorder.RecordOperation` creates its own span, writes standard GenAI attributes and metrics, and applies the configured payload policy before export.
+
+Raw payload export requires `genai.WithRawPayloads()`. Use it only when the application has already handled privacy before calling `metry`.
+
+Extra `attrs ...metry.Attribute` on `RecordOperation` are for bounded metadata and outcome fields. Do not put prompts, completions, tool arguments, or raw user data there; payload policy applies to `genai.Payload` and tool result types.
 
 ## GenAI API
 
-Runtime operations are available only as tracker instance methods:
+Use `genai.Recorder` as the application boundary:
 
-- `(*Tracker).RecordInteraction`
-- `(*Tracker).RecordModelInteraction`
-- `(*Tracker).RecordTraceIO`
-- `genai.WithScope` / `(*Tracker).RecordOperation`
-- `(*Tracker).RecordTTFT`
-- `(*Tracker).RecordStreamingCompletion`
-- `(*Tracker).StartToolSpan`
-- `(*Tracker).RecordToolResult`
-- `(*Tracker).RecordAsyncFeedback`
-- `(*Tracker).StartRetrievalSpan`
-- `(*Tracker).RecordRetrievalResult`
-- `(*Tracker).RecordEvaluations`
-- `(*Tracker).RecordCacheHit`
-- `(*Tracker).RecordAgentStep`
+- `RecordOperation(ctx, Operation, OperationResult, attrs...)`
+- `StartTool(ctx, ToolCall, opts...)`
+- `RecordToolResult(ctx, ToolResult)`
 
-`genai.NewTrackerFromProvider` is the only supported entry point when you have a `*metry.Provider`.
+`genai.NoopRecorder()` and `genai.RecorderFromProvider(...)` are safe for optional telemetry wiring.
+
+Application/business code should use `Recorder`; do not build a local compatibility facade over lower-level tracker methods. Framework code that owns SDK translation can use adapter-level APIs behind its own package boundary.
+
+## Payload policy
+
+Payload recording is policy-driven:
 
 ```go
-tracker, err := genai.NewTrackerFromProvider(provider)
+recorder, err := genai.NewRecorderFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
+if err != nil {
+    return err
+}
 ```
+
+- `RedactPayloadPolicy()` preserves message/tool structure and replaces content with redacted markers.
+- `HashPayloadPolicy()` preserves structure and exports deterministic fingerprints.
+- `WithRawPayloads()` is the explicit opt-in for raw payloads.
+
+The same policy applies to messages, tool arguments/results, retrieval queries, feedback text, and evaluation reasoning.
+
+## Tool lifecycle
+
+```go
+toolCtx, endTool := recorder.StartTool(ctx, genai.ToolCall{
+    Name:      "search",
+    CallID:    callID,
+    Arguments: argsJSON,
+})
+defer endTool()
+
+result, err := runTool(toolCtx)
+recorder.RecordToolResult(toolCtx, genai.ToolResult{
+    Result:    resultJSON,
+    Err:       err,
+    ErrorType: classifyToolError(err),
+})
+```
+
+Tool lifecycle writes a duration metric with bounded labels: `tool`, `status`, `error_type`. `status` is normalized to `ok`, `error`, or `unset`; unknown error details collapse to `error`. Pass a stable tool name, not a prompt, query, user id, or runtime payload.
 
 ## Unified observability context (Enrich)
 
@@ -141,16 +172,29 @@ ctx = metry.Enrich(ctx, metry.PatientID("p-9")) // required for baggage
 
 `SetBaggageValue` / raw string baggage keys are removed (clear break). Use `metry.Enrich` and semantic constructors (`TenantID`, `PatientID`, `DoctorID`, `SubjectID`).
 
-## Trace context propagation (map carrier)
+## Trace snapshot for durable resume
 
-Pass trace context through queues by injecting into an existing message map:
+Store opaque trace continuation tokens in queue/checkpoint payloads instead of carrier maps:
 
 ```go
-carrier := map[string]any{"order_id": orderID, "body": payload}
-provider.InjectToMap(ctx, carrier)
-// publish carrier...
+snapshot, err := metry.TraceSnapshotFromContext(ctx)
+if err != nil {
+    return err
+}
+token, err := snapshot.Marshal()
+if err != nil {
+    return err
+}
+// enqueue token...
 
-consumerCtx := provider.ExtractFromMap(context.Background(), carrier)
+parsed, err := metry.ParseTraceSnapshot(token)
+if err != nil {
+    return err
+}
+consumerCtx, err := provider.ContextWithTraceSnapshot(context.Background(), parsed)
+if err != nil {
+    return err
+}
 _, end, err := provider.StartSpan(consumerCtx, "app", "consumer")
 if err != nil {
     return err
@@ -158,7 +202,26 @@ if err != nil {
 defer end()
 ```
 
-Host business keys in the map are preserved; W3C trace context and OTel baggage fields are read on extract (per the provider propagator).
+`TraceSnapshot` carries trace continuation only. It does not capture baggage or application fields.
+
+## Adapter-level trace context propagation (map carrier)
+
+Use map carriers only at protocol or middleware boundaries where a W3C carrier map already exists. Do not store carrier maps in domain state, queue payloads, or checkpoints; use `TraceSnapshot` for durable resume.
+
+```go
+headers := map[string]any{"x-request-id": requestID}
+provider.InjectToMap(ctx, headers)
+// hand headers to a protocol/middleware adapter...
+
+consumerCtx := provider.ExtractFromMap(context.Background(), headers)
+_, end, err := provider.StartSpan(consumerCtx, "app", "consumer")
+if err != nil {
+    return err
+}
+defer end()
+```
+
+Host business keys in the map are preserved; W3C trace context and OTel baggage fields are read on extract (per the provider propagator). This is a low-level adapter API, not the application durable-continuation path.
 
 ## Deferred outcomes (AsyncHandle)
 
@@ -175,20 +238,9 @@ err = parsed.RecordLinkedOutcomeWithProvider(ctx, provider, "delivery.success",
 )
 ```
 
-`genai.RecordAsyncFeedback` and `genai.RecordEvaluations` accept `metry.AsyncHandle` (portable marshal token).
+Adapter helpers for async feedback and evaluations accept `metry.AsyncHandle` (portable marshal token).
 
-For delayed GenAI feedback, capture a handle at request time and pass the same handle (or parsed token) to the worker:
-
-```go
-handle, err := metry.NewAsyncHandle(ctx)
-// ... enqueue handle.Marshal() token ...
-
-if err := tracker.RecordAsyncFeedback(ctx, parsed, 0.9, "approved"); err != nil {
-    return err
-}
-```
-
-`RecordAsyncFeedback` requires a valid handle (`genai.ErrInvalidAsyncHandle` otherwise). Correlation uses Span Links, not parent-child hierarchy.
+For delayed GenAI feedback, adapter code captures a handle at request time and passes the same handle token to the worker-side adapter helper. Feedback recording requires a valid handle (`genai.ErrInvalidAsyncHandle` otherwise). Correlation uses Span Links, not parent-child hierarchy.
 
 Advanced: optional typed span options (e.g. `genai.WithSamplingKeep()`) do not require importing `go.opentelemetry.io/otel/trace`.
 
@@ -217,105 +269,46 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 **Footgun (GenAI scope metrics):** token/TTFT/streaming histograms require both `Provider` and `Operation` in scope or `Meta`. A scope with only `Model`/`Purpose` silently skips those metrics — set both in `genai.WithScope`.
 
-**Footgun (GenAI errors):** `Meta.ErrorType` sets span status to Error in addition to the `error.type` attribute. `RecordToolResult(ctx, resultJSON, err)` uses the passed `err` for span status — pass `nil` on success.
+**Footgun (payload policy):** payload recording is off until you pass `WithPayloadPolicy(...)` or `WithRawPayloads()`. Use raw export only after application-level privacy handling.
 
-**Footgun (propagation):** `Provider.InjectToMap` / `ExtractFromMap` on a nil `*Provider` are no-ops by design (safe optional wiring).
+**Footgun (GenAI errors):** `Meta.ErrorType` sets span status to Error in addition to the `error.type` attribute. `Recorder.RecordToolResult(ctx, ToolResult{Err: err, ErrorType: kind})` uses bounded `error_type` for tool metrics — pass `nil` on success.
+
+**Footgun (propagation):** `Provider.InjectToMap` / `ExtractFromMap` are for protocol-level carriers. For queue payloads, checkpoints, and durable resume, use `TraceSnapshot`.
 
 **Footgun (AsyncHandle):** marshal tokens are not signed; treat queue payloads as trusted or add application-level signing for untrusted brokers.
 
 **BaggageMember** is a read/debug helper. Prefer typed constructors (`TenantID`, `GenAIProvider`, etc.) when writing context via `Enrich`.
 
-**Typed baggage:** use `metry.IntAttribute`, `FloatAttribute`, and `BoolAttribute` for non-string enrich keys; `ContextHandler` restores typed slog fields when baggage carries `metry.attr.type` metadata (including after map carrier round-trip).
+**Typed baggage:** use `metry.IntAttribute`, `FloatAttribute`, and `BoolAttribute` for non-string enrich keys; `ContextHandler` restores typed slog fields when baggage carries `metry.attr.type` metadata across protocol propagation.
 
-## GenAI scope
+## Adapter-only GenAI APIs
 
-Declare operation metadata once per scope instead of repeating `Meta` fields:
-
-```go
-ctx = genai.WithScope(ctx, genai.Scope{
-    Provider:  "openai",
-    Model:     "gpt-4o-mini",
-    Operation: "chat",
-    Purpose:   genai.PurposeGeneration,
-})
-err = tracker.RecordOperation(ctx, scope, func(ctx context.Context) error {
-    return tracker.RecordInteraction(ctx, genai.Meta{}, payload, usage)
-})
-```
-
-## Adapter-first model interaction
-
-When your application already has vendor-specific request/response types, implement `genai.ProviderAdapter` at the boundary and call `RecordModelInteraction`:
-
-```go
-type fakeAdapter struct{}
-
-func (fakeAdapter) ParseRequest(req any) (genai.Payload, genai.Meta, error) {
-    r, ok := req.(string)
-    if !ok {
-        return genai.Payload{}, genai.Meta{}, fmt.Errorf("unexpected request type")
-    }
-    return genai.Payload{
-        InputMessages: []genai.Message{{Role: "user", Parts: []genai.ContentPart{{Type: "text", Content: r}}}},
-    }, genai.Meta{Provider: "fake", Operation: "chat", RequestModel: "fake-v1"}, nil
-}
-
-func (fakeAdapter) ParseResponse(resp any) (genai.Payload, genai.Usage, error) {
-    r, ok := resp.(string)
-    if !ok {
-        return genai.Payload{}, genai.Usage{}, fmt.Errorf("unexpected response type")
-    }
-    return genai.Payload{
-        OutputMessages: []genai.Message{{Role: "assistant", Parts: []genai.ContentPart{{Type: "text", Content: r}}}},
-    }, genai.Usage{InputTokens: 1, OutputTokens: 1}, nil
-}
-
-if err := tracker.RecordModelInteraction(ctx, fakeAdapter{}, rawReq, rawResp); err != nil {
-    return err
-}
-```
-
-Parse errors are returned to the caller and recorded on the span; `metry` does not ship vendor SDK adapters.
-
-## Trace I/O mirroring
-
-`RecordTraceIO` writes typed `genai.Payload` input/output onto span attributes using OTLP GenAI semconv keys. It respects `WithRecordPayloads` and truncation limits—the same rules as `RecordInteraction` payloads.
-
-```go
-tracker.RecordTraceIO(ctx, inputPayload, outputPayload)
-```
+Application code should stay on `genai.Recorder`. Lower-level tracker APIs exist for framework or SDK adapters that must translate vendor-specific request/response types into canonical `genai.Payload`, `genai.Meta`, and `genai.Usage`. Do not wrap them into a local compatibility facade; move adapter code to the boundary and expose `Recorder` to the host application.
 
 ## Sampling hints (head-based)
 
 ```go
-provider, err := metry.New(
-    ctx,
-    metry.WithServiceName("my-ai-service"),
-    metry.WithSampler(genai.NewHintSampler(metry.TraceIDRatioBased(0.1))),
-)
+recorder, err := genai.NewRecorderFromProvider(provider)
 if err != nil {
     return err
 }
 
-ctx, end, err := provider.StartSpan(ctx, "app", "request", metry.WithSpanAttributes(metry.BoolAttribute(genai.SamplingKeep, true)))
-if err != nil {
-    return err
-}
-end()
+_, end := recorder.StartTool(ctx, genai.ToolCall{Name: "retrieval"}, genai.WithSpanSamplingKeep())
+defer end()
 ```
 
-`gen_ai.sampling.keep=true` is evaluated at span start in the SDK sampler.
+The keep hint is evaluated at span start in the SDK sampler.
 It does not depend on post-hoc status, token usage, or tail sampling.
 Without keep hint, sampled parent context is inherited; the base sampler is consulted for new root spans.
-Helpers that create spans internally also accept typed options, so the same hint can be passed through `StartToolSpan(...)`, `StartRetrievalSpan(...)`, `RecordAsyncFeedback(...)`, and `RecordEvaluations(...)` via `genai.WithSpanSamplingKeep()` or `genai.WithSamplingKeep()`.
+Adapter helpers that create spans internally also accept typed options. Application code normally uses `Recorder.StartTool(...)`; adapter code can pass the same hint through retrieval, feedback, or evaluation helpers via `genai.WithSpanSamplingKeep()` or `genai.WithSamplingKeep()`.
 When caller options contain duplicate attribute keys, helper built-in keys win.
 
-## Retrieval spans
+## Adapter helper: retrieval spans
 
-Use span-less callbacks — no `trace.Span`, `otel/codes`, or manual status handling in host code:
+Use this in retriever adapters that need dedicated retrieval spans. Application code should still use `Recorder` for the main GenAI operation. The callback style keeps host code away from `trace.Span`, `otel/codes`, and manual status handling:
 
 ```go
-retrievalCtx, end := tracker.StartRetrievalSpan(ctx, "vector.search", genai.RetrievalRequest{
+retrievalCtx, end := adapterTracker.StartRetrievalSpan(ctx, "vector.search", genai.RetrievalRequest{
     Provider: "qdrant",
     Source:   "knowledge_base",
     Query:    query,
@@ -328,18 +321,18 @@ if err != nil {
     return err
 }
 
-tracker.RecordRetrievalResult(retrievalCtx, genai.RetrievalResult{
+adapterTracker.RecordRetrievalResult(retrievalCtx, genai.RetrievalResult{
     ReturnedChunks: len(chunks),
     Distances:      distances,
 })
 ```
 
-## LLM evaluations
+## Adapter helper: linked evaluations
 
-Evaluations follow the same link-based model:
+Evaluations follow the same link-based model for delayed/post-hoc adapter work:
 
 ```go
-if err := tracker.RecordEvaluations(
+if err := adapterTracker.RecordEvaluations(
     ctx,
     parsed,
     []genai.Evaluation{
@@ -420,16 +413,22 @@ Metrics use meter scope `github.com/skosovsky/metry/middleware/executor`:
 
 A minimal runnable sample lives in `examples/executor`.
 
-Task14 unified-context examples (run via `make test-examples`):
+Primary examples (run via `make test-examples`):
 
 | Example                     | Demonstrates                                                              |
 | --------------------------- | ------------------------------------------------------------------------- |
 | `examples/enrich`           | `Enrich` + `ContextHandler` slog correlation                              |
-| `examples/propagation_map`  | `InjectToMap` / `ExtractFromMap` queue carrier                            |
-| `examples/async_handle`     | `AsyncHandle` marshal + linked outcome                                    |
-| `examples/metrics_registry` | `MetricsRegistry` histogram + counter + gauge without OTel metric imports |
-| `examples/scope`            | `genai.WithScope` + worker `InjectToMap`/`ExtractFromMap` flow            |
+| `examples/async_handle`     | `TraceSnapshot` + `AsyncHandle` linked outcome                            |
+| `examples/metrics_registry` | `TraceSnapshot` + registry metrics without OTel metric imports            |
 | `examples/executor`         | Root `metry.ExecutorWrap` for generic executors                           |
+| `examples/genai_recorder`   | `genai.Recorder` + payload policy + trace snapshot + tool lifecycle       |
+
+Adapter-level examples, kept to exercise low-level APIs:
+
+| Example                    | Demonstrates                                                   |
+| -------------------------- | -------------------------------------------------------------- |
+| `examples/propagation_map` | Protocol-level `InjectToMap` / `ExtractFromMap` carrier bridge |
+| `examples/scope`           | `genai.WithScope` with explicit TraceSnapshot worker rehydrate |
 
 ## gRPC middleware
 
@@ -446,7 +445,7 @@ conn, err := grpc.NewClient(addr, metrygrpc.ClientDialOption(
 
 ## Testing
 
-`make test` runs tests for all modules. `make test-examples` runs the six task14 examples above.
+`make test` runs tests for all modules. `make test-examples` runs the examples above.
 
 ## License
 

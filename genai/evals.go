@@ -53,9 +53,10 @@ func (t *Tracker) RecordEvaluations(
 				attrs = append(attrs, metry.StringAttribute(EvaluationMetricName, string(evaluation.Metric)))
 			}
 			if t.cfg.RecordPayloads() && evaluation.Reasoning != "" {
+				reasoning := sanitizeTextWithConfig(evaluation.Reasoning, t.cfg)
 				attrs = append(attrs, metry.StringAttribute(
 					EvaluationReasoning,
-					truncateContextWithLimit(evaluation.Reasoning, t.cfg.MaxEventLength()),
+					truncateContextWithLimit(reasoning, t.cfg.MaxEventLength()),
 				))
 			}
 			w.AddEvent("evaluation", attrs...)

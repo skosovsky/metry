@@ -13,11 +13,11 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestGenAIScope_QueueWorkerFlow(t *testing.T) {
+func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("genai-scope-e2e"))
 
-	tracker, err := genai.NewTrackerFromProvider(provider)
+	recorder, err := genai.NewRecorderFromProvider(provider)
 	require.NoError(t, err)
 
 	scope := genai.Scope{
@@ -29,34 +29,48 @@ func TestGenAIScope_QueueWorkerFlow(t *testing.T) {
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	require.NoError(t, err)
+	const tenantID = "t-scope"
 	ctx = genai.WithScope(ctx, scope)
-	ctx = metry.Enrich(ctx, metry.TenantID("t-scope"))
+	ctx = metry.Enrich(ctx, metry.TenantID(tenantID))
 
-	carrier := map[string]any{"order_id": "ord-scope"}
-	provider.InjectToMap(ctx, carrier)
+	snapshot, err := metry.TraceSnapshotFromContext(ctx)
+	require.NoError(t, err)
+	snapshotToken, err := snapshot.Marshal()
+	require.NoError(t, err)
 	handle, err := metry.NewAsyncHandle(ctx)
 	require.NoError(t, err)
 	token, err := handle.Marshal()
 	require.NoError(t, err)
 	end()
 
-	workerCtx := provider.ExtractFromMap(context.Background(), carrier)
-	assert.Equal(t, "t-scope", metrytest.BaggageMember(workerCtx, "tenant_id"))
-	assert.Equal(t, "openai", metrytest.BaggageMember(workerCtx, metry.GenAIBaggageProviderKey))
-	assert.Equal(t, "gpt-4o-mini", metrytest.BaggageMember(workerCtx, metry.GenAIBaggageModelKey))
+	parsedSnapshot, err := metry.ParseTraceSnapshot(snapshotToken)
+	require.NoError(t, err)
+	workerCtx, err := provider.ContextWithTraceSnapshot(context.Background(), parsedSnapshot)
+	require.NoError(t, err)
+	assert.Empty(t, metrytest.BaggageMember(workerCtx, "tenant_id"))
+	assert.Empty(t, metrytest.BaggageMember(workerCtx, metry.GenAIBaggageProviderKey))
+	assert.Empty(t, metrytest.BaggageMember(workerCtx, metry.GenAIBaggageModelKey))
+	consumerCtx := genai.WithScope(workerCtx, scope)
+	consumerCtx = metry.Enrich(consumerCtx, metry.TenantID(tenantID))
 
 	parsed, err := metry.ParseAsyncHandle(token)
 	require.NoError(t, err)
 
-	workerCtx, workerEnd, err := provider.StartSpan(workerCtx, "worker", "consume")
+	consumerCtx, consumerEnd, err := provider.StartSpan(consumerCtx, "consumer", "consume")
 	require.NoError(t, err)
-	require.NoError(t, tracker.RecordOperation(workerCtx, scope, func(scopedCtx context.Context) error {
-		return tracker.RecordInteraction(scopedCtx, genai.Meta{}, genai.Payload{}, genai.Usage{InputTokens: 1})
+	require.NoError(t, recorder.RecordOperation(consumerCtx, genai.Operation{
+		Provider: scope.Provider,
+		Name:     scope.Operation,
+		Model:    scope.Model,
+		Purpose:  scope.Purpose,
+	}, genai.OperationResult{
+		Status: genai.OperationStatusOK,
+		Usage:  genai.Usage{InputTokens: 1},
 	}))
-	require.NoError(t, parsed.RecordLinkedOutcomeWithProvider(workerCtx, provider, "delivery.success",
-		metry.TenantID("t-scope"),
+	require.NoError(t, parsed.RecordLinkedOutcomeWithProvider(consumerCtx, provider, "delivery.success",
+		metry.TenantID(tenantID),
 	))
-	workerEnd()
+	consumerEnd()
 
 	require.NoError(t, provider.ForceFlush(ctx))
 
@@ -71,6 +85,6 @@ func TestGenAIScope_QueueWorkerFlow(t *testing.T) {
 
 	outcome := testutil.SpanByName(t, spans, "delivery.success")
 	require.NotEmpty(t, outcome.Links)
-	assert.Equal(t, "t-scope", testutil.SpanStubStringAttr(t, outcome, "tenant_id"))
+	assert.Equal(t, tenantID, testutil.SpanStubStringAttr(t, outcome, "tenant_id"))
 	testutil.AssertSpanStubOkStatus(t, outcome)
 }

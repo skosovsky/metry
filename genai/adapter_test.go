@@ -36,7 +36,7 @@ func (a fakeProviderAdapter) ParseResponse(_ any) (Payload, Usage, error) {
 }
 
 func TestRecordModelInteraction_HappyPath_MatchesDirectRecordInteraction(t *testing.T) {
-	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t, WithRecordPayloads(true))
+	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t, WithRawPayloads())
 
 	adapter := fakeProviderAdapter{
 		reqPayload: Payload{

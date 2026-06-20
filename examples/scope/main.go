@@ -25,7 +25,7 @@ func run() int {
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
 
-	tracker, err := genai.NewTrackerFromProvider(provider)
+	recorder, err := genai.NewRecorderFromProvider(provider)
 	if err != nil {
 		log.Println(err)
 		return 1
@@ -43,21 +43,50 @@ func run() int {
 		log.Println(err)
 		return 1
 	}
+	const tenantID = "t-scope"
 	ctx = genai.WithScope(ctx, scope)
-	ctx = metry.Enrich(ctx, metry.TenantID("t-scope"))
-	carrier := map[string]any{"job_id": "scope-1"}
-	provider.InjectToMap(ctx, carrier)
+	ctx = metry.Enrich(ctx, metry.TenantID(tenantID))
+	snapshot, err := metry.TraceSnapshotFromContext(ctx)
+	if err != nil {
+		log.Println("capture trace snapshot:", err)
+		return 1
+	}
+	snapshotToken, err := snapshot.Marshal()
+	if err != nil {
+		log.Println("marshal trace snapshot:", err)
+		return 1
+	}
 	end()
 
-	workerCtx := provider.ExtractFromMap(context.Background(), carrier)
-	err = tracker.RecordOperation(workerCtx, scope, func(scopedCtx context.Context) error {
-		return tracker.RecordInteraction(scopedCtx, genai.Meta{}, genai.Payload{}, genai.Usage{InputTokens: 1})
-	})
+	parsedSnapshot, err := metry.ParseTraceSnapshot(snapshotToken)
 	if err != nil {
+		log.Println("parse trace snapshot:", err)
+		return 1
+	}
+	workerCtx, err := provider.ContextWithTraceSnapshot(context.Background(), parsedSnapshot)
+	if err != nil {
+		log.Println("restore trace snapshot:", err)
+		return 1
+	}
+	workerCtx = genai.WithScope(workerCtx, scope)
+	workerCtx = metry.Enrich(workerCtx, metry.TenantID(tenantID))
+	if err := recorder.RecordOperation(workerCtx, genai.Operation{
+		Provider: scope.Provider,
+		Name:     scope.Operation,
+		Model:    scope.Model,
+		Purpose:  scope.Purpose,
+	}, genai.OperationResult{
+		Status: genai.OperationStatusOK,
+		Usage:  genai.Usage{InputTokens: 1},
+	}); err != nil {
 		log.Println(err)
 		return 1
 	}
 
+	if err := provider.ForceFlush(ctx); err != nil {
+		log.Println("flush:", err)
+		return 1
+	}
 	fmt.Printf("exported spans: %d\n", len(mem.GetSpans()))
 	return 0
 }

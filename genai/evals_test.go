@@ -54,7 +54,7 @@ func TestRecordEvaluations_ValidLinked_AddsSpanWithLinkAndEvents(t *testing.T) {
 
 func TestRecordEvaluations_WithPayloadRecording_IncludesReasoning(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
-		WithRecordPayloads(true),
+		WithPayloadPolicy(RedactPayloadPolicy()),
 		WithMaxContextLength(1<<20), // span payload limit; event reasoning uses MaxEventLength instead
 		WithMaxEventLength(48),
 	)
@@ -81,7 +81,7 @@ func TestRecordEvaluations_WithPayloadRecording_IncludesReasoning(t *testing.T) 
 }
 
 func TestRecordEvaluations_ReasoningTruncatedToDefaultMaxEventLength(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(true))
+	tracker, provider, mem := newTestTracker(t, WithRawPayloads())
 
 	// defaultMaxEventLength (4096) = rune-safe prefix + len(truncationSuffix) (15 bytes).
 	require.Len(t, truncationSuffix, 15)
@@ -111,7 +111,7 @@ func TestRecordEvaluations_ReasoningTruncatedToDefaultMaxEventLength(t *testing.
 func TestRecordEvaluations_ReasoningTruncated_UTF8RuneBoundary(t *testing.T) {
 	const eventLimit = 64
 	tracker, provider, mem := newTestTracker(t,
-		WithRecordPayloads(true),
+		WithRawPayloads(),
 		WithMaxEventLength(eventLimit),
 	)
 

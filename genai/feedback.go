@@ -24,6 +24,7 @@ func (t *Tracker) RecordAsyncFeedback(
 
 	return handle.RecordLinkedSpan(ctx, t.provider, "user_feedback", func(w metry.LinkedSpanWriter) error {
 		if t.cfg.RecordPayloads() && feedbackText != "" {
+			feedbackText = sanitizeTextWithConfig(feedbackText, t.cfg)
 			w.SetAttributes(metry.StringAttribute(EvaluationText, truncateContextWithConfig(feedbackText, t.cfg)))
 		}
 		return nil

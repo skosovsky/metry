@@ -1,4 +1,4 @@
-// Map-carrier propagation example. Full AsyncHandle queue flow: see propagation_e2e_test.go.
+// Map-carrier propagation example for protocol adapters. Durable queues should use TraceSnapshot.
 package main
 
 import (
@@ -25,26 +25,30 @@ func run() int {
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
 
-	ctx, end, err := provider.StartSpan(ctx, "producer", "publish")
+	ctx, end, err := provider.StartSpan(ctx, "client", "send")
 	if err != nil {
 		log.Println(err)
 		return 1
 	}
-	ctx = metry.Enrich(ctx, metry.SubjectID("job-42"))
-	carrier := map[string]any{"order_id": "ord-42", "body": "payload"}
-	provider.InjectToMap(ctx, carrier)
+	ctx = metry.Enrich(ctx, metry.SubjectID("request-42"))
+	headers := map[string]any{"x-request-id": "req-42"}
+	provider.InjectToMap(ctx, headers)
 	end()
 
-	consumerCtx := provider.ExtractFromMap(context.Background(), carrier)
-	_, consumerEnd, err := provider.StartSpan(consumerCtx, "consumer", "consume")
+	serverCtx := provider.ExtractFromMap(context.Background(), headers)
+	_, serverEnd, err := provider.StartSpan(serverCtx, "server", "receive")
 	if err != nil {
 		log.Println(err)
 		return 1
 	}
-	consumerEnd()
+	serverEnd()
+	if err := provider.ForceFlush(ctx); err != nil {
+		log.Println("flush:", err)
+		return 1
+	}
 
 	fmt.Printf("exported spans: %d\n", len(mem.GetSpans()))
-	fmt.Printf("carrier order_id: %v\n", carrier["order_id"])
+	fmt.Printf("headers x-request-id: %v\n", headers["x-request-id"])
 	return 0
 }
 

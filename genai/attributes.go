@@ -36,6 +36,7 @@ const (
 	AudioSeconds               = "gen_ai.usage.audio_seconds"
 	ImageCount                 = "gen_ai.usage.image_count"
 	OperationPurpose           = "ai.operation.purpose"
+	OperationStatus            = "metry.gen_ai.operation.status"
 
 	RetrievalSource         = "gen_ai.retrieval.source"
 	RetrievalProvider       = "gen_ai.retrieval.provider"
@@ -64,6 +65,14 @@ const (
 	StreamingTBTMetricName        = "metry.gen_ai.client.tbt"
 	VideoSecondsMetricName        = "metry.gen_ai.client.video.seconds"
 	VideoFramesMetricName         = "metry.gen_ai.client.video.frames"
+	ToolDurationMetricName        = "metry.gen_ai.tool.duration"
+)
+
+// Tool runtime metric labels emitted by metry.
+const (
+	ToolMetricLabelTool      = "tool"
+	ToolMetricLabelStatus    = "status"
+	ToolMetricLabelErrorType = "error_type"
 )
 
 // Well-known and custom token-type values for the token usage histogram.

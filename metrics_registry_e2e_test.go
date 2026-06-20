@@ -12,7 +12,7 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestMetricsRegistry_QueueWorkerFlow(t *testing.T) {
+func TestMetricsRegistry_TraceSnapshotWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	memMetric := testutil.NewInMemoryMetricExporter()
 	provider, err := metry.New(ctx,
@@ -37,13 +37,21 @@ func TestMetricsRegistry_QueueWorkerFlow(t *testing.T) {
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	require.NoError(t, err)
-	ctx = metry.Enrich(ctx, metry.TenantID("t-metrics"))
-	carrier := map[string]any{"job_id": "job-1"}
-	provider.InjectToMap(ctx, carrier)
+	const tenantID = "t-metrics"
+	ctx = metry.Enrich(ctx, metry.TenantID(tenantID))
+	snapshot, err := metry.TraceSnapshotFromContext(ctx)
+	require.NoError(t, err)
+	snapshotToken, err := snapshot.Marshal()
+	require.NoError(t, err)
 	end()
 
-	workerCtx := provider.ExtractFromMap(context.Background(), carrier)
-	assert.Equal(t, "t-metrics", metrytest.BaggageMember(workerCtx, "tenant_id"))
+	parsedSnapshot, err := metry.ParseTraceSnapshot(snapshotToken)
+	require.NoError(t, err)
+	workerCtx, err := provider.ContextWithTraceSnapshot(context.Background(), parsedSnapshot)
+	require.NoError(t, err)
+	assert.Empty(t, metrytest.BaggageMember(workerCtx, "tenant_id"))
+	workerCtx = metry.Enrich(workerCtx, metry.TenantID(tenantID))
+	assert.Equal(t, tenantID, metrytest.BaggageMember(workerCtx, "tenant_id"))
 
 	duration.Record(workerCtx, 1.25, metry.Labels{"status": "ok"})
 	steps.Add(workerCtx, 1, metry.Labels{"status": "ok"})

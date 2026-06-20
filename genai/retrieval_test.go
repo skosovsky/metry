@@ -15,7 +15,7 @@ import (
 
 func TestStartRetrievalSpan_SetsAttributesAndParent(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
-		WithRecordPayloads(true),
+		WithPayloadPolicy(RedactPayloadPolicy()),
 		WithMaxContextLength(32),
 	)
 
@@ -73,7 +73,7 @@ func TestRecordRetrievalResult_SetsOkStatus(t *testing.T) {
 }
 
 func TestStartRetrievalSpan_WithoutRecordPayloads_DoesNotSetQuery(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithRecordPayloads(false))
+	tracker, provider, mem := newTestTracker(t)
 
 	_, end := tracker.StartRetrievalSpan(context.Background(), "vector.search", RetrievalRequest{
 		Provider: "qdrant",

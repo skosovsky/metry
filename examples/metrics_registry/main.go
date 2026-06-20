@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -24,32 +25,9 @@ func run() int {
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
 
-	registry := metry.NewMetricsRegistry(provider)
-	duration, err := registry.NewHistogram("agent_loop_duration", []float64{0.5, 1, 2, 4})
+	duration, steps, queueDepth, err := registerMetrics(provider)
 	if err != nil {
 		log.Println(err)
-		return 1
-	}
-	if !duration.OK() {
-		log.Println("histogram not registered")
-		return 1
-	}
-	steps, err := registry.NewCounter("agent_loop_steps_total")
-	if err != nil {
-		log.Println(err)
-		return 1
-	}
-	if !steps.OK() {
-		log.Println("counter not registered")
-		return 1
-	}
-	queueDepth, err := registry.NewGauge("queue_depth")
-	if err != nil {
-		log.Println(err)
-		return 1
-	}
-	if !queueDepth.OK() {
-		log.Println("gauge not registered")
 		return 1
 	}
 	const elapsedSeconds = 1.2
@@ -60,18 +38,75 @@ func run() int {
 		log.Println(err)
 		return 1
 	}
-	ctx = metry.Enrich(ctx, metry.TenantID("t-metrics"))
-	carrier := map[string]any{"job_id": "job-1"}
-	provider.InjectToMap(ctx, carrier)
+	const tenantID = "t-metrics"
+	ctx = metry.Enrich(ctx, metry.TenantID(tenantID))
+	snapshotToken, err := captureTraceSnapshotToken(ctx)
+	if err != nil {
+		log.Println("capture trace snapshot:", err)
+		return 1
+	}
 	end()
 
-	workerCtx := provider.ExtractFromMap(context.Background(), carrier)
+	workerCtx, err := restoreTraceSnapshot(context.Background(), provider, snapshotToken)
+	if err != nil {
+		log.Println("restore trace snapshot:", err)
+		return 1
+	}
+	workerCtx = metry.Enrich(workerCtx, metry.TenantID(tenantID))
 	duration.Record(workerCtx, elapsedSeconds, metry.Labels{"status": "ok"})
 	steps.Add(workerCtx, 1, metry.Labels{"status": "ok"})
 	queueDepth.Record(workerCtx, queueDepthValue, metry.Labels{"queue": "jobs"})
 
+	if err := provider.ForceFlush(ctx); err != nil {
+		log.Println("flush:", err)
+		return 1
+	}
 	fmt.Printf("exported metric families: %d\n", metricMem.Len())
 	return 0
+}
+
+func registerMetrics(
+	provider *metry.Provider,
+) (metry.HistogramMetric, metry.CounterMetric, metry.GaugeMetric, error) {
+	registry := metry.NewMetricsRegistry(provider)
+	duration, err := registry.NewHistogram("agent_loop_duration", []float64{0.5, 1, 2, 4})
+	if err != nil || !duration.OK() {
+		if err == nil {
+			err = errors.New("histogram not registered")
+		}
+		return metry.HistogramMetric{}, metry.CounterMetric{}, metry.GaugeMetric{}, err
+	}
+	steps, err := registry.NewCounter("agent_loop_steps_total")
+	if err != nil || !steps.OK() {
+		if err == nil {
+			err = errors.New("counter not registered")
+		}
+		return metry.HistogramMetric{}, metry.CounterMetric{}, metry.GaugeMetric{}, err
+	}
+	queueDepth, err := registry.NewGauge("queue_depth")
+	if err != nil || !queueDepth.OK() {
+		if err == nil {
+			err = errors.New("gauge not registered")
+		}
+		return metry.HistogramMetric{}, metry.CounterMetric{}, metry.GaugeMetric{}, err
+	}
+	return duration, steps, queueDepth, nil
+}
+
+func captureTraceSnapshotToken(ctx context.Context) (string, error) {
+	snapshot, err := metry.TraceSnapshotFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.Marshal()
+}
+
+func restoreTraceSnapshot(ctx context.Context, provider *metry.Provider, token string) (context.Context, error) {
+	snapshot, err := metry.ParseTraceSnapshot(token)
+	if err != nil {
+		return ctx, err
+	}
+	return provider.ContextWithTraceSnapshot(ctx, snapshot)
 }
 
 func main() {
