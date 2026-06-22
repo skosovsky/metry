@@ -55,8 +55,8 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	require.NoError(t, err)
 
 	toolJSON := `{"prompt":"` + strings.Repeat("a", 512) + `"}`
-	recorder1 := tracker1.Recorder()
-	recorder2 := tracker2.Recorder()
+	recorder1 := tracker1.Runtime()
+	recorder2 := tracker2.Runtime()
 
 	ctx1, end1 := recorder1.StartTool(context.Background(), ToolCall{
 		Name:      "search",

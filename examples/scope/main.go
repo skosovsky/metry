@@ -25,14 +25,14 @@ func run() int {
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
 
-	recorder, err := genai.NewRecorderFromProvider(provider)
+	runtime, err := genai.NewRuntimeFromProvider(provider)
 	if err != nil {
 		log.Println(err)
 		return 1
 	}
 
 	scope := genai.Scope{
-		Provider:  "openai",
+		Provider:  "",
 		Model:     "gpt-4o-mini",
 		Operation: "chat",
 		Purpose:   genai.PurposeGeneration,
@@ -70,11 +70,11 @@ func run() int {
 	}
 	workerCtx = genai.WithScope(workerCtx, scope)
 	workerCtx = metry.Enrich(workerCtx, metry.TenantID(tenantID))
-	if err := recorder.RecordOperation(workerCtx, genai.Operation{
-		Provider: scope.Provider,
-		Name:     scope.Operation,
-		Model:    scope.Model,
-		Purpose:  scope.Purpose,
+	runtime = runtime.ForProvider("openai")
+	if err := runtime.RecordOperation(workerCtx, genai.Operation{
+		Name:    scope.Operation,
+		Model:   scope.Model,
+		Purpose: scope.Purpose,
 	}, genai.OperationResult{
 		Status: genai.OperationStatusOK,
 		Usage:  genai.Usage{InputTokens: 1},

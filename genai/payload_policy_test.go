@@ -52,7 +52,7 @@ func TestHashPayloadPolicy_FingerprintsMessagePayload(t *testing.T) {
 
 func TestToolPayloadPolicy_RedactsArgumentsAndResult(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t, WithPayloadPolicy(RedactPayloadPolicy()))
-	recorder := tracker.Recorder()
+	recorder := tracker.Runtime()
 
 	ctx, end := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
@@ -77,7 +77,7 @@ func TestToolPayloadPolicy_RedactsArgumentsAndResult(t *testing.T) {
 
 func TestWithRawPayloads_ExportsToolPayloadsExplicitly(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t, WithRawPayloads())
-	recorder := tracker.Recorder()
+	recorder := tracker.Runtime()
 
 	ctx, end := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/genai"
 	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
@@ -23,6 +24,7 @@ func run() int {
 		return 1
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
+	runtime := genai.RuntimeFromProvider(provider).ForProvider("worker")
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	if err != nil {
@@ -37,7 +39,7 @@ func run() int {
 		log.Println("capture trace snapshot:", err)
 		return 1
 	}
-	handle, err := metry.NewAsyncHandle(ctx)
+	handle, err := runtime.StartAsync(ctx, "delivery.enqueue")
 	if err != nil {
 		log.Println("capture handle:", err)
 		return 1
@@ -49,19 +51,18 @@ func run() int {
 	}
 	end()
 
-	parsed, err := metry.ParseAsyncHandle(token)
-	if err != nil {
-		log.Println("parse handle:", err)
-		return 1
-	}
 	workerCtx, err := restoreTraceSnapshot(context.Background(), provider, snapshotToken)
 	if err != nil {
 		log.Println("restore trace snapshot:", err)
 		return 1
 	}
-	if err := parsed.RecordLinkedOutcomeWithProvider(workerCtx, provider, "delivery.success",
-		metry.TenantID(tenantID),
-	); err != nil {
+	if err := runtime.RecordAsyncTokenResult(workerCtx, token, genai.AsyncResult{
+		Name:   "delivery.success",
+		Status: genai.OperationStatusOK,
+		Attributes: []metry.Attribute{
+			metry.TenantID(tenantID),
+		},
+	}); err != nil {
 		log.Println("record outcome:", err)
 		return 1
 	}

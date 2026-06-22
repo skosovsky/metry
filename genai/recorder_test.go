@@ -13,9 +13,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRecorder_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
+func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t, WithRawPayloads())
-	rec := tracker.Recorder()
+	rec := tracker.Runtime()
 	payload := Payload{
 		InputMessages: []Message{{
 			Role:  "user",
@@ -25,7 +25,7 @@ func TestRecorder_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 
 	err := rec.RecordOperation(
 		context.Background(),
-		Operation{Provider: "provider", Name: "extract", Model: "model", Purpose: PurposeGeneration},
+		Operation{Name: "extract", Model: "model", Purpose: PurposeGeneration},
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: 2 * time.Second,
@@ -41,7 +41,7 @@ func TestRecorder_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	require.Len(t, spans, 1)
 	span := spans[0]
 	assert.Equal(t, "extract", span.Name)
-	assert.Equal(t, "provider", testutil.SpanStubStringAttr(t, span, ProviderName))
+	assert.Equal(t, unknownProviderName, testutil.SpanStubStringAttr(t, span, ProviderName))
 	assert.Equal(t, "extract", testutil.SpanStubStringAttr(t, span, OperationName))
 	assert.Equal(t, "model", testutil.SpanStubStringAttr(t, span, RequestModel))
 	assert.Equal(t, OperationStatusOK, testutil.SpanStubStringAttr(t, span, OperationStatus))
@@ -64,13 +64,13 @@ func TestRecorder_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	)
 }
 
-func TestRecorder_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
+func TestRuntime_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	rec := tracker.Recorder()
+	rec := tracker.Runtime()
 
 	err := rec.RecordOperation(
 		context.Background(),
-		Operation{Provider: "provider", Name: "extract"},
+		Operation{Name: "extract"},
 		OperationResult{Status: OperationStatusError, Duration: time.Second},
 	)
 
@@ -83,13 +83,13 @@ func TestRecorder_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
 }
 
-func TestRecorder_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) {
+func TestRuntime_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	rec := tracker.Recorder()
+	rec := tracker.Runtime()
 
 	err := rec.RecordOperation(
 		context.Background(),
-		Operation{Provider: "provider", Name: "extract"},
+		Operation{Name: "extract"},
 		OperationResult{
 			Status: OperationStatusOK,
 			Payload: Payload{
@@ -108,8 +108,8 @@ func TestRecorder_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T)
 	assert.False(t, testutil.SpanStubHasAttr(spans[0], InputMessages))
 }
 
-func TestNoopRecorder_DropsOperationsWithoutPanic(t *testing.T) {
-	rec := RecorderFromProvider(nil)
+func TestNoopRuntime_DropsOperationsWithoutPanic(t *testing.T) {
+	rec := RuntimeFromProvider(nil)
 
 	require.NoError(t, rec.RecordOperation(
 		context.Background(),

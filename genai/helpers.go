@@ -375,11 +375,15 @@ func (t *Tracker) recordOperationDuration(ctx context.Context, meta Meta) {
 }
 
 func metricAttributesFromMeta(meta Meta) ([]attribute.KeyValue, bool) {
-	if meta.Provider == "" || meta.Operation == "" {
+	if meta.Operation == "" {
 		return nil, false
 	}
+	provider := meta.Provider
+	if provider == "" {
+		provider = unknownProviderName
+	}
 	attrs := []attribute.KeyValue{
-		attribute.Key(ProviderName).String(meta.Provider),
+		attribute.Key(ProviderName).String(provider),
 		attribute.Key(OperationName).String(meta.Operation),
 	}
 	if meta.RequestModel != "" {

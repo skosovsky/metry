@@ -10,18 +10,22 @@ const defaultMaxEventLength = 4096
 type Option func(*runtimeConfig)
 
 type runtimeConfig struct {
-	recordPayloads   bool
-	payloadPolicy    PayloadPolicy
-	maxContextLength int
-	maxEventLength   int
+	recordPayloads          bool
+	payloadPolicy           PayloadPolicy
+	maxContextLength        int
+	maxEventLength          int
+	toolErrorClassifier     ToolErrorClassifier
+	allowedToolErrorClasses map[ErrorClass]struct{}
 }
 
 func defaultRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
-		recordPayloads:   false,
-		payloadPolicy:    RedactPayloadPolicy(),
-		maxContextLength: defaultMaxContextLength,
-		maxEventLength:   defaultMaxEventLength,
+		recordPayloads:          false,
+		payloadPolicy:           RedactPayloadPolicy(),
+		maxContextLength:        defaultMaxContextLength,
+		maxEventLength:          defaultMaxEventLength,
+		toolErrorClassifier:     defaultToolErrorClassifier{},
+		allowedToolErrorClasses: defaultAllowedToolErrorClasses(),
 	}
 }
 
@@ -37,6 +41,12 @@ func buildRuntimeConfig(opts ...Option) runtimeConfig {
 	}
 	if cfg.maxEventLength <= 0 {
 		cfg.maxEventLength = defaultMaxEventLength
+	}
+	if cfg.toolErrorClassifier == nil {
+		cfg.toolErrorClassifier = defaultToolErrorClassifier{}
+	}
+	if len(cfg.allowedToolErrorClasses) == 0 {
+		cfg.allowedToolErrorClasses = defaultAllowedToolErrorClasses()
 	}
 	return cfg
 }
@@ -65,6 +75,21 @@ func (c runtimeConfig) MaxEventLength() int {
 		return defaultMaxEventLength
 	}
 	return c.maxEventLength
+}
+
+func (c runtimeConfig) ToolErrorClassifier() ToolErrorClassifier {
+	if c.toolErrorClassifier == nil {
+		return defaultToolErrorClassifier{}
+	}
+	return c.toolErrorClassifier
+}
+
+func (c runtimeConfig) NormalizeToolErrorClass(value ErrorClass) ErrorClass {
+	allowed := c.allowedToolErrorClasses
+	if len(allowed) == 0 {
+		allowed = defaultAllowedToolErrorClasses()
+	}
+	return normalizeErrorClass(value, allowed)
 }
 
 // WithPayloadPolicy enables payload recording with an explicit sanitizer policy.
@@ -96,5 +121,29 @@ func WithMaxContextLength(bytes int) Option {
 func WithMaxEventLength(bytes int) Option {
 	return func(c *runtimeConfig) {
 		c.maxEventLength = bytes
+	}
+}
+
+// WithToolErrorClassifier sets the policy used to map tool errors onto bounded classes.
+func WithToolErrorClassifier(classifier ToolErrorClassifier) Option {
+	return func(c *runtimeConfig) {
+		if classifier != nil {
+			c.toolErrorClassifier = classifier
+		}
+	}
+}
+
+// WithAllowedToolErrorClasses extends the bounded set accepted for tool error metric labels.
+func WithAllowedToolErrorClasses(classes ...ErrorClass) Option {
+	return func(c *runtimeConfig) {
+		if len(c.allowedToolErrorClasses) == 0 {
+			c.allowedToolErrorClasses = defaultAllowedToolErrorClasses()
+		}
+		for _, class := range classes {
+			normalized := sanitizeErrorClassLabel(class)
+			if normalized != "" {
+				c.allowedToolErrorClasses[normalized] = struct{}{}
+			}
+		}
 	}
 }

@@ -12,9 +12,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRecorder_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
+func TestRuntime_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t, WithRawPayloads())
-	rec := tracker.Recorder()
+	rec := tracker.Runtime()
 
 	ctx, end := rec.StartTool(context.Background(), ToolCall{Name: "search", CallID: "call-1", Arguments: `{"q":"x"}`})
 	rec.RecordToolResult(ctx, ToolResult{Result: `{"ok":true}`})
@@ -29,14 +29,14 @@ func TestRecorder_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	assert.Equal(t, OperationStatusOK, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelStatus))
 }
 
-func TestRecorder_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T) {
+func TestRuntime_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
-	rec := tracker.Recorder()
+	rec := tracker.Runtime()
 
 	ctx, end := rec.StartTool(context.Background(), ToolCall{Name: "", CallID: "call-1"})
 	rec.RecordToolResult(ctx, ToolResult{
-		Err:       errors.New("contains user email bob@example.com"),
-		ErrorType: "timeout with user data and spaces",
+		Err:        errors.New("contains user email bob@example.com"),
+		ErrorClass: ErrorClass("timeout with user data and spaces"),
 	})
 	end()
 
@@ -51,7 +51,7 @@ func TestRecorder_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T
 	)
 	assert.Equal(
 		t,
-		OperationStatusError,
+		string(ErrorClassUnknown),
 		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
 	)
 

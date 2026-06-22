@@ -3,6 +3,7 @@ package genai
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,7 +75,7 @@ func (t *Tracker) startTool(
 }
 
 func (t *Tracker) recordToolResult(ctx context.Context, result ToolResult) {
-	status, errorType := spanStatusFromToolResult(result)
+	status, errorType := t.spanStatusFromToolResult(result)
 	if state, ok := ctx.Value(toolSpanStateKey{}).(*toolSpanState); ok && state != nil {
 		state.setResult(status, errorType)
 	}
@@ -136,11 +137,39 @@ func (t *Tracker) recordToolDuration(
 		attribute.String(ToolMetricLabelStatus, status),
 	}
 	if errorType != "" {
-		attrs = append(attrs, attribute.String(ToolMetricLabelErrorType, normalizeErrorType(errorType)))
+		attrs = append(attrs, attribute.String(ToolMetricLabelErrorType, errorType))
 	}
 	t.metrics.ToolDuration.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
 }
 
 func normalizeToolName(name string) string {
 	return sanitizeMetricValue(name, unknownToolName)
+}
+
+func (t *Tracker) spanStatusFromToolResult(result ToolResult) (string, string) {
+	status := strings.ToLower(strings.TrimSpace(result.Status))
+	class := t.classifyToolError(result.Err, result.ErrorClass)
+	if result.Err != nil || class != "" || status == OperationStatusError {
+		if class == "" {
+			class = ErrorClassUnknown
+		}
+		return OperationStatusError, errorClassString(class)
+	}
+	if status == "" {
+		return OperationStatusOK, ""
+	}
+	return normalizeOperationStatus(status, ""), ""
+}
+
+func (t *Tracker) classifyToolError(err error, explicit ErrorClass) ErrorClass {
+	if t == nil {
+		return ErrorClassUnknown
+	}
+	if explicit != "" {
+		return t.cfg.NormalizeToolErrorClass(explicit)
+	}
+	if err == nil {
+		return ""
+	}
+	return t.cfg.NormalizeToolErrorClass(t.cfg.ToolErrorClassifier().ClassifyToolError(err))
 }

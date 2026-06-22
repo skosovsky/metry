@@ -37,6 +37,17 @@ type Handle struct {
 	spanContext trace.SpanContext
 }
 
+// NewNoopHandle returns a valid synthetic handle for disabled telemetry paths.
+func NewNoopHandle() Handle {
+	return Handle{spanContext: trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14},
+		SpanID:     trace.SpanID{15, 15, 15, 15, 15, 15, 15, 15},
+		TraceFlags: 0,
+		TraceState: trace.TraceState{},
+		Remote:     true,
+	})}
+}
+
 // NewHandle captures the current span context from ctx as a portable handle.
 func NewHandle(ctx context.Context) (Handle, error) {
 	sc := trace.SpanContextFromContext(ctx)

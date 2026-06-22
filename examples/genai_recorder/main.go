@@ -36,7 +36,10 @@ func main() {
 	}
 	defer func() { _ = provider.Shutdown(context.Background()) }()
 
-	recorder := genai.RecorderFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
+	runtime := genai.RuntimeFromProvider(
+		provider,
+		genai.WithPayloadPolicy(genai.RedactPayloadPolicy()),
+	).ForProvider("provider")
 
 	ctx, endRequest, err := provider.StartSpan(ctx, "example", "request")
 	if err != nil {
@@ -51,13 +54,12 @@ func main() {
 		panic(err)
 	}
 
-	err = recorder.RecordOperation(
+	err = runtime.RecordOperation(
 		ctx,
 		genai.Operation{
-			Provider: "provider",
-			Name:     "chat",
-			Model:    "model",
-			Purpose:  genai.PurposeGeneration,
+			Name:    "chat",
+			Model:   "model",
+			Purpose: genai.PurposeGeneration,
 		},
 		genai.OperationResult{
 			Status:   genai.OperationStatusOK,
@@ -76,12 +78,12 @@ func main() {
 		panic(err)
 	}
 
-	toolCtx, endTool := recorder.StartTool(ctx, genai.ToolCall{
+	toolCtx, endTool := runtime.StartTool(ctx, genai.ToolCall{
 		Name:      "search",
 		CallID:    "call-1",
 		Arguments: `{"query":"private"}`,
 	})
-	recorder.RecordToolResult(toolCtx, genai.ToolResult{Result: `{"matches":1}`})
+	runtime.RecordToolResult(toolCtx, genai.ToolResult{Result: `{"matches":1}`})
 	endTool()
 	endRequest()
 
@@ -102,8 +104,8 @@ func main() {
 	if err := provider.ForceFlush(ctx); err != nil {
 		panic(err)
 	}
-	if !hasRecorderOperationSpan(traceMem.GetSpans()) {
-		panic("recorder operation span not exported")
+	if !hasRuntimeOperationSpan(traceMem.GetSpans()) {
+		panic("runtime operation span not exported")
 	}
 	rm := metricMem.LastResourceMetrics()
 	if !hasFloat64Histogram(rm, genai.OperationDurationMetricName) {
@@ -118,7 +120,7 @@ func main() {
 	fmt.Printf("exported tool metric: %s\n", genai.ToolDurationMetricName)
 }
 
-func hasRecorderOperationSpan(spans tracetest.SpanStubs) bool {
+func hasRuntimeOperationSpan(spans tracetest.SpanStubs) bool {
 	for _, span := range spans {
 		if span.Name != "chat" {
 			continue

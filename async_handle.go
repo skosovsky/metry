@@ -58,10 +58,16 @@ func ParseAsyncHandle(token string) (AsyncHandle, error) {
 	return AsyncHandle{h: h}, nil
 }
 
+// NoopAsyncHandle returns a valid synthetic handle for disabled telemetry paths.
+func NoopAsyncHandle() AsyncHandle {
+	return AsyncHandle{h: async.NewNoopHandle()}
+}
+
 // LinkedSpanWriter configures a linked span without exposing OpenTelemetry types.
 type LinkedSpanWriter struct {
 	setAttrs func(...Attribute)
 	addEvent func(name string, attrs ...Attribute)
+	setError func(error)
 }
 
 // SetAttributes sets span attributes from typed metry attributes.
@@ -75,6 +81,13 @@ func (w LinkedSpanWriter) SetAttributes(attrs ...Attribute) {
 func (w LinkedSpanWriter) AddEvent(name string, attrs ...Attribute) {
 	if w.addEvent != nil {
 		w.addEvent(name, attrs...)
+	}
+}
+
+// SetError records an error status on the linked span without making the callback fail.
+func (w LinkedSpanWriter) SetError(err error) {
+	if w.setError != nil {
+		w.setError(err)
 	}
 }
 
@@ -132,25 +145,42 @@ func (h AsyncHandle) RecordLinkedSpan(
 	}
 	otelOpts := linkedSpanOptionsToOTel(opts...)
 	tracer := provider.tracerProvider().Tracer(defaultAsyncTracerName)
-	return h.h.RunLinkedSpan(ctx, tracer, name, func(span trace.Span) error {
-		writer := LinkedSpanWriter{
-			setAttrs: func(attrs ...Attribute) {
-				traceutil.MutateRecordingSpan(span, func(span trace.Span) {
-					kv := attributesToOTel(attrs)
-					if len(kv) > 0 {
-						span.SetAttributes(kv...)
-					}
-				})
-			},
-			addEvent: func(eventName string, attrs ...Attribute) {
-				traceutil.MutateRecordingSpan(span, func(span trace.Span) {
-					kv := attributesToOTel(attrs)
-					span.AddEvent(eventName, trace.WithAttributes(kv...))
-				})
-			},
-		}
-		return fn(writer)
-	}, otelOpts...)
+	_, span, err := async.StartLinkedSpan(ctx, tracer, h.h, name, otelOpts...)
+	if err != nil {
+		return err
+	}
+	defer span.End()
+
+	var statusErr error
+	writer := LinkedSpanWriter{
+		setAttrs: func(attrs ...Attribute) {
+			traceutil.MutateRecordingSpan(span, func(span trace.Span) {
+				kv := attributesToOTel(attrs)
+				if len(kv) > 0 {
+					span.SetAttributes(kv...)
+				}
+			})
+		},
+		addEvent: func(eventName string, attrs ...Attribute) {
+			traceutil.MutateRecordingSpan(span, func(span trace.Span) {
+				kv := attributesToOTel(attrs)
+				span.AddEvent(eventName, trace.WithAttributes(kv...))
+			})
+		},
+		setError: func(err error) {
+			statusErr = err
+		},
+	}
+	if err := fn(writer); err != nil {
+		traceutil.SpanError(span, err)
+		return err
+	}
+	if statusErr != nil {
+		traceutil.SpanError(span, statusErr)
+		return nil
+	}
+	traceutil.SpanOK(span)
+	return nil
 }
 
 // RecordLinkedOutcomeWithProvider uses the provider tracer to record a linked outcome span.
