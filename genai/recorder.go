@@ -251,7 +251,7 @@ func (r trackerRuntime) RecordOperation(
 		return err
 	}
 	status := normalizeOperationStatus(result.Status, result.ErrorType)
-	meta := Meta{ //nolint:exhaustruct // only operation-level fields are relevant here.
+	meta := Meta{ //nolint:exhaustruct_v5 // only operation-level fields are relevant here.
 		Provider:      r.runtimeProvider(),
 		Operation:     op.Name,
 		Purpose:       op.Purpose,

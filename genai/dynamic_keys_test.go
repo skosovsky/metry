@@ -41,8 +41,8 @@ func TestPayloadPoliciesProtectDynamicKeys(t *testing.T) {
 		assert.NotContains(t, result.Result, secret)
 		for _, span := range exporter.GetSpans() {
 			for _, attr := range span.Attributes {
-				assert.NotContains(t, attr.Value.Emit(), secret)
-				assert.NotContains(t, attr.Value.Emit(), "fixture-secret-value")
+				assert.NotContains(t, attr.Value.String(), secret)
+				assert.NotContains(t, attr.Value.String(), "fixture-secret-value")
 			}
 		}
 		assert.Contains(

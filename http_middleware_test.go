@@ -41,3 +41,25 @@ func TestHTTPHandler_NilProvider_Panics(t *testing.T) {
 		_ = metry.HTTPHandler(nil, next, "op")
 	})
 }
+
+func TestHTTPHandler_CustomSpanNameFormatterOverridesOperationDefault(t *testing.T) {
+	// Arrange.
+	provider, exporter := metrytest.NewTestProvider(t, metry.WithServiceName("custom-http"))
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := metry.HTTPHandler(provider, next, "root-op",
+		metry.WithHTTPSpanNameFormatter(func(operation string, request *http.Request) string {
+			return operation + ":" + request.Method
+		}))
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	response := httptest.NewRecorder()
+	// Act.
+	handler.ServeHTTP(response, request)
+	require.NoError(t, provider.ForceFlush(context.Background()))
+	// Assert.
+	assert.Equal(t, http.StatusNoContent, response.Code)
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "root-op:POST", spans[0].Name)
+}

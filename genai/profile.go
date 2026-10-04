@@ -78,7 +78,7 @@ type Profile struct {
 
 // DefaultProfile returns a fresh independent declaration for metry's schema.
 //
-//nolint:exhaustruct // Optional unit and required fields intentionally use their zero values in the field catalogue.
+//nolint:exhaustruct_v5 // Optional unit and required fields intentionally use their zero values in the field catalogue.
 func DefaultProfile() Profile {
 	return Profile{
 		ID:              InstrumentationProfileID,

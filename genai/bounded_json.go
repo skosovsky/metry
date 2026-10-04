@@ -168,8 +168,7 @@ func boundedToolJSON(raw string, cfg runtimeConfig) (string, error) {
 }
 
 func recordPayloadDiagnostic(span trace.Span, err error) {
-	var diagnostic *ObservationError
-	if errors.As(err, &diagnostic) {
+	if diagnostic, ok := errors.AsType[*ObservationError](err); ok {
 		span.AddEvent("metry.observation.rejected", trace.WithAttributes(
 			attribute.String("metry.diagnostic.field", diagnostic.Field),
 			attribute.String("metry.diagnostic.rule", diagnostic.Rule),

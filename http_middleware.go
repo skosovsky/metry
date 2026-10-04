@@ -38,6 +38,9 @@ func HTTPHandler(provider *Provider, next http.Handler, operationName string, op
 		otelhttp.WithTracerProvider(provider.tracerProvider()),
 		otelhttp.WithMeterProvider(provider.meterProvider()),
 		otelhttp.WithPropagators(provider.textMapPropagator()),
+		otelhttp.WithSpanNameFormatter(func(operation string, _ *http.Request) string {
+			return operation
+		}),
 	}
 	all := base
 	all = append(all, httpHandlerOptionsToOTel(opts)...)

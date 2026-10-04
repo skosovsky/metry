@@ -133,7 +133,7 @@ func newAttribute(key, value string) Attribute {
 	if key == "" || value == "" {
 		return Attribute{}
 	}
-	return Attribute{key: key, value: value} //nolint:exhaustruct // string-only variant
+	return Attribute{key: key, value: value} //nolint:exhaustruct_v5 // string-only variant
 }
 
 func (a Attribute) toOTel() attribute.KeyValue {
@@ -161,7 +161,7 @@ func FloatAttribute(key string, value float64) Attribute {
 		return Attribute{}
 	}
 	v := value
-	return Attribute{key: key, f64: &v} //nolint:exhaustruct // float variant
+	return Attribute{key: key, f64: &v} //nolint:exhaustruct_v5 // float variant
 }
 
 // BoolAttribute records a boolean attribute.
@@ -170,7 +170,7 @@ func BoolAttribute(key string, value bool) Attribute {
 		return Attribute{}
 	}
 	v := value
-	return Attribute{key: key, b: &v} //nolint:exhaustruct // bool variant
+	return Attribute{key: key, b: &v} //nolint:exhaustruct_v5 // bool variant
 }
 
 // IntAttribute records an int64 attribute.
@@ -179,7 +179,7 @@ func IntAttribute(key string, value int64) Attribute {
 		return Attribute{}
 	}
 	v := value
-	return Attribute{key: key, i64: &v} //nolint:exhaustruct // int variant
+	return Attribute{key: key, i64: &v} //nolint:exhaustruct_v5 // int variant
 }
 
 // GenAI baggage key constants shared with genai scope propagation.

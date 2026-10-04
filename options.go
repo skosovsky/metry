@@ -17,7 +17,7 @@ type config struct {
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
 //
-//nolint:exhaustruct // opaque sampler/exporter wrappers default to zero values
+//nolint:exhaustruct_v5 // opaque sampler/exporter wrappers default to zero values
 func newConfig() *config {
 	return &config{
 		ServiceName:    "",

@@ -78,7 +78,7 @@ func newProviderFromDeps(
 			propagation.Baggage{},
 		)
 	}
-	p := &Provider{ //nolint:exhaustruct // test-only partial provider
+	p := &Provider{ //nolint:exhaustruct_v5 // test-only partial provider
 		otelTracer: tracer,
 		otelMeter:  meter,
 		propagator: prop,

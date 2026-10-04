@@ -14,7 +14,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 	nooptrace "go.opentelemetry.io/otel/trace/noop"
 )
@@ -89,7 +89,7 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 		customAttrs = append(customAttrs, semconv.ServiceVersion(cfg.ServiceVersion))
 	}
 	if cfg.Environment != "" {
-		customAttrs = append(customAttrs, semconv.DeploymentEnvironmentName(cfg.Environment))
+		customAttrs = append(customAttrs, semconv.DeploymentEnvironmentNameKey.String(cfg.Environment))
 	}
 	customRes := resource.NewWithAttributes(semconv.SchemaURL, customAttrs...)
 	defRes := resource.Default()

@@ -52,7 +52,7 @@ func (d *metricDimensions) normalize(instrument string, attrs []attribute.KeyVal
 			semantic = append(semantic, attr)
 			continue
 		}
-		value := attr.Value.Emit()
+		value := attr.Value.String()
 		if _, ok := d.allowed[key][value]; !ok {
 			if attr.Value.Type() == attribute.INT64 {
 				attr = attr.Key.Int(0)
