@@ -2,6 +2,7 @@ package genai
 
 import (
 	"context"
+	"math"
 
 	"github.com/skosovsky/metry"
 )
@@ -16,6 +17,9 @@ func (t *Tracker) RecordAsyncFeedback(
 ) error {
 	if !handle.IsValid() {
 		return ErrInvalidAsyncHandle
+	}
+	if math.IsNaN(score) || math.IsInf(score, 0) || len(feedbackText) > maxPayloadInputBytes {
+		return invalidObservation("feedback", "invalid_or_out_of_bounds")
 	}
 
 	spanOpts := append([]LinkedSpanOption{

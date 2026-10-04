@@ -70,6 +70,9 @@ func (h Handle) IsValid() bool {
 	return h.spanContext.IsValid()
 }
 
+// SpanContext exposes the reference only to internal instrumentation adapters.
+func (h Handle) SpanContext() trace.SpanContext { return h.spanContext }
+
 // Marshal encodes the handle as a portable string token.
 func (h Handle) Marshal() (string, error) {
 	if !h.spanContext.IsValid() {

@@ -16,9 +16,12 @@ func TestRecordInteraction_RecordsTokenHistogramAndCost(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
 	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{
-		InputTokens:  10,
-		OutputTokens: 20,
-		Cost:         0.001,
+		InputTokens: Observe(10, UnitTokens, SourceMeasured),
+
+		OutputTokens: Observe(20, UnitTokens, SourceMeasured),
+
+		Cost:     Observe(float64(0.001), UnitCurrency, SourceMeasured),
+		Currency: "USD",
 	}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
@@ -38,20 +41,22 @@ func TestRecordInteraction_RecordsTokenHistogramAndCost(t *testing.T) {
 	assert.Equal(t, "USD", metrytest.FirstFloat64SumAttr(t, rm, CostMetricName, CostCurrency))
 }
 
-func TestRecordInteraction_NegativeCost_IsIgnored(t *testing.T) {
+func TestRecordInteraction_NegativeCost_IsRejectedAtomically(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
 
-	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{
-		InputTokens:  10,
-		OutputTokens: 20,
-		Cost:         -0.25,
-		Currency:     "USD",
-	}))
+	require.ErrorIs(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{
+		InputTokens: Observe(10, UnitTokens, SourceMeasured),
+
+		OutputTokens: Observe(20, UnitTokens, SourceMeasured),
+
+		Cost: Observe(float64(-0.25), UnitCurrency, SourceMeasured),
+
+		Currency: "USD",
+	}), ErrInvalidObservation)
 
 	flushTestProvider(t, provider)
 	spans := memTrace.GetSpans()
-	require.Len(t, spans, 1)
-	assert.False(t, testutil.SpanStubHasAttr(spans[0], UsageCost))
+	require.Empty(t, spans)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	metrytest.AssertMetricAbsent(t, rm, CostMetricName)
@@ -60,11 +65,22 @@ func TestRecordInteraction_NegativeCost_IsIgnored(t *testing.T) {
 func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
-	tracker.RecordTTFT(context.Background(), testMeta(), 420*time.Millisecond)
-	tracker.RecordStreamingCompletion(context.Background(), testMeta(), 11, time.Second, 6*time.Second)
+	require.NoError(
+		t,
+		tracker.RecordStreamingCompletion(
+			context.Background(),
+			StreamingCompletion{
+				Meta:              testMeta(),
+				Usage:             Usage{OutputTokens: Observe(11, UnitTokens, SourceProvider)},
+				TTFT:              time.Second,
+				FirstTokenPresent: true,
+				TotalDuration:     6 * time.Second,
+			},
+		),
+	)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	assert.InDelta(t, 0.42, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
+	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
 	assert.InDelta(t, 2.2, metrytest.Float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
 	assert.InDelta(t, 0.5, metrytest.Float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
 }
@@ -85,7 +101,18 @@ func TestRecordStreamingCompletion_WithScope_UsesScopeProviderInMetrics(t *testi
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
 	ctx := WithScope(context.Background(), Scope{Provider: "scope-provider", Operation: "chat"})
-	tracker.RecordStreamingCompletion(ctx, Meta{}, 10, time.Second, 5*time.Second)
+	require.NoError(
+		t,
+		tracker.RecordStreamingCompletion(
+			ctx,
+			StreamingCompletion{
+				Usage:             Usage{OutputTokens: Observe(10, UnitTokens, SourceProvider)},
+				TTFT:              time.Second,
+				FirstTokenPresent: true,
+				TotalDuration:     5 * time.Second,
+			},
+		),
+	)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, StreamingTPSMetricName)
@@ -93,21 +120,22 @@ func TestRecordStreamingCompletion_WithScope_UsesScopeProviderInMetrics(t *testi
 	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
 
-func TestRecordInteraction_WithScopeModelOnly_SkipsTokenMetrics(t *testing.T) {
-	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
+func TestRecordInteraction_WithScopeModelOnly_RejectsMissingOperation(t *testing.T) {
+	// Arrange.
+	tracker, provider, memMetric, exporter := newTestTrackerWithMetrics(t)
 
 	ctx := WithScope(context.Background(), Scope{Model: "gpt-4o-mini"})
-	require.NoError(t, tracker.RecordInteraction(ctx, Meta{}, Payload{}, Usage{
-		InputTokens:  10,
-		OutputTokens: 5,
-	}))
+	// Act.
+	err := tracker.RecordInteraction(ctx, Meta{}, Payload{}, Usage{
+		InputTokens: Observe(10, UnitTokens, SourceMeasured),
+
+		OutputTokens: Observe(5, UnitTokens, SourceMeasured),
+	})
+	flushTestProvider(t, provider)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == TokenUsageMetricName {
-				t.Fatalf("expected %q to be skipped when scope has Model only", TokenUsageMetricName)
-			}
-		}
-	}
+	// Assert: no silent usage loss or malformed span under the new contract.
+	require.ErrorIs(t, err, ErrInvalidObservation)
+	assert.Empty(t, exporter.GetSpans())
+	metrytest.AssertMetricAbsent(t, rm, TokenUsageMetricName)
 }

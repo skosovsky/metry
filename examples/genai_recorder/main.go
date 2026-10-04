@@ -17,6 +17,7 @@ import (
 )
 
 const (
+	demoOperation         = "chat"
 	demoOperationDuration = 25 * time.Millisecond
 	demoInputTokens       = 12
 	demoOutputTokens      = 6
@@ -36,12 +37,16 @@ func main() {
 	}
 	defer func() { _ = provider.Shutdown(context.Background()) }()
 
-	runtime := genai.RuntimeFromProvider(
-		provider,
-		genai.WithPayloadPolicy(genai.RedactPayloadPolicy()),
-	).ForProvider("provider")
+	runtime, evaluations, err := exampleRecorders(provider)
+	if err != nil {
+		panic(err)
+	}
 
 	ctx, endRequest, err := provider.StartSpan(ctx, "example", "request")
+	if err != nil {
+		panic(err)
+	}
+	origin, err := metry.NewAsyncHandle(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -57,14 +62,17 @@ func main() {
 	err = runtime.RecordOperation(
 		ctx,
 		genai.Operation{
-			Name:    "chat",
+			Name:    demoOperation,
 			Model:   "model",
 			Purpose: genai.PurposeGeneration,
 		},
 		genai.OperationResult{
 			Status:   genai.OperationStatusOK,
 			Duration: demoOperationDuration,
-			Usage:    genai.Usage{InputTokens: demoInputTokens, OutputTokens: demoOutputTokens},
+			Usage: genai.Usage{
+				InputTokens:  genai.Observe(demoInputTokens, genai.UnitTokens, genai.SourceMeasured),
+				OutputTokens: genai.Observe(demoOutputTokens, genai.UnitTokens, genai.SourceMeasured),
+			},
 			Payload: genai.Payload{
 				InputMessages: []genai.Message{{
 					Role:  "user",
@@ -87,19 +95,14 @@ func main() {
 	endTool()
 	endRequest()
 
-	parsed, err := metry.ParseTraceSnapshot(token)
-	if err != nil {
+	if err := resumeExampleConsumer(provider, token); err != nil {
 		panic(err)
 	}
-	consumerCtx, err := provider.ContextWithTraceSnapshot(context.Background(), parsed)
-	if err != nil {
+
+	// The host runs its own grader. Metry only records the completed result.
+	if err := recordExampleEvaluation(evaluations, origin); err != nil {
 		panic(err)
 	}
-	_, endConsumer, err := provider.StartSpan(consumerCtx, "example", "consumer")
-	if err != nil {
-		panic(err)
-	}
-	endConsumer()
 
 	if err := provider.ForceFlush(ctx); err != nil {
 		panic(err)
@@ -120,9 +123,59 @@ func main() {
 	fmt.Printf("exported tool metric: %s\n", genai.ToolDurationMetricName)
 }
 
+func exampleRecorders(provider *metry.Provider) (genai.Runtime, *genai.EvaluationRecorder, error) {
+	profile := genai.DefaultProfile()
+	for index := range profile.Dimensions {
+		switch profile.Dimensions[index].Key {
+		case genai.ProviderName:
+			profile.Dimensions[index].Values = []string{"provider"}
+		case genai.RequestModel, genai.ResponseModel:
+			profile.Dimensions[index].Values = []string{"model"}
+		case genai.ToolMetricLabelTool:
+			profile.Dimensions[index].Values = []string{"search"}
+		}
+	}
+	tracker, err := genai.NewTrackerFromProvider(
+		provider,
+		genai.WithProfile(profile),
+		genai.WithPayloadPolicy(genai.RedactPayloadPolicy()),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tracker.Runtime().ForProvider("provider"), tracker.EvaluationRecorder(), nil
+}
+
+func resumeExampleConsumer(provider *metry.Provider, token string) error {
+	parsed, err := metry.ParseTraceSnapshot(token)
+	if err != nil {
+		return err
+	}
+	consumerCtx, err := provider.ContextWithTraceSnapshot(context.Background(), parsed)
+	if err != nil {
+		return err
+	}
+	_, endConsumer, err := provider.StartSpan(consumerCtx, "example", "consumer")
+	if err != nil {
+		return err
+	}
+	endConsumer()
+	return nil
+}
+
+func recordExampleEvaluation(recorder *genai.EvaluationRecorder, origin metry.AsyncHandle) error {
+	return recorder.Record(context.Background(), genai.Evaluation{
+		ObservationID:  "evaluation-one",
+		Metric:         genai.EvaluationFaithfulness,
+		Status:         genai.EvaluationSucceeded,
+		Outcome:        "pass",
+		TraceReference: &origin,
+	})
+}
+
 func hasRuntimeOperationSpan(spans tracetest.SpanStubs) bool {
 	for _, span := range spans {
-		if span.Name != "chat" {
+		if span.Name != demoOperation {
 			continue
 		}
 		if span.Status.Code.String() != "Ok" {
@@ -131,7 +184,7 @@ func hasRuntimeOperationSpan(spans tracetest.SpanStubs) bool {
 		if attrString(span.Attributes, genai.ProviderName) != "provider" {
 			return false
 		}
-		if attrString(span.Attributes, genai.OperationName) != "chat" {
+		if attrString(span.Attributes, genai.OperationName) != demoOperation {
 			return false
 		}
 		if attrString(span.Attributes, genai.OperationStatus) != genai.OperationStatusOK {

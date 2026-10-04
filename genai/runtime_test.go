@@ -24,7 +24,7 @@ func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: 2 * time.Second,
-			Usage:    Usage{InputTokens: 3},
+			Usage:    Usage{InputTokens: Observe(3, UnitTokens, SourceMeasured)},
 		},
 	)
 
@@ -54,7 +54,7 @@ func TestRuntime_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: time.Second,
-			Usage:    Usage{InputTokens: 2},
+			Usage:    Usage{InputTokens: Observe(2, UnitTokens, SourceMeasured)},
 		},
 	)
 
@@ -102,13 +102,13 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 		},
 	)
 	require.NoError(t, err)
-	runtime.RecordTTFT(ctx, 200*time.Millisecond)
-	runtime.RecordStreamingCompletion(ctx, StreamingCompletion{
-		Meta:          Meta{Provider: "caller-provider"},
-		OutputTokens:  5,
-		TTFT:          time.Second,
-		TotalDuration: 3 * time.Second,
-	})
+	require.NoError(t, runtime.RecordStreamingCompletion(ctx, StreamingCompletion{
+		Meta:              Meta{Provider: "caller-provider"},
+		Usage:             Usage{OutputTokens: Observe(5, UnitTokens, SourceProvider)},
+		TTFT:              time.Second,
+		TotalDuration:     3 * time.Second,
+		FirstTokenPresent: true,
+	}))
 	end()
 
 	flushTestProvider(t, provider)
@@ -119,7 +119,7 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	assert.InDelta(t, 0.2, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
+	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
 	assert.InDelta(t, 2.5, metrytest.Float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
 	assert.InDelta(t, 0.5, metrytest.Float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
 }

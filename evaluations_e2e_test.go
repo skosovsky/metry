@@ -14,6 +14,7 @@ import (
 )
 
 func TestEvaluations_TraceSnapshotWorkerFlow(t *testing.T) {
+	// Arrange.
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("evaluations-e2e"))
 
@@ -43,23 +44,27 @@ func TestEvaluations_TraceSnapshotWorkerFlow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, metrytest.BaggageMember(workerCtx, "tenant_id"))
 
-	err = tracker.RecordEvaluations(workerCtx, parsed, []genai.Evaluation{
-		{
-			Metric: genai.EvaluationFaithfulness,
-			Score:  0.88,
-		},
-	}, metry.WithLinkedAttributes(metry.TenantID(tenantID)))
+	// Act: business association is explicit, not inherited from trace baggage.
+	score := 0.88
+	err = tracker.EvaluationRecorder().Record(workerCtx, genai.Evaluation{
+		ObservationID:  "worker-evaluation",
+		Metric:         genai.EvaluationFaithfulness,
+		Status:         genai.EvaluationSucceeded,
+		Score:          &score,
+		TraceReference: &parsed,
+	})
 	require.NoError(t, err)
 
 	require.NoError(t, provider.ForceFlush(ctx))
 
+	// Assert.
 	spans := mem.GetSpans()
 	require.GreaterOrEqual(t, len(spans), 2)
 	producer := spans[0]
-	evalSpan := testutil.SpanByName(t, spans, "llm_evaluations")
+	evalSpan := testutil.SpanByName(t, spans, "evaluation")
 	testutil.AssertLinkBasedAsyncSpan(t, evalSpan, producer)
 	testutil.AssertSpanStubOkStatus(t, evalSpan)
-	assert.Equal(t, tenantID, testutil.SpanStubStringAttr(t, evalSpan, "tenant_id"))
+	assert.False(t, testutil.SpanStubHasAttr(evalSpan, "tenant_id"))
 	require.Len(t, evalSpan.Events, 1)
 	assert.Equal(t, "evaluation", evalSpan.Events[0].Name)
 	assert.InDelta(

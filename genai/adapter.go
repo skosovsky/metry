@@ -3,7 +3,6 @@ package genai
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/skosovsky/metry"
 )
@@ -34,12 +33,12 @@ func (t *Tracker) RecordModelInteraction(
 
 	payload, meta, err := adapter.ParseRequest(rawReq)
 	if err != nil {
-		return fmt.Errorf("genai: parse request: %w", err)
+		return invalidObservation("adapter_request", "parse_failed")
 	}
 
 	outPayload, usage, err := adapter.ParseResponse(rawResp)
 	if err != nil {
-		return fmt.Errorf("genai: parse response: %w", err)
+		return invalidObservation("adapter_response", "parse_failed")
 	}
 
 	merged := mergePayload(payload, outPayload)

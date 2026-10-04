@@ -69,8 +69,8 @@ func TestToolPayloadPolicy_RedactsArgumentsAndResult(t *testing.T) {
 	result := testutil.SpanStubStringAttr(t, spans[0], ToolCallResult)
 	assert.Contains(t, args, "redacted")
 	assert.Contains(t, result, "redacted")
-	assert.Contains(t, args, "nested")
-	assert.Contains(t, result, "items")
+	assert.NotContains(t, args, "nested")
+	assert.NotContains(t, result, "items")
 	assert.NotContains(t, args, "arg")
 	assert.NotContains(t, result, "result")
 }

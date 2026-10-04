@@ -2,6 +2,7 @@ package genai
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -12,6 +13,30 @@ import (
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/testutil"
 )
+
+func TestRetrievalResultRejectsUnboundedAndNonFiniteBeforeMutation(t *testing.T) {
+	for _, result := range []RetrievalResult{
+		{ReturnedChunks: -1},
+		{Distances: make([]float64, maxPayloadEntries+1)},
+		{Distances: []float64{math.NaN()}},
+		{Distances: []float64{math.Inf(1)}},
+		{Distances: []float64{math.Inf(-1)}},
+	} {
+		// Arrange.
+		tracker, provider, exporter := newTestTracker(t)
+		ctx, end := tracker.StartRetrievalSpan(context.Background(), "", RetrievalRequest{})
+		// Act.
+		err := tracker.RecordRetrievalResult(ctx, result)
+		end()
+		flushTestProvider(t, provider)
+		// Assert: validation precedes slice copy/attribute writes.
+		require.ErrorIs(t, err, ErrInvalidObservation)
+		spans := exporter.GetSpans()
+		require.Len(t, spans, 1)
+		assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalReturnedChunks))
+		assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalDistances))
+	}
+}
 
 func TestStartRetrievalSpan_SetsAttributesAndParent(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
@@ -44,7 +69,11 @@ func TestStartRetrievalSpan_SetsAttributesAndParent(t *testing.T) {
 	assert.Equal(t, request.SpanContext.SpanID(), retrieval.Parent.SpanID())
 	assert.Equal(t, "retrieval", testutil.SpanStubStringAttr(t, retrieval, OperationName))
 	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, retrieval, RetrievalProvider))
-	assert.Equal(t, "knowledge_base", testutil.SpanStubStringAttr(t, retrieval, RetrievalSource))
+	assert.Equal(
+		t,
+		fingerprintPayloadLabel("knowledge_base"),
+		testutil.SpanStubStringAttr(t, retrieval, RetrievalSource),
+	)
 	assert.Equal(t, int64(5), testutil.SpanStubInt64Attr(t, retrieval, RetrievalTopK))
 
 	query := testutil.SpanStubStringAttr(t, retrieval, RetrievalQuery)
@@ -122,7 +151,11 @@ func TestStartRetrievalSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *t
 	require.Len(t, spans, 1)
 	assert.Equal(t, "retrieval", testutil.SpanStubStringAttr(t, spans[0], OperationName))
 	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], RetrievalProvider))
-	assert.Equal(t, "knowledge_base", testutil.SpanStubStringAttr(t, spans[0], RetrievalSource))
+	assert.Equal(
+		t,
+		fingerprintPayloadLabel("knowledge_base"),
+		testutil.SpanStubStringAttr(t, spans[0], RetrievalSource),
+	)
 	assert.Equal(t, "present", testutil.SpanStubStringAttr(t, spans[0], "test.retrieval.caller"))
 }
 
@@ -147,6 +180,10 @@ func TestStartRetrievalSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "retrieval", testutil.SpanStubStringAttr(t, spans[0], OperationName))
 	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], RetrievalProvider))
-	assert.Equal(t, "knowledge_base", testutil.SpanStubStringAttr(t, spans[0], RetrievalSource))
+	assert.Equal(
+		t,
+		fingerprintPayloadLabel("knowledge_base"),
+		testutil.SpanStubStringAttr(t, spans[0], RetrievalSource),
+	)
 	assert.Equal(t, int64(3), testutil.SpanStubInt64Attr(t, spans[0], RetrievalTopK))
 }

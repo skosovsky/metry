@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -36,6 +37,14 @@ type OperationResult struct {
 	Duration  time.Duration
 	Usage     Usage
 	Payload   Payload
+	Streaming *StreamTimings
+}
+
+// StreamTimings describes first-token timing measured by the producer from this
+// operation's start. Unknown/aborted streams leave FirstTokenPresent false.
+type StreamTimings struct {
+	TTFT              time.Duration
+	FirstTokenPresent bool
 }
 
 // ToolCall describes one tool execution.
@@ -61,10 +70,11 @@ type ToolOption = ChildSpanOption
 
 // StreamingCompletion describes one completed streaming response.
 type StreamingCompletion struct {
-	Meta          Meta
-	OutputTokens  int
-	TTFT          time.Duration
-	TotalDuration time.Duration
+	Meta              Meta
+	Usage             Usage
+	TTFT              time.Duration
+	TotalDuration     time.Duration
+	FirstTokenPresent bool
 }
 
 // AsyncResult describes a deferred GenAI outcome linked to an AsyncHandle.
@@ -92,10 +102,15 @@ func WithAsyncAttributes(attrs ...metry.Attribute) AsyncOption {
 
 // Runtime is the app-scoped GenAI instrumentation boundary.
 type Runtime interface {
+	StartOperation(
+		ctx context.Context,
+		op Operation,
+		options RecordingOptions,
+	) (context.Context, *OperationHandle, error)
 	ForProvider(provider string) Runtime
 	RecordOperation(ctx context.Context, op Operation, result OperationResult, attrs ...metry.Attribute) error
 	RecordTraceIO(ctx context.Context, input, output Payload) error
-	RecordStreamingCompletion(ctx context.Context, event StreamingCompletion)
+	RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error
 	RecordTTFT(ctx context.Context, duration time.Duration)
 	StartTool(ctx context.Context, call ToolCall, opts ...ToolOption) (context.Context, ToolEnd)
 	RecordToolResult(ctx context.Context, result ToolResult)
@@ -146,7 +161,25 @@ func (noopRuntime) ForProvider(string) Runtime {
 	return noopRuntime{}
 }
 
-func (noopRuntime) RecordOperation(context.Context, Operation, OperationResult, ...metry.Attribute) error {
+func (noopRuntime) RecordOperation(
+	ctx context.Context,
+	operation Operation,
+	result OperationResult,
+	_ ...metry.Attribute,
+) error {
+	meta := emptyMeta()
+	meta.Operation = operation.Name
+	meta = mergeMetaFromScope(ctx, meta)
+	if err := validateOperationName(meta.Operation); err != nil {
+		return err
+	}
+	return validateCompletedResult(result)
+}
+
+func validateOperationName(name string) error {
+	if strings.TrimSpace(name) == "" || len(name) > maxIdentityBytes || !utf8.ValidString(name) {
+		return invalidObservation("operation", "malformed")
+	}
 	return nil
 }
 
@@ -154,7 +187,19 @@ func (noopRuntime) RecordTraceIO(context.Context, Payload, Payload) error {
 	return nil
 }
 
-func (noopRuntime) RecordStreamingCompletion(context.Context, StreamingCompletion) {}
+func (noopRuntime) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
+	meta := mergeMetaFromScope(ctx, event.Meta)
+	if err := validateOperationName(meta.Operation); err != nil {
+		return err
+	}
+	if err := event.Usage.Validate(); err != nil {
+		return err
+	}
+	return validateStreamTimings(
+		StreamTimings{TTFT: event.TTFT, FirstTokenPresent: event.FirstTokenPresent},
+		event.TotalDuration,
+	)
+}
 
 func (noopRuntime) RecordTTFT(context.Context, time.Duration) {}
 
@@ -197,7 +242,13 @@ func (r trackerRuntime) RecordOperation(
 	attrs ...metry.Attribute,
 ) error {
 	if r.tracker == nil {
-		return nil
+		return NoopRuntime().RecordOperation(ctx, op, result)
+	}
+	if err := validateCompletedResult(result); err != nil {
+		return err
+	}
+	if err := r.tracker.validateUsage(result.Usage); err != nil {
+		return err
 	}
 	status := normalizeOperationStatus(result.Status, result.ErrorType)
 	meta := Meta{ //nolint:exhaustruct // only operation-level fields are relevant here.
@@ -215,7 +266,15 @@ func (r trackerRuntime) RecordOperation(
 
 	scope, hasScope := ScopeFromContext(ctx)
 	meta = mergeMetaFromScopeWithScope(meta, scope, hasScope)
+	if err := validateOperationName(meta.Operation); err != nil {
+		return err
+	}
+	payloadAttrs, err := buildPayloadAttributes(result.Payload, r.tracker.cfg)
+	if err != nil {
+		return err
+	}
 	spanName := interactionSpanNameFromMeta(meta, scope, hasScope)
+	spanName = metadataWithConfig(OperationName, spanName, r.tracker.cfg)
 	ctx, span := r.tracker.tracer.Start(ctx, spanName)
 	defer span.End()
 
@@ -223,7 +282,24 @@ func (r trackerRuntime) RecordOperation(
 		span.SetAttributes(extraAttrs...)
 	}
 	span.SetAttributes(attribute.String(OperationStatus, status))
-	r.tracker.recordInteractionOnSpan(ctx, span, meta, result.Payload, result.Usage)
+	span.SetAttributes(attribute.String("metry.observation.kind", "completed"))
+	r.tracker.recordInteractionOnSpan(ctx, span, meta, payloadAttrs, result.Usage, true)
+	if result.Streaming != nil {
+		r.tracker.recordStreamingQuality(ctx, meta, result.Usage.OutputTokens, *result.Streaming, result.Duration)
+	}
+	return nil
+}
+
+func validateCompletedResult(result OperationResult) error {
+	if err := result.Usage.Validate(); err != nil {
+		return err
+	}
+	if result.Duration < 0 {
+		return invalidObservation("duration", "invalid_interval")
+	}
+	if result.Streaming != nil {
+		return validateStreamTimings(*result.Streaming, result.Duration)
+	}
 	return nil
 }
 
@@ -231,19 +307,23 @@ func (r trackerRuntime) RecordTraceIO(ctx context.Context, input, output Payload
 	if r.tracker == nil {
 		return nil
 	}
-	r.tracker.RecordTraceIO(ctx, input, output)
+	if err := r.tracker.RecordTraceIO(ctx, input, output); err != nil {
+		return err
+	}
 	mutateSpan(ctx, func(span trace.Span) {
-		span.SetAttributes(attribute.Key(ProviderName).String(r.runtimeProvider()))
+		span.SetAttributes(
+			attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+		)
 	})
 	return nil
 }
 
-func (r trackerRuntime) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) {
+func (r trackerRuntime) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
 	if r.tracker == nil {
-		return
+		return NoopRuntime().RecordStreamingCompletion(ctx, event)
 	}
-	meta := r.bindMeta(event.Meta)
-	r.tracker.RecordStreamingCompletion(ctx, meta, event.OutputTokens, event.TTFT, event.TotalDuration)
+	event.Meta = r.bindMeta(event.Meta)
+	return r.tracker.RecordStreamingCompletion(ctx, event)
 }
 
 func (r trackerRuntime) RecordTTFT(ctx context.Context, duration time.Duration) {
@@ -257,7 +337,12 @@ func (r trackerRuntime) StartTool(ctx context.Context, call ToolCall, opts ...To
 	if r.tracker == nil {
 		return ctx, func() {}
 	}
-	opts = append(opts, WithSpanAttributes(metry.StringAttribute(ProviderName, r.runtimeProvider())))
+	opts = append(
+		opts,
+		WithSpanAttributes(
+			metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+		),
+	)
 	return r.tracker.startTool(ctx, call, opts...)
 }
 
@@ -281,10 +366,14 @@ func (r trackerRuntime) StartAsync(
 	if spanName == "" {
 		spanName = "genai.async"
 	}
+	spanName = metadataWithConfig(OperationName, spanName, r.tracker.cfg)
 	cfg := buildAsyncStartConfig(opts...)
 	attrs := metryAttributesToOTel(cfg.attrs)
 	attrs = append(attrs, attribute.Key(OperationName).String(spanName))
-	attrs = append(attrs, attribute.Key(ProviderName).String(r.runtimeProvider()))
+	attrs = append(
+		attrs,
+		attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+	)
 
 	ctx, span := r.tracker.tracer.Start(ctx, spanName, trace.WithAttributes(attrs...))
 	defer span.End()
@@ -307,7 +396,10 @@ func (r trackerRuntime) RecordAsyncResult(
 	attrs := make([]metry.Attribute, 0, len(result.Attributes)+asyncResultAttrCap)
 	attrs = append(attrs, filterAsyncResultAttributes(result.Attributes)...)
 	attrs = append(attrs, metry.StringAttribute(OperationStatus, status))
-	attrs = append(attrs, metry.StringAttribute(ProviderName, r.runtimeProvider()))
+	attrs = append(
+		attrs,
+		metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+	)
 	if class != "" {
 		attrs = append(attrs, metry.StringAttribute(ErrorType, errorClassString(class)))
 	}
@@ -316,6 +408,7 @@ func (r trackerRuntime) RecordAsyncResult(
 	if spanName == "" {
 		spanName = "genai.async.result"
 	}
+	spanName = metadataWithConfig(OperationName, spanName, r.tracker.cfg)
 	return handle.RecordLinkedSpan(ctx, r.tracker.provider, spanName, func(w metry.LinkedSpanWriter) error {
 		w.SetAttributes(attrs...)
 		if status == OperationStatusError {
@@ -491,12 +584,13 @@ func sanitizeMetricValue(value, fallback string) string {
 
 func normalizeErrorType(errorType string) string {
 	switch sanitizeMetricValue(strings.ToLower(errorType), "") {
+	case "canceled", string(ErrorClassCancelled):
+		return string(ErrorClassCancelled)
 	case "timeout",
-		"deadline_exceeded",
+		string(ErrorClassDeadlineExceeded),
 		"rate_limit",
 		"quota_exceeded",
 		"validation",
-		"canceled",
 		"unavailable",
 		"permission_denied",
 		"unauthenticated",

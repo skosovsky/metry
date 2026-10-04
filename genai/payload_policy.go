@@ -5,11 +5,25 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 const (
-	redactedPayloadText = "[redacted]"
-	redactedPayloadJSON = `{"redacted":true}`
+	redactedPayloadText  = "[redacted]"
+	redactedPayloadJSON  = `{"redacted":true}`
+	maxPayloadSchemaKeys = 128
+	maxPayloadJSONDepth  = 32
+	payloadTextType      = "text"
+	payloadImageType     = "image"
+	payloadImageURLType  = "image_url"
+	payloadAudioType     = "audio"
+	payloadVideoType     = "video"
+	payloadFileType      = "file"
+	payloadToolCallType  = "tool_call"
+	payloadStopFinish    = "stop"
+	payloadAssistantRole = "assistant"
+	payloadUserRole      = "user"
+	reasoningLabel       = "reasoning"
 )
 
 // PayloadPolicy sanitizes GenAI payload before it is exported as span attributes.
@@ -33,27 +47,39 @@ func (rawPayloadPolicy) SanitizeToolResult(result ToolResult) ToolResult {
 	return result
 }
 
-type redactPayloadPolicy struct{}
+type redactPayloadPolicy struct{ keys map[string]struct{} }
 
-// RedactPayloadPolicy returns the default safe policy: structure is preserved, content is redacted.
-func RedactPayloadPolicy() PayloadPolicy {
-	return redactPayloadPolicy{}
+// RedactPayloadPolicy preserves only explicitly allowlisted object keys.
+// Unknown objects are redacted as a whole, including their dynamic keys.
+func RedactPayloadPolicy(schemaKeys ...string) PayloadPolicy {
+	return redactPayloadPolicy{keys: payloadSchemaKeys(schemaKeys)}
 }
 
-func (redactPayloadPolicy) SanitizePayload(payload Payload) Payload {
-	return sanitizePayload(payload, redactContentPart)
+func (policy redactPayloadPolicy) SanitizePayload(payload Payload) Payload {
+	return sanitizePayload(payload, func(part ContentPart) ContentPart {
+		part = redactContentPart(part)
+		if len(part.Arguments) > 0 {
+			part.Arguments = json.RawMessage(
+				sanitizeJSONStringWithKeys(string(part.Arguments), redactJSONLeaf, policy.keys),
+			)
+		}
+		if len(part.Result) > 0 {
+			part.Result = json.RawMessage(sanitizeJSONStringWithKeys(string(part.Result), redactJSONLeaf, policy.keys))
+		}
+		return part
+	})
 }
 
-func (redactPayloadPolicy) SanitizeToolCall(call ToolCall) ToolCall {
+func (policy redactPayloadPolicy) SanitizeToolCall(call ToolCall) ToolCall {
 	if call.Arguments != "" {
-		call.Arguments = sanitizeJSONString(call.Arguments, redactJSONLeaf)
+		call.Arguments = sanitizeJSONStringWithKeys(call.Arguments, redactJSONLeaf, policy.keys)
 	}
 	return call
 }
 
-func (redactPayloadPolicy) SanitizeToolResult(result ToolResult) ToolResult {
+func (policy redactPayloadPolicy) SanitizeToolResult(result ToolResult) ToolResult {
 	if result.Result != "" {
-		result.Result = sanitizeJSONString(result.Result, redactJSONLeaf)
+		result.Result = sanitizeJSONStringWithKeys(result.Result, redactJSONLeaf, policy.keys)
 	}
 	return result
 }
@@ -98,12 +124,57 @@ func sanitizeMessages(messages []Message, sanitizePart func(ContentPart) Content
 	out := make([]Message, len(messages))
 	for i, msg := range messages {
 		out[i] = Message{
-			Role:         msg.Role,
-			Parts:        sanitizeContentParts(msg.Parts, sanitizePart),
-			FinishReason: msg.FinishReason,
+			Role: sanitizeMessageEnum(
+				msg.Role,
+				[]string{"system", payloadUserRole, payloadAssistantRole, ToolMetricLabelTool, "developer", "function"},
+				sanitizePart,
+			),
+			Parts: sanitizeContentParts(msg.Parts, sanitizePart),
+			FinishReason: sanitizeMessageEnum(
+				msg.FinishReason,
+				[]string{payloadStopFinish, "length", "tool_calls", "content_filter", OperationStatusError},
+				sanitizePart,
+			),
 		}
 	}
 	return out
+}
+
+func sanitizeMessageEnum(value string, vocabulary []string, sanitizePart func(ContentPart) ContentPart) string {
+	if value == "" || slices.Contains(vocabulary, value) {
+		return value
+	}
+	return sanitizePart(
+		ContentPart{Type: payloadTextType, Content: value, ID: "", Name: "", Arguments: nil, Result: nil},
+	).Content
+}
+
+func safeContentType(value string, protect func(string) string) string {
+	if value == "" ||
+		slices.Contains(
+			[]string{
+				payloadTextType,
+				payloadImageType,
+				payloadImageURLType,
+				payloadAudioType,
+				payloadVideoType,
+				payloadFileType,
+				payloadToolCallType,
+				"tool_result",
+				reasoningLabel,
+			},
+			value,
+		) {
+		return value
+	}
+	return protect(value)
+}
+
+func redactLabel(value string) string {
+	if value == "" {
+		return ""
+	}
+	return redactedPayloadText
 }
 
 func sanitizeContentParts(parts []ContentPart, sanitizePart func(ContentPart) ContentPart) []ContentPart {
@@ -118,21 +189,29 @@ func sanitizeContentParts(parts []ContentPart, sanitizePart func(ContentPart) Co
 }
 
 func redactContentPart(part ContentPart) ContentPart {
+	part.Type = safeContentType(part.Type, redactLabel)
 	if part.Content != "" {
 		part.Content = redactedPayloadText
 	}
-	if len(part.Arguments) > 0 {
-		part.Arguments = sanitizeJSONRaw(part.Arguments, redactJSONLeaf)
+	if part.ID != "" {
+		part.ID = redactedPayloadText
 	}
-	if len(part.Result) > 0 {
-		part.Result = sanitizeJSONRaw(part.Result, redactJSONLeaf)
+	if part.Name != "" {
+		part.Name = redactedPayloadText
 	}
 	return part
 }
 
 func hashContentPart(part ContentPart) ContentPart {
+	part.Type = safeContentType(part.Type, fingerprintPayloadLabel)
 	if part.Content != "" {
 		part.Content = fingerprintPayloadLabel(part.Content)
+	}
+	if part.ID != "" {
+		part.ID = fingerprintPayloadLabel(part.ID)
+	}
+	if part.Name != "" {
+		part.Name = fingerprintPayloadLabel(part.Name)
 	}
 	if len(part.Arguments) > 0 {
 		part.Arguments = fingerprintPayloadJSON(part.Arguments)
@@ -167,11 +246,31 @@ func sanitizeJSONRaw(raw json.RawMessage, sanitizeLeaf func(any) any) json.RawMe
 }
 
 func sanitizeJSONString(raw string, sanitizeLeaf func(any) any) string {
+	return sanitizeJSONStringWithKeys(raw, sanitizeLeaf, nil)
+}
+
+func payloadSchemaKeys(keys []string) map[string]struct{} {
+	allowed := make(map[string]struct{}, min(len(keys), maxPayloadSchemaKeys))
+	for _, key := range keys {
+		if len(allowed) >= maxPayloadSchemaKeys {
+			break
+		}
+		if key != "" && len(key) <= 80 {
+			allowed[key] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+func sanitizeJSONStringWithKeys(raw string, sanitizeLeaf func(any) any, keys map[string]struct{}) string {
+	if len(raw) > maxPayloadInputBytes || !boundedJSONDepth(raw) {
+		return redactedPayloadJSON
+	}
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
 		return redactedPayloadJSON
 	}
-	sanitized := sanitizeJSONValue(value, sanitizeLeaf)
+	sanitized := sanitizeJSONValue(value, sanitizeLeaf, keys)
 	buf, err := json.Marshal(sanitized)
 	if err != nil {
 		return redactedPayloadJSON
@@ -179,23 +278,61 @@ func sanitizeJSONString(raw string, sanitizeLeaf func(any) any) string {
 	return string(buf)
 }
 
-func sanitizeJSONValue(value any, sanitizeLeaf func(any) any) any {
+func sanitizeJSONValue(value any, sanitizeLeaf func(any) any, keys map[string]struct{}) any {
 	switch typed := value.(type) {
 	case map[string]any:
+		for key := range typed {
+			if _, allowed := keys[key]; !allowed {
+				return sanitizeLeaf(typed)
+			}
+		}
 		out := make(map[string]any, len(typed))
 		for k, v := range typed {
-			out[k] = sanitizeJSONValue(v, sanitizeLeaf)
+			out[k] = sanitizeJSONValue(v, sanitizeLeaf, keys)
 		}
 		return out
 	case []any:
 		out := make([]any, len(typed))
 		for i, v := range typed {
-			out[i] = sanitizeJSONValue(v, sanitizeLeaf)
+			out[i] = sanitizeJSONValue(v, sanitizeLeaf, keys)
 		}
 		return out
 	default:
 		return sanitizeLeaf(typed)
 	}
+}
+
+func boundedJSONDepth(raw string) bool {
+	depth := 0
+	inString, escaped := false, false
+	for _, char := range raw {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			if depth > maxPayloadJSONDepth {
+				return false
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return true
 }
 
 func redactJSONLeaf(any) any {
@@ -214,12 +351,15 @@ func sanitizeTextWithConfig(value string, cfg runtimeConfig) string {
 	if value == "" {
 		return ""
 	}
+	if len(value) > maxPayloadInputBytes {
+		return redactedPayloadText
+	}
 	payload := Payload{
 		SystemInstructions: nil,
 		InputMessages: []Message{{
 			Role: "",
 			Parts: []ContentPart{{
-				Type:      "text",
+				Type:      payloadTextType,
 				Content:   value,
 				ID:        "",
 				Name:      "",

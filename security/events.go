@@ -22,7 +22,7 @@ func RecordSecurityEventWithProvider(
 		return metry.ErrNilProvider
 	}
 	span := trace.SpanFromContext(ctx)
-	if span.SpanContext().IsValid() {
+	if span.IsRecording() {
 		addSecurityEvent(span, action, validator, reason, code, severity, isShadow)
 		return nil
 	}

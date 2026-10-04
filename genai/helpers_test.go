@@ -21,11 +21,15 @@ func TestRecordInteraction_WithPayloadAndUsage_SetsAttributes(t *testing.T) {
 
 	ctx := context.Background()
 	require.NoError(t, tracker.RecordInteraction(ctx, testMeta(), testPayload(), Usage{
-		InputTokens:           10,
-		OutputTokens:          20,
-		ReasoningOutputTokens: 4,
-		Cost:                  0.25,
-		Currency:              "CREDITS",
+		InputTokens: Observe(10, UnitTokens, SourceMeasured),
+
+		OutputTokens: Observe(20, UnitTokens, SourceMeasured),
+
+		ReasoningOutputTokens: Observe(4, UnitTokens, SourceMeasured),
+
+		Cost: Observe(float64(0.25), UnitCurrency, SourceMeasured),
+
+		Currency: "CREDITS",
 	}))
 
 	flushTestProvider(t, provider)
@@ -89,8 +93,10 @@ func TestRuntimeTool_SetToolAttributes(t *testing.T) {
 	assert.Equal(t, "call-1", testutil.SpanStubStringAttr(t, spans[0], ToolCallID))
 	arguments := testutil.SpanStubStringAttr(t, spans[0], ToolCallArguments)
 	assert.NotEmpty(t, arguments)
-	assert.Contains(t, arguments, `{"q":`)
-	assert.False(t, json.Valid([]byte(arguments)))
+	var plainArguments string
+	require.NoError(t, json.Unmarshal([]byte(arguments), &plainArguments))
+	assert.Equal(t, `{"q":`, plainArguments)
+	assert.True(t, json.Valid([]byte(arguments)))
 	assert.NotEmpty(t, testutil.SpanStubStringAttr(t, spans[0], ToolCallResult))
 	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], ToolError))
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
@@ -139,7 +145,7 @@ func TestRecordInteraction_ErrorType_SetsSpanErrorStatus(t *testing.T) {
 		Provider:  "openai",
 		Operation: "chat",
 		ErrorType: "timeout",
-	}, Payload{}, Usage{InputTokens: 1}))
+	}, Payload{}, Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}))
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -155,7 +161,7 @@ func TestRecordInteraction_ErrorType_NormalizesUnboundedText(t *testing.T) {
 		Provider:  "openai",
 		Operation: "chat",
 		ErrorType: "timeout for user bob@example.com",
-	}, Payload{}, Usage{InputTokens: 1}))
+	}, Payload{}, Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}))
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -168,7 +174,15 @@ func TestRecordInteraction_ErrorType_NormalizesUnboundedText(t *testing.T) {
 func TestRecordInteraction_Success_SetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, Usage{InputTokens: 1}))
+	require.NoError(
+		t,
+		tracker.RecordInteraction(
+			context.Background(),
+			testMeta(),
+			Payload{},
+			Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)},
+		),
+	)
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -252,10 +266,10 @@ func TestRuntimeTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "execute_tool", testutil.SpanStubStringAttr(t, spans[0], OperationName))
 	assert.Equal(t, "search", testutil.SpanStubStringAttr(t, spans[0], ToolName))
-	assert.Equal(t, "call-dup", testutil.SpanStubStringAttr(t, spans[0], ToolCallID))
+	assert.Equal(t, fingerprintPayloadLabel("call-dup"), testutil.SpanStubStringAttr(t, spans[0], ToolCallID))
 }
 
-func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *testing.T) {
+func TestRecordInteraction_TruncatedPayloadRemainsValidJSON(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
 		WithRawPayloads(),
 		WithMaxContextLength(80),
@@ -279,8 +293,8 @@ func TestRecordInteraction_TruncatedPayload_MayBeInvalidJSON_ButUTF8Safe(t *test
 	value := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(value), 80)
 	assert.True(t, utf8.ValidString(value))
-	assert.True(t, strings.HasSuffix(value, truncationSuffix))
-	assert.False(t, json.Valid([]byte(value)))
+	assert.Contains(t, value, `"truncated":true`)
+	assert.True(t, json.Valid([]byte(value)))
 }
 
 func TestRecordCacheHit_AndRecordAgentStep(t *testing.T) {
@@ -296,7 +310,11 @@ func TestRecordCacheHit_AndRecordAgentStep(t *testing.T) {
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], CacheHit))
-	assert.Equal(t, "pgvector_cache", testutil.SpanStubStringAttr(t, spans[0], RetrievalSource))
+	assert.Equal(
+		t,
+		fingerprintPayloadLabel("pgvector_cache"),
+		testutil.SpanStubStringAttr(t, spans[0], RetrievalSource),
+	)
 	require.Len(t, spans[0].Events, 1)
 	assert.Equal(t, AgentStepEvent, spans[0].Events[0].Name)
 }

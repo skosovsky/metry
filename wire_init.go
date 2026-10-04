@@ -14,6 +14,13 @@ import (
 )
 
 func init() {
+	genaiwire.AsyncSpanContext = func(value any) (trace.SpanContext, error) {
+		handle, ok := value.(AsyncHandle)
+		if !ok || !handle.IsValid() {
+			return trace.SpanContext{}, ErrInvalidAsyncHandle
+		}
+		return handle.h.SpanContext(), nil
+	}
 	genaiwire.MeterTracer = func(p any) (metric.Meter, trace.Tracer, error) {
 		provider, ok := p.(*Provider)
 		if !ok {

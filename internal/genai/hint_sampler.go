@@ -1,6 +1,8 @@
 package genai
 
 import (
+	"slices"
+
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -48,8 +50,7 @@ func (s hintSampler) Description() string {
 }
 
 func hasSamplingKeepHint(attrs []attribute.KeyValue) bool {
-	for i := len(attrs) - 1; i >= 0; i-- {
-		attrKV := attrs[i]
+	for _, attrKV := range slices.Backward(attrs) {
 		if attrKV.Key != attribute.Key("gen_ai.sampling.keep") {
 			continue
 		}

@@ -64,10 +64,13 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 		Arguments: toolJSON,
 	})
 	require.NoError(t, tracker1.RecordInteraction(ctx1, testMeta(), testPayload(), Usage{
-		InputTokens:           12,
-		OutputTokens:          6,
-		CacheReadInputTokens:  3,
-		ReasoningOutputTokens: 2,
+		InputTokens: Observe(12, UnitTokens, SourceMeasured),
+
+		OutputTokens: Observe(6, UnitTokens, SourceMeasured),
+
+		CacheReadInputTokens: Observe(3, UnitTokens, SourceMeasured),
+
+		ReasoningOutputTokens: Observe(2, UnitTokens, SourceMeasured),
 	}))
 	recorder1.RecordToolResult(ctx1, ToolResult{Result: `{"result":"` + strings.Repeat("b", 512) + `"}`})
 	end1()
@@ -78,8 +81,9 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 		Arguments: toolJSON,
 	})
 	require.NoError(t, tracker2.RecordInteraction(ctx2, testMeta(), testPayload(), Usage{
-		InputTokens:  4,
-		OutputTokens: 2,
+		InputTokens: Observe(4, UnitTokens, SourceMeasured),
+
+		OutputTokens: Observe(2, UnitTokens, SourceMeasured),
 	}))
 	recorder2.RecordToolResult(ctx2, ToolResult{Result: `{"result":"ok"}`})
 	end2()

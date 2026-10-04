@@ -29,8 +29,11 @@ func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: 2 * time.Second,
-			Usage:    Usage{InputTokens: 5, OutputTokens: 3},
-			Payload:  payload,
+			Usage: Usage{
+				InputTokens:  Observe(5, UnitTokens, SourceMeasured),
+				OutputTokens: Observe(3, UnitTokens, SourceMeasured),
+			},
+			Payload: payload,
 		},
 		metry.IntAttribute("custom.empty_fields", 2),
 	)

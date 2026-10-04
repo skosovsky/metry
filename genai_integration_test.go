@@ -22,8 +22,9 @@ func TestNew_NoMetricExporter_TrackerWorksViaPublicAPI(t *testing.T) {
 		Provider:  "openai",
 		Operation: "chat",
 	}, genai.Payload{}, genai.Usage{
-		InputTokens:  1,
-		OutputTokens: 1,
+		InputTokens: genai.Observe(1, genai.UnitTokens, genai.SourceMeasured),
+
+		OutputTokens: genai.Observe(1, genai.UnitTokens, genai.SourceMeasured),
 	})
 	require.NoError(t, err)
 

@@ -24,7 +24,7 @@ func TestRecordTraceIO_WritesInputAndOutputAttributes(t *testing.T) {
 
 	ctx, end, err := provider.StartSpan(context.Background(), "trace-io", "mirror")
 	require.NoError(t, err)
-	tracker.RecordTraceIO(ctx, input, output)
+	require.NoError(t, tracker.RecordTraceIO(ctx, input, output))
 	end()
 
 	flushTestProvider(t, provider)
@@ -39,7 +39,7 @@ func TestRecordTraceIO_PayloadRecordingDisabled_SkipsAttributes(t *testing.T) {
 
 	ctx, end, err := provider.StartSpan(context.Background(), "trace-io", "mirror")
 	require.NoError(t, err)
-	tracker.RecordTraceIO(ctx, testPayload(), testPayload())
+	require.NoError(t, tracker.RecordTraceIO(ctx, testPayload(), testPayload()))
 	end()
 
 	flushTestProvider(t, provider)
@@ -62,7 +62,7 @@ func TestRecordTraceIO_TruncatesLongPayload(t *testing.T) {
 
 	ctx, end, err := provider.StartSpan(context.Background(), "trace-io", "mirror")
 	require.NoError(t, err)
-	tracker.RecordTraceIO(ctx, input, Payload{})
+	require.NoError(t, tracker.RecordTraceIO(ctx, input, Payload{}))
 	end()
 
 	flushTestProvider(t, provider)
@@ -70,6 +70,6 @@ func TestRecordTraceIO_TruncatesLongPayload(t *testing.T) {
 	require.Len(t, spans, 1)
 	out := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(out), limit)
-	assert.True(t, strings.HasSuffix(out, truncationSuffix))
+	assert.Contains(t, out, `"truncated":true`)
 	assert.True(t, utf8.ValidString(out))
 }

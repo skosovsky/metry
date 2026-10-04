@@ -77,7 +77,7 @@ func run() int {
 		Purpose: scope.Purpose,
 	}, genai.OperationResult{
 		Status: genai.OperationStatusOK,
-		Usage:  genai.Usage{InputTokens: 1},
+		Usage:  genai.Usage{InputTokens: genai.Observe(1, genai.UnitTokens, genai.SourceMeasured)},
 	}); err != nil {
 		log.Println(err)
 		return 1

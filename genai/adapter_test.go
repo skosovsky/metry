@@ -46,7 +46,12 @@ func TestRecordModelInteraction_HappyPath_MatchesDirectRecordInteraction(t *test
 		respPayload: Payload{
 			OutputMessages: []Message{{Role: "assistant", Parts: []ContentPart{{Type: "text", Content: "hello"}}}},
 		},
-		respUsage: Usage{InputTokens: 10, OutputTokens: 20, Cost: 0.001},
+		respUsage: Usage{
+			InputTokens:  Observe(10, UnitTokens, SourceMeasured),
+			OutputTokens: Observe(20, UnitTokens, SourceMeasured),
+			Cost:         Observe(float64(0.001), UnitCurrency, SourceMeasured),
+			Currency:     "USD",
+		},
 	}
 
 	err := tracker.RecordModelInteraction(context.Background(), adapter, "raw-req", "raw-resp")
@@ -83,7 +88,7 @@ func TestRecordModelInteraction_WithScope_UsesScopeDefaults(t *testing.T) {
 		reqPayload:  testPayload(),
 		reqMeta:     Meta{},
 		respPayload: Payload{},
-		respUsage:   Usage{InputTokens: 1},
+		respUsage:   Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)},
 	}
 
 	ctx := WithScope(context.Background(), Scope{
@@ -103,12 +108,13 @@ func TestRecordModelInteraction_WithScope_UsesScopeDefaults(t *testing.T) {
 func TestRecordModelInteraction_ParseRequestError_ReturnsError(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	parseErr := errors.New("bad request shape")
+	parseErr := errors.New("private_marker_7 request shape")
 	adapter := fakeProviderAdapter{reqErr: parseErr}
 
 	err := tracker.RecordModelInteraction(context.Background(), adapter, "raw", nil)
 	require.Error(t, err)
-	require.ErrorIs(t, err, parseErr)
+	require.ErrorIs(t, err, ErrInvalidObservation)
+	assert.NotContains(t, err.Error(), "private_marker_7")
 
 	flushTestProvider(t, provider)
 	assert.Empty(t, mem.GetSpans())
@@ -117,7 +123,7 @@ func TestRecordModelInteraction_ParseRequestError_ReturnsError(t *testing.T) {
 func TestRecordModelInteraction_ParseResponseError_ReturnsError(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	parseErr := errors.New("bad response shape")
+	parseErr := errors.New("private_marker_7 response shape")
 	adapter := fakeProviderAdapter{
 		reqMeta: testMeta(),
 		respErr: parseErr,
@@ -125,7 +131,8 @@ func TestRecordModelInteraction_ParseResponseError_ReturnsError(t *testing.T) {
 
 	err := tracker.RecordModelInteraction(context.Background(), adapter, "raw", "raw")
 	require.Error(t, err)
-	require.ErrorIs(t, err, parseErr)
+	require.ErrorIs(t, err, ErrInvalidObservation)
+	assert.NotContains(t, err.Error(), "private_marker_7")
 
 	flushTestProvider(t, provider)
 	assert.Empty(t, mem.GetSpans())

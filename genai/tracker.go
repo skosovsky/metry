@@ -21,10 +21,11 @@ var (
 
 // Tracker owns GenAI runtime config, metric instruments, and the tracer used for tool spans.
 type Tracker struct {
-	cfg      runtimeConfig
-	metrics  *metricsHolder
-	tracer   trace.Tracer
-	provider *metry.Provider
+	dimensions *metricDimensions
+	cfg        runtimeConfig
+	metrics    *metricsHolder
+	tracer     trace.Tracer
+	provider   *metry.Provider
 }
 
 type metricsHolder struct {
@@ -57,17 +58,50 @@ func NewTrackerFromProvider(p *metry.Provider, opts ...Option) (*Tracker, error)
 	}
 
 	cfg := buildRuntimeConfig(opts...)
+	if cfg.maxContextLength < len(truncatedJSONMarker) {
+		return nil, invalidObservation("payload_budget", "too_small")
+	}
+	if profileErr := cfg.profile.Validate(); profileErr != nil {
+		return nil, profileErr
+	}
+	if _, raw := cfg.PayloadPolicy().(rawPayloadPolicy); raw && !cfg.profile.AllowRaw {
+		return nil, invalidObservation("policy", "raw_not_allowed")
+	}
+	if policyErr := validatePolicyDeclaration(cfg); policyErr != nil {
+		return nil, policyErr
+	}
 	holder, err := newMetricsHolder(meter)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Tracker{
-		cfg:      cfg,
-		metrics:  holder,
-		tracer:   tracer,
-		provider: p,
+		dimensions: newMetricDimensions(cfg.profile),
+		cfg:        cfg,
+		metrics:    holder,
+		tracer:     tracer,
+		provider:   p,
 	}, nil
+}
+
+func validatePolicyDeclaration(cfg runtimeConfig) error {
+	var identity string
+	switch cfg.PayloadPolicy().(type) {
+	case rawPayloadPolicy:
+		identity = profileRawPolicy
+	case hashPayloadPolicy:
+		identity = profileHashPolicy
+	case redactPayloadPolicy:
+		identity = profileRedactPolicy
+	default:
+		// Custom policies are declared and implemented by the host. Their
+		// semantics cannot be inferred through the PayloadPolicy interface.
+		return nil
+	}
+	if cfg.profile.PayloadPolicyID != identity {
+		return invalidObservation("policy", "declaration_mismatch")
+	}
+	return nil
 }
 
 //nolint:funlen // Sequential OTel instrument registration; splitting would obscure error handling.

@@ -81,7 +81,10 @@ err = runtime.RecordOperation(ctx,
     },
     genai.OperationResult{
         Status: genai.OperationStatusOK,
-        Usage:  genai.Usage{InputTokens: 150, OutputTokens: 50},
+        Usage: genai.Usage{
+            InputTokens: genai.Observe(150, genai.UnitTokens, genai.SourceProvider),
+            OutputTokens: genai.Observe(50, genai.UnitTokens, genai.SourceProvider),
+        },
         Payload: genai.Payload{
             InputMessages: []genai.Message{{
                 Role: "user",
@@ -106,6 +109,7 @@ Extra `attrs ...metry.Attribute` on `RecordOperation` are for bounded metadata a
 Use `genai.Runtime` as the application boundary:
 
 - `RecordOperation(ctx, Operation, OperationResult, attrs...)`
+- `StartOperation(ctx, Operation, RecordingOptions)` followed by `OperationHandle.Finish(OperationResult)`
 - `RecordTraceIO(ctx, input, output)`
 - `RecordTTFT(ctx, duration)`
 - `RecordStreamingCompletion(ctx, StreamingCompletion)`
@@ -131,11 +135,77 @@ if err != nil {
 runtime = runtime.ForProvider("provider")
 ```
 
-- `RedactPayloadPolicy()` preserves message/tool structure and replaces content with redacted markers.
-- `HashPayloadPolicy()` preserves structure and exports deterministic fingerprints.
+- `RedactPayloadPolicy()` redacts arbitrary JSON objects as a whole, protecting dynamic keys as well as values. Pass explicit static schema keys to preserve their structure, for example `RedactPayloadPolicy("arguments", "query")`.
+- `HashPayloadPolicy()` fingerprints arbitrary JSON objects as a whole and protects content IDs/names. Fingerprints do not guarantee anonymity.
 - `WithRawPayloads()` is the explicit opt-in for raw payloads.
 
+Message roles, finish reasons and content types retain known schema enums; unknown values are sanitized too. Content IDs/names and arbitrary JSON keys are not exempt from policy. Causal IDs, prompt identities and tool call IDs use stable fingerprints by default even with content recording disabled; raw mode preserves bounded caller values. Non-raw tool names must be declared in the profile's finite tool allowlist or become `unknown`, including in the span name. Allowlisted machine names are explicitly trusted non-sensitive configuration, not a mechanism for exporting arbitrary user names.
+
+Declared image/audio/video/file content accepts only bounded `http:`, `https:` or `urn:` references, not inline media bodies/data URIs, including in raw mode. Metry does not fetch these references. Signed media references pass payload sanitation and never leak their raw credentials in redact/hash modes. Text sanitizer input is capped before custom sanitizer work. Passing tests for these routes does not certify arbitrary host attributes or external exporter code.
+
 The same policy applies to messages, tool arguments/results, retrieval queries, feedback text, and evaluation reasoning.
+
+## Usage presence and provenance
+
+See [the contract migration table](genai/MIGRATION.md) for caller changes, field names, units, boundaries and dashboard actions. `DefaultProfile().Fields` is the canonical checked catalogue; missing, incompatible or unknown declarations are rejected under the supported schema identity. Host custom attributes are not silently renamed or certified by the profile.
+
+Metric dimensions use finite allowlists from `genai.DefaultProfile()`. Unlisted model/provider/tool/server values become `unknown` in metrics; spans retain their permitted operation metadata. Set a dimension's `Values` in a profile and pass `genai.WithProfile(profile)` at construction to permit application-specific labels. `SeriesBudget` caps combinations per instrument, including reserved overflow series. Overflow preserves token type/provenance and cost currency. Cost currency must be declared: undeclared units return a validation diagnostic instead of mixing different currencies in one counter.
+
+In non-raw modes, machine metadata is literal only for declared safe values (including the profile's operation boundaries); undeclared operation/model/provider/server/purpose values are fingerprinted in span attributes and span names. Metric normalization still consumes the original DTO and maps unlisted dimensions to `unknown`. Retrieval source, agent/cache metadata, async names and price references follow the same checked boundary. Explicit raw mode preserves bounded caller values, but does not remove metric cardinality limits. Static allowlists are trusted local configuration: do not add dynamic URLs, user names or secrets to them.
+
+Provider adapter parse failures return a bounded `ObservationError` with request/response field and `parse_failed` rule, without wrapping the adapter's arbitrary error text. The adapter owner handles its original errors separately. Unknown custom evaluation metric names are fingerprinted by default; the predefined metric contracts remain literal. Neither behavior defines a universal score scale.
+
+Constructors snapshot the profile. `tracker.Profile()` returns a detached copy. The default budget is 256 series per instrument; supported budgets are 16–4096. `WithRawPayloads()` is an explicit local raw-mode permission; configuring `RawPayloadPolicy()` alone requires `profile.AllowRaw`. `tracker.CheckPolicy(identity)` resolves carried policy identity locally and cannot enable raw fallback.
+
+`genai.CheckConformance` checks adapter declarations before running exporter-derived fixtures. It rejects ownership conflicts, unsupported profile/mapping, incompatible units and unpermitted raw mode. Its report uses bounded categorical mismatches and never includes fixture error messages or rejected payload values. Fixtures cover their controlled composition only; passing them does not certify arbitrary host/exporter code.
+
+Adapter units bind a specific field to its canonical unit through
+`FieldUnitDeclaration`; an empty declaration inherits the profile catalogue.
+Every observed boundary requires `AccountingEvidence`: independently established
+scenario expectations and actual exported span/measurement counts and totals.
+Observation count is not series count: known zero counts once, while logical
+boundaries must not produce accounting measurements. Integer instruments use
+`IntegerTotal` without floating-point conversion; others use `Total`. For counters
+whose exporter only supplies sums, fixtures need separate write witnesses to
+prove count, including zero writes and duplicate writes. Fixtures must project
+all controlled writes, actual enum values, events with their instrumentation
+owner, and named JSON payloads. Missing JSON-channel evidence is rejected.
+Do not copy recording inputs into the actual-evidence side of a fixture.
+
+`Profile.Events()` declares controlled event names, instrumentation ownership,
+stability and allowed fields; `Enumerations()` and `PayloadChannels()` declare
+wire values and input/encoding/budget boundaries. Returned declarations are
+detached copies. Canonical boundary names, operations and accounting semantics
+cannot be reinterpreted under the supported profile identity. Conformance also
+rejects observations whose boundary has no declared adapter owner. The synthetic
+two-adapter fixtures exercise sync, streaming, cancellation and detached resume.
+
+`Usage` uses typed `Measurement[int]` and `Measurement[float64]` fields. A zero-value measurement is absent. `Observe(0, UnitTokens, SourceMeasured)` is a known zero and creates a zero histogram observation. Sources are `SourceMeasured`, `SourceProvider`, and `SourceEstimated`; an estimate stays distinguishable in both spans and metrics. `SourceUnknown` is valid only for an absent measurement.
+
+Input/output totals are inclusive. Cache/reasoning components are subsets, not additional billable tokens; overlapping components are not summed. Unknown totals are never reconstructed from an incomplete breakdown. Cost requires an explicit caller-owned currency code (including bounded uppercase custom units); metry does not guess prices or currencies.
+
+Negative or non-finite measurements, incompatible units, unsupported mapping and inconsistent components return an `ObservationError` wrapping `ErrInvalidObservation` before operation/interaction spans or metrics are written. Errors contain a bounded field/rule, never the rejected value. Scalar `Usage` literals are removed; callers must supply presence, unit and provenance explicitly.
+
+Caller adapters must normalize exhaustive, disjoint exclusive buckets to inclusive totals exactly once before recording. Set `Usage.Mapping` to `"inclusive"` after normalization. Core does not recognize backend vocabularies or sum components. If any exclusive bucket is missing, leave the total absent; do not turn partial knowledge into a measured total. Preserve per-measurement provenance and check integer overflow in the adapter. The synthetic mapping contract fixtures cover complete and partial breakdowns and reject reapplying their exclusive mapping to inclusive input.
+
+## Execution intervals, causal identity and streaming
+
+Call `Runtime.StartOperation` before I/O and `handle.Finish` after I/O. It records a real execution interval and uses a local monotonic clock for duration. `Finish` rejects a supplied `OperationResult.Duration`: the handle measures its own interval. `RecordOperation` and `RecordInteraction` are completed-observation spans, marked `metry.observation.kind=completed`; their span timestamps describe recording, not the earlier execution. Their caller-supplied durations must not be inferred by subtracting wall clocks on different workers.
+
+An effective operation name is required. Completed recording resolves an omitted
+name from caller-declared `Scope.Operation`; if neither is present, or the name
+is blank, invalid UTF-8 or over the bound, it returns a diagnostic before writing
+spans or metrics. A model-only or purpose-only scope is not a substitute for an
+operation name. Standalone final streaming completion and noop recording validate
+the same effective-name contract before committing any measurements.
+
+`RecordingOptions.Identity` is optional. In causal mode the caller supplies run/operation IDs and a kind; physical attempts also require an attempt ID. Retry keeps operation identity and changes attempt identity. `IdentityLogical` records a summary without increasing resource or duration metrics; `IdentityOperation` represents a standalone physical operation and `IdentityAttempt` an explicit physical attempt. IDs are snapshotted, bounded and span-only, never metric labels. Metry does not generate business IDs, schedule retries, prove global uniqueness or deduplicate across processes.
+
+An active context can supply the parent. With `Detached: true`, recording creates a new root linked to the context's trace reference, including a restored snapshot after the predecessor has ended. Additional `Links` use existing opaque `AsyncHandle` references for fan-in; duplicates are removed. Business identity remains separate from trace tokens. `Predecessor` is caller-owned evidence (or unknown), not an inference from the sampling flag. A carried `PolicyID` is resolved locally before recording; an unknown identity is rejected, never replaced with raw mode.
+
+For streaming, `RecordStreamingUpdate` validates intermediate cumulative usage without recording or storing totals. Only successful `Finish` commits final usage and cost. An aborted stream with missing final usage stays missing even if earlier updates contained counts. `OperationResult.Streaming` supplies TTFT measured from the same local start; `FirstTokenPresent` distinguishes unknown TTFT from a known zero. Impossible intervals are rejected before finalization and may be corrected. Concurrent successful finalization records once; further calls return `ErrFinalized`.
+
+`RecordStreamingCompletion` accepts a standalone final DTO with explicit usage and total duration. It is a stateless completed observation, not a deduplication handle: the producer must deliver it once. Use `StartOperation`/`Finish` when local duplicate-finalization protection is needed. Do not separately call `RecordTTFT` for a final DTO that already supplies TTFT, or emit the same usage through both recording paths.
 
 ## Tool lifecycle
 
@@ -335,41 +405,56 @@ adapterTracker.RecordRetrievalResult(retrievalCtx, genai.RetrievalResult{
 })
 ```
 
-## Adapter helper: linked evaluations
+`RecordRetrievalResult` returns a diagnostic for negative chunk counts, more than 4,096 distance values or non-finite distances before copying or mutating span attributes. Handle this telemetry diagnostic separately from the retrieval's business result/error. Finite distances may be negative; their scale belongs to the caller's metric contract.
 
-Evaluations follow the same link-based model for delayed/post-hoc adapter work:
+## Completed evaluation observations
+
+Create an app-scoped evaluation recorder from the tracker. It shares the provider, profile and payload policy but does not extend the execution runtime or run a grader:
 
 ```go
-if err := adapterTracker.RecordEvaluations(
-    ctx,
-    parsed,
-    []genai.Evaluation{
-        {
-            Metric:    genai.EvaluationFaithfulness,
-            Score:     0.91,
-            Reasoning: "Grounded in retrieved chunks.",
-        },
-        {
-            Metric: genai.EvaluationAnswerRelevance,
-            Score:  0.84,
-        },
+score := 0.91
+recorder := adapterTracker.EvaluationRecorder()
+if err := recorder.Record(ctx, genai.Evaluation{
+    ObservationID: "evaluation-42",
+    Metric:        genai.EvaluationFaithfulness,
+    Status:        genai.EvaluationSucceeded,
+    Score:         &score,
+    Reasoning:     "Grounded in retrieved chunks.",
+    TraceReference: &parsed, // optional; nil creates a standalone root
+    Association: genai.EvaluationAssociation{
+        ExperimentID:     "experiment",
+        DatasetReference: "dataset-content-digest",
+        CaseID:           "case-1",
+        TrialID:          "trial-2",
+        TargetReference:  "target-content-digest",
+        GraderReference:  "grader-content-digest",
     },
-    genai.WithSamplingKeep(),
-); err != nil {
+    ArtifactReference: "opaque-artifact-identity",
+}); err != nil {
     return err
 }
 ```
 
 `metry` does not provide trace mutation / PATCH APIs for updating finished spans—use Span Links for post-hoc feedback and evaluations.
 
+`ObservationID`, a static machine-readable `Metric`, and `Status` are required. A successful result has exactly one of finite `Score` (including zero; no universal range) or bounded `Outcome`. Failed/skipped results have neither, so they cannot silently become score zero. All six association fields are required when any experiment association field is supplied; otherwise association is optional. Dataset/target/grader references are opaque caller identities or content digests, not resources fetched by the library.
+
+Recording always creates a new root, optionally linked to a valid trace reference; an invalid supplied reference is rejected before export. The target need not have been sampled/exported. The recorder obeys normal sampling and never forces export. It does not infer execution absence, store artifacts or deduplicate deliveries. Repeated deliveries retain their observation identity, while trial/content identities distinguish changed inputs.
+
+The wire representation of IDs, outcomes and opaque references is a stable fingerprint in non-raw modes, retaining equality without exposing values; hashes are not anonymity. Explicit `WithRawPayloads()` preserves the supplied values. Reasoning is exported only when payload recording is enabled and passes the same sanitizer plus the event byte limit. Machine metric names must be static non-sensitive schema names. Custom linked attributes from the removed `RecordEvaluations` API are not carried forward: supply business association explicitly. `NoopEvaluationRecorder()` performs validation but drops telemetry.
+
 ## Payload truncation
 
-Payload/tool attributes are written as strings and truncated with UTF-8-safe truncation.
+Structured payload/tool attributes are JSON strings. Sanitization precedes encoding. Values that fit retain their shape; oversized values become a valid envelope with `truncated: true` and a retained prefix of top-level elements/fields when it fits. If no data fits, the envelope is just `{"truncated":true}`. Serialized JSON is never sliced. Plain-text tool inputs are encoded as JSON strings, not emitted as malformed JSON fragments.
 
 - Default max length: `65536` bytes.
 - Configure via `genai.WithMaxContextLength(bytes)`.
+- The minimum context budget is 18 bytes, sufficient for the marker-only envelope. Smaller/zero/negative configured budgets return a bounded configuration diagnostic; they do not silently restore the default.
+- Typed message payloads are limited to 4,096 messages per direction, 4,096 content parts across directions, 1 MiB aggregate input text/JSON, and JSON depth 32 before sanitizer work. Structured serialization also has a 1 MiB input cap. Tool JSON receives the same byte/depth checks before sanitization.
 - Span **event** text (e.g. LLM-judge reasoning on evaluation events when payloads are enabled) uses a separate, smaller default (`4096` bytes) via `genai.WithMaxEventLength`, because backends often cap event attributes more strictly than span attributes.
-- Truncated values may be non-valid JSON strings by design.
+- Text-only feedback/query/reasoning channels use UTF-8-safe text truncation, not a JSON envelope.
+
+Invalid/beyond-bound message payloads return `ObservationError` before operation/interaction writes. `RecordTraceIO` now returns an error and leaves the active span untouched on rejection. Invalid handle finalization can be corrected without consuming the finalization guard. Tool payload rejection omits the payload and records a bounded `metry.observation.rejected` event with field/rule; it never changes the tool's business outcome. Custom attributes are outside this checked payload boundary.
 
 ## HTTP middleware
 
@@ -430,6 +515,7 @@ Primary examples (run via `make test-examples`):
 | `examples/metrics_registry` | `TraceSnapshot` + registry metrics without OTel metric imports            |
 | `examples/executor`         | Root `metry.ExecutorWrap` for generic executors                           |
 | `examples/genai_recorder`   | `genai.Runtime` + payload policy + trace snapshot + tool lifecycle        |
+| `examples/genai_standalone` | Model/tool/retrieval without causal IDs, experiments or execution store |
 
 Adapter-level examples, kept to exercise low-level APIs:
 

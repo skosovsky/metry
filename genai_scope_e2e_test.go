@@ -17,7 +17,18 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("genai-scope-e2e"))
 
-	runtime, err := genai.NewRuntimeFromProvider(provider)
+	profile := genai.DefaultProfile()
+	for index := range profile.Dimensions {
+		switch profile.Dimensions[index].Key {
+		case genai.ProviderName:
+			profile.Dimensions[index].Values = []string{"openai"}
+		case genai.RequestModel, genai.ResponseModel:
+			profile.Dimensions[index].Values = []string{"gpt-4o-mini"}
+		case genai.OperationName:
+			profile.Dimensions[index].Values = append(profile.Dimensions[index].Values, "delivery.success")
+		}
+	}
+	runtime, err := genai.NewRuntimeFromProvider(provider, genai.WithProfile(profile))
 	require.NoError(t, err)
 
 	scope := genai.Scope{
@@ -62,7 +73,7 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 		Purpose: scope.Purpose,
 	}, genai.OperationResult{
 		Status: genai.OperationStatusOK,
-		Usage:  genai.Usage{InputTokens: 1},
+		Usage:  genai.Usage{InputTokens: genai.Observe(1, genai.UnitTokens, genai.SourceMeasured)},
 	}))
 	require.NoError(t, runtime.RecordAsyncTokenResult(consumerCtx, token, genai.AsyncResult{
 		Name:   "delivery.success",

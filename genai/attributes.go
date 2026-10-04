@@ -1,4 +1,3 @@
-// Package genai defines GenAI semantic-convention constants and helpers for metry.
 package genai
 
 // GenAI attribute names emitted by metry.

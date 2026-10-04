@@ -32,28 +32,35 @@ func (t *Tracker) startTool(
 	call ToolCall,
 	startOpts ...ToolOption,
 ) (context.Context, ToolEnd) {
-	toolName := normalizeToolName(call.Name)
+	toolName := toolNameWithConfig(call.Name, t.cfg)
 	call.Name = toolName
 
 	attrs := []attribute.KeyValue{
-		attribute.Key(OperationName).String("execute_tool"),
+		attribute.Key(OperationName).String(profileToolOperation),
 		attribute.Key(ToolName).String(toolName),
-		attribute.Key(ToolCallID).String(call.CallID),
+		attribute.Key(ToolCallID).String(referenceWithConfig(call.CallID, t.cfg)),
 	}
+	var payloadErr error
 	if t.cfg.RecordPayloads() && call.Arguments != "" {
-		call = t.cfg.PayloadPolicy().SanitizeToolCall(call)
-		if call.Arguments != "" {
-			attrs = append(attrs, attribute.Key(ToolCallArguments).String(
-				truncateContextWithConfig(call.Arguments, t.cfg),
-			))
+		payloadErr = validateToolJSONInput(call.Arguments)
+		if payloadErr == nil {
+			call = t.cfg.PayloadPolicy().SanitizeToolCall(call)
+			var encoded string
+			encoded, payloadErr = boundedToolJSON(call.Arguments, t.cfg)
+			if encoded != "" {
+				attrs = append(attrs, attribute.String(ToolCallArguments, encoded))
+			}
 		}
 	}
 
 	otelOpts := childSpanOptionsToOTel(startOpts...)
 	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
 	opts = append(opts, otelOpts...)
-	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...) //nolint:spancheck // caller ends span via ToolEnd.
+	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...)
 	span.SetAttributes(attrs...)
+	if payloadErr != nil {
+		recordPayloadDiagnostic(span, payloadErr)
+	}
 
 	state := &toolSpanState{
 		mu:        sync.Mutex{},
@@ -65,7 +72,7 @@ func (t *Tracker) startTool(
 	}
 	ctx = context.WithValue(ctx, toolSpanStateKey{}, state)
 
-	return ctx, func() { //nolint:spancheck // returned callback owns span end.
+	return ctx, func() {
 		state.endOnce.Do(func() {
 			status, errorType, elapsed := state.snapshot()
 			t.recordToolDuration(ctx, toolName, elapsed, status, errorType)
@@ -81,14 +88,7 @@ func (t *Tracker) recordToolResult(ctx context.Context, result ToolResult) {
 	}
 
 	mutateSpan(ctx, func(span trace.Span) {
-		if t.cfg.RecordPayloads() && result.Result != "" {
-			result = t.cfg.PayloadPolicy().SanitizeToolResult(result)
-			if result.Result != "" {
-				span.SetAttributes(attribute.Key(ToolCallResult).String(
-					truncateContextWithConfig(result.Result, t.cfg),
-				))
-			}
-		}
+		t.recordToolPayloadResult(span, result)
 		if status == OperationStatusError {
 			span.SetAttributes(
 				attribute.Key(ToolError).Bool(true),
@@ -100,6 +100,25 @@ func (t *Tracker) recordToolResult(ctx context.Context, result ToolResult) {
 		span.SetAttributes(attribute.Key(ToolError).Bool(false))
 		traceutil.SpanOK(span)
 	})
+}
+
+func (t *Tracker) recordToolPayloadResult(span trace.Span, result ToolResult) {
+	if !t.cfg.RecordPayloads() || result.Result == "" {
+		return
+	}
+	if err := validateToolJSONInput(result.Result); err != nil {
+		recordPayloadDiagnostic(span, err)
+		return
+	}
+	result = t.cfg.PayloadPolicy().SanitizeToolResult(result)
+	encoded, err := boundedToolJSON(result.Result, t.cfg)
+	if err != nil {
+		recordPayloadDiagnostic(span, err)
+		return
+	}
+	if encoded != "" {
+		span.SetAttributes(attribute.String(ToolCallResult, encoded))
+	}
 }
 
 func (s *toolSpanState) setResult(status, errorType string) {
@@ -139,7 +158,11 @@ func (t *Tracker) recordToolDuration(
 	if errorType != "" {
 		attrs = append(attrs, attribute.String(ToolMetricLabelErrorType, errorType))
 	}
-	t.metrics.ToolDuration.Record(ctx, elapsed.Seconds(), metric.WithAttributes(attrs...))
+	t.metrics.ToolDuration.Record(
+		ctx,
+		elapsed.Seconds(),
+		metric.WithAttributes(t.boundedMetricAttributes(ToolDurationMetricName, attrs)...),
+	)
 }
 
 func normalizeToolName(name string) string {

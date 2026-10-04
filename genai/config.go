@@ -10,6 +10,7 @@ const defaultMaxEventLength = 4096
 type Option func(*runtimeConfig)
 
 type runtimeConfig struct {
+	profile                 Profile
 	recordPayloads          bool
 	payloadPolicy           PayloadPolicy
 	maxContextLength        int
@@ -20,6 +21,7 @@ type runtimeConfig struct {
 
 func defaultRuntimeConfig() runtimeConfig {
 	return runtimeConfig{
+		profile:                 DefaultProfile(),
 		recordPayloads:          false,
 		payloadPolicy:           RedactPayloadPolicy(),
 		maxContextLength:        defaultMaxContextLength,
@@ -35,9 +37,6 @@ func buildRuntimeConfig(opts ...Option) runtimeConfig {
 		if opt != nil {
 			opt(&cfg)
 		}
-	}
-	if cfg.maxContextLength <= 0 {
-		cfg.maxContextLength = defaultMaxContextLength
 	}
 	if cfg.maxEventLength <= 0 {
 		cfg.maxEventLength = defaultMaxEventLength
@@ -100,15 +99,29 @@ func WithPayloadPolicy(policy PayloadPolicy) Option {
 		}
 		c.recordPayloads = true
 		c.payloadPolicy = policy
+		switch policy.(type) {
+		case rawPayloadPolicy:
+			c.profile.PayloadPolicyID = profileRawPolicy
+		case hashPayloadPolicy:
+			c.profile.PayloadPolicyID = profileHashPolicy
+		case redactPayloadPolicy:
+			c.profile.PayloadPolicyID = profileRedactPolicy
+		}
 	}
 }
 
 // WithRawPayloads enables raw payload export explicitly.
 func WithRawPayloads() Option {
-	return WithPayloadPolicy(RawPayloadPolicy())
+	return func(c *runtimeConfig) {
+		c.recordPayloads = true
+		c.payloadPolicy = RawPayloadPolicy()
+		c.profile.AllowRaw = true
+		c.profile.PayloadPolicyID = profileRawPolicy
+	}
 }
 
-// WithMaxContextLength sets the payload truncation limit for this tracker.
+// WithMaxContextLength sets the payload byte budget. Values below the minimum
+// JSON envelope size are rejected by the constructor, not silently defaulted.
 func WithMaxContextLength(bytes int) Option {
 	return func(c *runtimeConfig) {
 		c.maxContextLength = bytes

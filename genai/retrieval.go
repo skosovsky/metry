@@ -2,6 +2,7 @@ package genai
 
 import (
 	"context"
+	"math"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -37,16 +38,20 @@ func (t *Tracker) StartRetrievalSpan(
 ) (context.Context, func()) {
 	spanName := name
 	if spanName == "" {
-		spanName = "retrieval"
+		spanName = profileRetrievalOperation
 	}
+	spanName = metadataWithConfig(OperationName, spanName, t.cfg)
 
 	attrs := make([]attribute.KeyValue, 0, retrievalStartAttrCap)
-	attrs = append(attrs, attribute.Key(OperationName).String("retrieval"))
+	attrs = append(attrs, attribute.Key(OperationName).String(profileRetrievalOperation))
 	if req.Provider != "" {
-		attrs = append(attrs, attribute.Key(RetrievalProvider).String(req.Provider))
+		attrs = append(
+			attrs,
+			attribute.Key(RetrievalProvider).String(metadataWithConfig(ProviderName, req.Provider, t.cfg)),
+		)
 	}
 	if req.Source != "" {
-		attrs = append(attrs, attribute.Key(RetrievalSource).String(req.Source))
+		attrs = append(attrs, attribute.Key(RetrievalSource).String(referenceWithConfig(req.Source, t.cfg)))
 	}
 	if req.TopK > 0 {
 		attrs = append(attrs, attribute.Key(RetrievalTopK).Int(req.TopK))
@@ -65,7 +70,15 @@ func (t *Tracker) StartRetrievalSpan(
 }
 
 // RecordRetrievalResult writes retrieval result attributes on the span stored in ctx.
-func (t *Tracker) RecordRetrievalResult(ctx context.Context, result RetrievalResult) {
+func (t *Tracker) RecordRetrievalResult(ctx context.Context, result RetrievalResult) error {
+	if result.ReturnedChunks < 0 || len(result.Distances) > maxPayloadEntries {
+		return invalidObservation("retrieval_result", "input_bounds")
+	}
+	for _, distance := range result.Distances {
+		if math.IsNaN(distance) || math.IsInf(distance, 0) {
+			return invalidObservation("retrieval_distance", "non_finite")
+		}
+	}
 	mutateSpan(ctx, func(span trace.Span) {
 		attrs := []attribute.KeyValue{
 			attribute.Key(RetrievalReturnedChunks).Int(result.ReturnedChunks),
@@ -77,4 +90,5 @@ func (t *Tracker) RecordRetrievalResult(ctx context.Context, result RetrievalRes
 		span.SetAttributes(attrs...)
 		traceutil.SpanOK(span)
 	})
+	return nil
 }
