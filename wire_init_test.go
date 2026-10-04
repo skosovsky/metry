@@ -12,30 +12,12 @@ func TestWireInit_GenAIWireHooksNonNil(t *testing.T) {
 	if genaiwire.MeterTracer == nil {
 		t.Fatal("genaiwire.MeterTracer is nil after init")
 	}
-	if genaiwire.NewHintSampler == nil {
-		t.Fatal("genaiwire.NewHintSampler is nil after init")
-	}
 }
 
 func TestWireInit_MetryTestWireHooksNonNil(t *testing.T) {
-	if metrytestwire.SpanExporter == nil {
-		t.Fatal("metrytestwire.SpanExporter is nil after init")
-	}
-	if metrytestwire.MetricExporter == nil {
-		t.Fatal("metrytestwire.MetricExporter is nil after init")
-	}
 	if metrytestwire.NewProviderFromDeps == nil {
 		t.Fatal("metrytestwire.NewProviderFromDeps is nil after init")
 	}
-}
-
-func TestWireInit_NewHintSampler_RejectsWrongType(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic for non-TraceSampler base")
-		}
-	}()
-	_ = genaiwire.NewHintSampler("not-a-sampler")
 }
 
 func TestWireInit_MeterTracer_RejectsWrongType(t *testing.T) {

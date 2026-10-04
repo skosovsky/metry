@@ -134,7 +134,7 @@ func TestParseAsyncHandle_InvalidBase64_ReturnsErrInvalidAsyncHandle(t *testing.
 }
 
 func TestParseAsyncHandle_TokenTooLarge_ReturnsErrHandleTokenTooLarge(t *testing.T) {
-	token := strings.Repeat("A", 513)
+	token := strings.Repeat("A", 2049)
 	_, err := ParseAsyncHandle(token)
 	require.ErrorIs(t, err, ErrHandleTokenTooLarge)
 }

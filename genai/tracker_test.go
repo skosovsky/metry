@@ -28,8 +28,8 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	memTrace1 := testutil.NewInMemoryTraceExporter()
 	provider1, err := metry.New(context.Background(),
 		metry.WithServiceName("tracker-1"),
-		metry.WithExporter(metrytest.MetrySpanExporter(memTrace1)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric1)),
+		metry.WithExporter(memTrace1.SDKSpanExporter()),
+		metry.WithMetricExporter(memMetric1.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider1.Shutdown(context.Background()) })
@@ -38,8 +38,8 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	memTrace2 := testutil.NewInMemoryTraceExporter()
 	provider2, err := metry.New(context.Background(),
 		metry.WithServiceName("tracker-2"),
-		metry.WithExporter(metrytest.MetrySpanExporter(memTrace2)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric2)),
+		metry.WithExporter(memTrace2.SDKSpanExporter()),
+		metry.WithMetricExporter(memMetric2.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider2.Shutdown(context.Background()) })

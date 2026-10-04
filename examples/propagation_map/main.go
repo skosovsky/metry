@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/skosovsky/metry"
-	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -17,7 +16,7 @@ func run() int {
 	mem := testutil.NewInMemoryTraceExporter()
 	provider, err := metry.New(ctx,
 		metry.WithServiceName("propagation-map-example"),
-		metry.WithExporter(metrytest.MetrySpanExporter(mem)),
+		metry.WithExporter(mem.SDKSpanExporter()),
 	)
 	if err != nil {
 		log.Println(err)

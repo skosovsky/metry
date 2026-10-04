@@ -59,7 +59,7 @@ func TestSecurityEventEndedSpanCreatesChild(t *testing.T) {
 
 func TestSecurityEventRemoteContextRespectsSampler(t *testing.T) {
 	// Arrange.
-	provider, exporter := metrytest.NewTestProvider(t, metry.WithTraceRatio(0))
+	provider, exporter := metrytest.NewTestProvider(t, metry.WithSampler(metry.NeverSample()))
 	ctx := provider.ExtractFromMap(context.Background(), map[string]any{
 		"traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
 	})

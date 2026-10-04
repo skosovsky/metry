@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/skosovsky/metry"
-	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -17,7 +16,7 @@ func run() int {
 	metricMem := testutil.NewInMemoryMetricExporter()
 	provider, err := metry.New(ctx,
 		metry.WithServiceName("metrics-registry-example"),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	if err != nil {
 		log.Println(err)

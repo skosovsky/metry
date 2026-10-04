@@ -13,7 +13,6 @@ import (
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/skosovsky/metry"
-	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -64,7 +63,7 @@ func TestClientServerHandlers_PropagateTraceAndExportSpans(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-grpc-propagation"),
-		metry.WithExporter(metrytest.MetrySpanExporter(traceExporter)),
+		metry.WithExporter(traceExporter.SDKSpanExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })

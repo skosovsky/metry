@@ -12,7 +12,6 @@ import (
 
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/genai"
-	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -29,8 +28,8 @@ func main() {
 	metricMem := testutil.NewInMemoryMetricExporter()
 	provider, err := metry.New(ctx,
 		metry.WithServiceName("genai-recorder-example"),
-		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithExporter(traceMem.SDKSpanExporter()),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	if err != nil {
 		panic(err)

@@ -1,4 +1,4 @@
-package executor
+package metry_test
 
 import (
 	"bytes"
@@ -22,13 +22,13 @@ func TestWrap_NilOrIncompleteProvider_Panics(t *testing.T) {
 	next := func(context.Context, int) (int, error) { return 0, nil }
 
 	require.Panics(t, func() {
-		_ = Wrap(nil, "op", next)
+		_ = metry.ExecutorWrap(nil, "op", next)
 	})
 	require.Panics(t, func() {
-		_ = Wrap[int, int](&metry.Provider{}, "op", nil)
+		_ = metry.ExecutorWrap[int, int](&metry.Provider{}, "op", nil)
 	})
 	provider, _ := metrytest.NewTestProvider(t)
-	wrapped := Wrap(provider, "op", next)
+	wrapped := metry.ExecutorWrap(provider, "op", next)
 	require.NotNil(t, wrapped)
 }
 
@@ -39,7 +39,7 @@ func TestWrap_NilNext_Panics(t *testing.T) {
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
 
 	require.Panics(t, func() {
-		_ = Wrap[int, int](provider, "op", nil)
+		_ = metry.ExecutorWrap[int, int](provider, "op", nil)
 	})
 }
 
@@ -51,14 +51,14 @@ func TestWrap_Success_RecordsSpanAndMetrics(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-ok"),
-		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithExporter(traceMem.SDKSpanExporter()),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
 
 	const op = "test.operation.ok"
-	wrapped := Wrap(provider, op, func(_ context.Context, x int) (int, error) {
+	wrapped := metry.ExecutorWrap(provider, op, func(_ context.Context, x int) (int, error) {
 		return x * 2, nil
 	})
 
@@ -90,15 +90,15 @@ func TestWrap_Error_RecordsSpanErrorAndMetrics(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-err"),
-		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithExporter(traceMem.SDKSpanExporter()),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
 
 	wantErr := errors.New("boom")
 	const op = "test.operation.err"
-	wrapped := Wrap(provider, op, func(context.Context, struct{}) (struct{}, error) {
+	wrapped := metry.ExecutorWrap(provider, op, func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, wantErr
 	})
 
@@ -127,14 +127,14 @@ func TestWrap_Panic_RecordsMetricsAndReraises(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-panic"),
-		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithExporter(traceMem.SDKSpanExporter()),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
 
 	const op = "test.operation.panic"
-	wrapped := Wrap(provider, op, func(context.Context, int) (int, error) {
+	wrapped := metry.ExecutorWrap(provider, op, func(context.Context, int) (int, error) {
 		panic("abort")
 	})
 
@@ -163,14 +163,14 @@ func TestWrap_StartLog_ContainsTraceID(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	wrapped := Wrap(
+	wrapped := metry.ExecutorWrap(
 		provider,
 		"start.op",
 		func(context.Context, int) (int, error) {
 			return 42, nil
 		},
-		WithLogger(log),
-		WithLogStart(true),
+		metry.WithExecutorLogger(log),
+		metry.WithExecutorLogStart(true),
 	)
 
 	got, err := wrapped(ctx, 1)
@@ -191,7 +191,7 @@ func TestWrap_ErrorLog_ContainsTraceID(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-log"),
-		metry.WithExporter(metrytest.MetrySpanExporter(traceMem)),
+		metry.WithExporter(traceMem.SDKSpanExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
@@ -199,13 +199,13 @@ func TestWrap_ErrorLog_ContainsTraceID(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	wrapped := Wrap(
+	wrapped := metry.ExecutorWrap(
 		provider,
 		"log.op",
 		func(context.Context, int) (int, error) {
 			return 0, errors.New("fail")
 		},
-		WithLogger(log),
+		metry.WithExecutorLogger(log),
 	)
 
 	_, err = wrapped(ctx, 1)
@@ -227,13 +227,13 @@ func TestWrap_TwoWrapsSameProvider_ShareInstrumentCache(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("test-exec-shared-instr"),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
 
-	wA := Wrap(provider, "op.a", func(context.Context, int) (int, error) { return 1, nil })
-	wB := Wrap(provider, "op.b", func(context.Context, int) (int, error) { return 2, nil })
+	wA := metry.ExecutorWrap(provider, "op.a", func(context.Context, int) (int, error) { return 1, nil })
+	wB := metry.ExecutorWrap(provider, "op.b", func(context.Context, int) (int, error) { return 2, nil })
 
 	_, err = wA(ctx, 0)
 	require.NoError(t, err)
@@ -257,14 +257,14 @@ func TestWrap_WithLogErrorFalse_SkipsErrorLog(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	wrapped := Wrap(
+	wrapped := metry.ExecutorWrap(
 		provider,
 		"silent.op",
 		func(context.Context, int) (int, error) {
 			return 0, errors.New("fail")
 		},
-		WithLogger(log),
-		WithLogError(false),
+		metry.WithExecutorLogger(log),
+		metry.WithExecutorLogError(false),
 	)
 
 	_, err = wrapped(ctx, 1)

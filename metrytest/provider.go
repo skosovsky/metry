@@ -15,7 +15,7 @@ func NewTestProvider(t *testing.T, opts ...metry.Option) (*metry.Provider, *test
 	mem := testutil.NewInMemoryTraceExporter()
 	allOpts := append([]metry.Option{
 		metry.WithServiceName("test"),
-		metry.WithExporter(MetrySpanExporter(mem)),
+		metry.WithExporter(mem.SDKSpanExporter()),
 	}, opts...)
 	provider, err := metry.New(context.Background(), allOpts...)
 	if err != nil {

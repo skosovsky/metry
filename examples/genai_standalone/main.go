@@ -6,7 +6,6 @@ import (
 
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/genai"
-	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -16,7 +15,7 @@ func main() {
 	ctx := context.Background()
 	exporter := testutil.NewInMemoryTraceExporter()
 	provider, err := metry.New(ctx, metry.WithServiceName("standalone-inference"),
-		metry.WithExporter(metrytest.MetrySpanExporter(exporter)))
+		metry.WithExporter(exporter.SDKSpanExporter()))
 	if err != nil {
 		panic(err)
 	}

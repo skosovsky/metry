@@ -17,7 +17,7 @@ func TestMetricsRegistry_TraceSnapshotWorkerFlow(t *testing.T) {
 	memMetric := testutil.NewInMemoryMetricExporter()
 	provider, err := metry.New(ctx,
 		metry.WithServiceName("metrics-registry-e2e"),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric)),
+		metry.WithMetricExporter(memMetric.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })

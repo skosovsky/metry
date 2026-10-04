@@ -44,7 +44,7 @@ func (e *InMemoryTraceExporter) SDKSpanExporter() sdktrace.SpanExporter {
 }
 
 // SpanExporter returns the underlying OpenTelemetry SDK span exporter.
-// Use metrytest.MetrySpanExporter(exporter) for metry.WithExporter.
+// Use exporter.SDKSpanExporter() for metry.WithExporter.
 func (e *InMemoryTraceExporter) SpanExporter() sdktrace.SpanExporter {
 	return e.ex
 }
@@ -152,7 +152,7 @@ func (e *InMemoryMetricExporter) SDKExporter() sdkmetric.Exporter {
 }
 
 // Exporter returns the underlying OpenTelemetry SDK metric exporter.
-// Use metrytest.MetryMetricExporter(exporter) for metry.WithMetricExporter.
+// Use exporter.SDKExporter() for metry.WithMetricExporter.
 func (e *InMemoryMetricExporter) Exporter() sdkmetric.Exporter {
 	return e
 }

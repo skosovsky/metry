@@ -1,6 +1,11 @@
 // Package metry provides a zero-boilerplate OpenTelemetry and LLMOps hub for Go AI applications.
 package metry
 
+import (
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+)
+
 // Option configures New. Use WithServiceName, WithTraceRatio, etc.
 type Option func(*config)
 
@@ -10,14 +15,15 @@ type config struct {
 	ServiceVersion string
 	Environment    string
 	TraceRatio     float64
-	Sampler        TraceSampler
-	Exporter       SpanExporter
-	MetricExporter MetricExporter
+	Sampler        sdktrace.Sampler
+	Exporter       sdktrace.SpanExporter
+	MetricExporter sdkmetric.Exporter
+	invalid        bool
 }
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
 //
-//nolint:exhaustruct_v5 // opaque sampler/exporter wrappers default to zero values
+//nolint:exhaustruct_v5 // optional SDK interfaces default to nil
 func newConfig() *config {
 	return &config{
 		ServiceName:    "",
@@ -42,23 +48,23 @@ func WithEnvironment(env string) Option {
 	return func(c *config) { c.Environment = env }
 }
 
-// WithTraceRatio sets the fraction of traces to sample (1.0 = 100%, 0.0 = disable).
+// WithTraceRatio sets the fraction of new root traces to sample; children inherit their parent.
 func WithTraceRatio(ratio float64) Option {
 	return func(c *config) { c.TraceRatio = ratio }
 }
 
 // WithSampler sets a custom head-based sampler for tracing.
-// When provided, this sampler takes precedence over WithTraceRatio.
-func WithSampler(sampler TraceSampler) Option {
-	return func(c *config) { c.Sampler = sampler }
+// When provided, this sampler takes precedence over WithTraceRatio and is not wrapped.
+func WithSampler(sampler sdktrace.Sampler) Option {
+	return func(c *config) { c.invalid = c.invalid || nilDependency(sampler); c.Sampler = sampler }
 }
 
 // WithExporter sets the span exporter. If not set, a no-op exporter is used.
-func WithExporter(exp SpanExporter) Option {
-	return func(c *config) { c.Exporter = exp }
+func WithExporter(exp sdktrace.SpanExporter) Option {
+	return func(c *config) { c.invalid = c.invalid || nilDependency(exp); c.Exporter = exp }
 }
 
 // WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
-func WithMetricExporter(exp MetricExporter) Option {
-	return func(c *config) { c.MetricExporter = exp }
+func WithMetricExporter(exp sdkmetric.Exporter) Option {
+	return func(c *config) { c.invalid = c.invalid || nilDependency(exp); c.MetricExporter = exp }
 }

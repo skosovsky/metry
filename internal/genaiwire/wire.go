@@ -9,9 +9,5 @@ import (
 // MeterTracer resolves GenAI meter and tracer from a provider.
 var MeterTracer func(p any) (metric.Meter, trace.Tracer, error)
 
-// NewHintSampler wraps a base sampler with GenAI keep-hint support.
-// The argument and result are metry.TraceSampler values; any avoids an import cycle with metry.
-var NewHintSampler func(base any) any
-
 // AsyncSpanContext resolves an opaque async token for internal causal linking.
 var AsyncSpanContext func(handle any) (trace.SpanContext, error)

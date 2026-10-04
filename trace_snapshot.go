@@ -9,9 +9,11 @@ import (
 
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry/internal/traceutil"
 )
 
-const maxTraceSnapshotTokenLen = 2048
+const maxTraceSnapshotTokenLen = traceutil.MaxTokenBytes
 
 var (
 	// ErrNoTraceSnapshot is returned when no valid trace context can be captured.
@@ -67,7 +69,7 @@ func (s TraceSnapshot) Marshal() (string, error) {
 	if !s.IsValid() {
 		return "", ErrInvalidTraceSnapshot
 	}
-	raw, err := json.Marshal(traceSnapshotPayload{
+	raw, err := traceutil.MarshalToken(traceSnapshotPayload{
 		TraceParent: s.traceParent,
 		TraceState:  s.traceState,
 	})
@@ -103,6 +105,12 @@ func (p *Provider) ContextWithTraceSnapshot(ctx context.Context, snapshot TraceS
 }
 
 func newTraceSnapshot(traceParent, traceState string) (TraceSnapshot, error) {
+	if _, err := trace.ParseTraceState(traceState); err != nil {
+		return TraceSnapshot{}, ErrInvalidTraceSnapshot
+	}
+	if len(traceState) > traceutil.MaxTraceStateBytes {
+		return TraceSnapshot{}, ErrTraceSnapshotTokenTooLarge
+	}
 	snapshot := TraceSnapshot{
 		traceParent: traceParent,
 		traceState:  traceState,

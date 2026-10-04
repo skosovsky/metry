@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,10 @@ type Provider struct {
 
 	tp *sdktrace.TracerProvider
 	mp *sdkmetric.MeterProvider
+
+	executorOnce    sync.Once
+	executorMetrics *executorInstruments
+	executorErr     error
 
 	shutdownOnce sync.Once
 	shutdownErr  error
@@ -75,10 +81,18 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 
 	cfg := newConfig()
 	for _, o := range opts {
+		if o == nil {
+			return nil, ErrInvalidConfiguration
+		}
 		o(cfg)
 	}
-	if cfg.ServiceName == "" {
+	if strings.TrimSpace(cfg.ServiceName) == "" {
 		return nil, ErrServiceNameRequired
+	}
+
+	if cfg.invalid || math.IsNaN(cfg.TraceRatio) || math.IsInf(cfg.TraceRatio, 0) || cfg.TraceRatio < 0 ||
+		cfg.TraceRatio > 1 {
+		return nil, ErrInvalidConfiguration
 	}
 
 	customAttrs := []attribute.KeyValue{
@@ -98,13 +112,13 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 		return nil, fmt.Errorf("metry: merge resource: %w", err)
 	}
 
-	exp := spanExporterSDK(cfg.Exporter)
+	exp := cfg.Exporter
 	if exp == nil {
 		exp = noopSpanExporter{}
 	}
-	sampler := traceSamplerSDK(cfg.Sampler)
+	sampler := cfg.Sampler
 	if sampler == nil {
-		sampler = sdktrace.TraceIDRatioBased(cfg.TraceRatio)
+		sampler = sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.TraceRatio))
 	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithResource(res),
@@ -114,7 +128,7 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 
 	activeMeter := metric.MeterProvider(noopmetric.NewMeterProvider())
 	var mp *sdkmetric.MeterProvider
-	if metricExp := metricExporterSDK(cfg.MetricExporter); metricExp != nil {
+	if metricExp := cfg.MetricExporter; metricExp != nil {
 		mp = sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
 			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
@@ -127,7 +141,7 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 		propagation.Baggage{},
 	)
 
-	return &Provider{
+	return &Provider{ //nolint:exhaustruct_v5 // executor instruments are initialized lazily.
 		otelTracer:   tp,
 		otelMeter:    activeMeter,
 		propagator:   propagator,

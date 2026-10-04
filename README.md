@@ -17,7 +17,7 @@ Use matching versions of `metry` and `metry/middleware/grpc` after the stateless
 
 **Migration (task16):** use `genai.Runtime`, explicit `PayloadPolicy`, `TraceSnapshot` for durable resume, runtime-owned async outcomes, and typed tool error classes. Historical task14 notes live in [`.cursor/docs/task14-migration.md`](.cursor/docs/task14-migration.md), but task16 supersedes carrier-map queue guidance and narrow recorder wiring.
 
-`middleware/http` and [`middleware/executor`](middleware/executor) are thin aliases for root APIs `metry.HTTPHandler` and `metry.ExecutorWrap`. Prefer the root imports when starting new code; subpackages remain for stable import paths.
+HTTP and generic execution use root `metry.HTTPHandler` and `metry.ExecutorWrap`. gRPC is an optional integration module; core does not import gRPC. See [integration and clear-break migration](INTEGRATION.md).
 
 ## Quick start
 
@@ -38,8 +38,7 @@ func setup(ctx context.Context) (*metry.Provider, genai.Runtime, error) {
         metry.WithTraceRatio(1.0),
         // Optional: override ratio with a custom head sampler.
         // metry.WithSampler(genai.NewHintSampler(metry.TraceIDRatioBased(0.1))),
-        // metry.WithExporter(...),
-        // metry.WithMetricExporter(...),
+        // Without exporters this is a noop pipeline; see production wiring below.
     )
     if err != nil {
         return nil, nil, err
@@ -56,7 +55,42 @@ func setup(ctx context.Context) (*metry.Provider, genai.Runtime, error) {
 ```
 
 `metry.New(...)` is stateless and does not mutate global OTel providers.
-`WithSampler(...)` is head-based and takes precedence over `WithTraceRatio(...)`.
+The default sampler inherits a valid parent decision and uses the ratio for roots.
+`WithSampler(...)` accepts an SDK sampler as supplied and takes precedence over `WithTraceRatio(...)`.
+
+## Production wiring
+
+At the composition root, pass standard OTel exporters directly. For example, with
+`go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp` installed:
+
+```go
+exporter, err := otlptracehttp.New(ctx,
+    otlptracehttp.WithEndpoint("localhost:4318"),
+    otlptracehttp.WithInsecure(), // local collector only
+)
+if err != nil {
+    return err
+}
+provider, err := metry.New(ctx,
+    metry.WithServiceName("my-service"),
+    metry.WithExporter(exporter),
+)
+if err != nil {
+    _ = exporter.Shutdown(ctx) // failed construction retains caller ownership
+    return err
+}
+defer provider.Shutdown(ctx) // successful construction owns its exporter
+```
+
+Metric exporters use `metry.WithMetricExporter(exporter)`. To reuse an existing
+SDK pipeline, use `metry.FromSDK(metry.SDKDependencies{TracerProvider: tp,
+MeterProvider: mp, Propagator: propagator})`. Dependencies are borrowed:
+`Shutdown` and `ForceFlush` leave them untouched; `FlushDependencies(ctx)` is an
+explicit opt-in to flush them. The host closes its own SDK providers.
+`Provider.SDK()` exposes the narrow composition-root bridge used by transport
+adapters. Ordinary recording code uses the neutral metry APIs.
+
+A real loopback OTLP trace/metric consumer test lives in `integration/otlp`.
 
 ## Provider lifecycle
 
@@ -324,6 +358,9 @@ Advanced: optional typed span options (e.g. `genai.WithSamplingKeep()`) do not r
 
 ## Domain metrics registry
 
+Metric names and label values must be static or bounded by the host. The generic
+registry does not inherit the GenAI series budget.
+
 Register histograms, counters, and gauges at init; record at runtime with typed labels (no `go.opentelemetry.io/otel/metric` in host code):
 
 ```go
@@ -459,23 +496,23 @@ Invalid/beyond-bound message payloads return `ObservationError` before operation
 ## HTTP middleware
 
 ```go
-import metryhttp "github.com/skosovsky/metry/middleware/http"
+import "github.com/skosovsky/metry"
 
-handler := metryhttp.Handler(provider, next, "http.request")
+handler := metry.HTTPHandler(provider, next, "http.request")
 ```
 
 ## Generic execution telemetry
 
-Use `metry.ExecutorWrap` (or the thin alias `middleware/executor.Wrap`) to instrument any function with shape `func(context.Context, Req) (Res, error)` (database calls, LLM clients, internal pipelines) without tying it to HTTP or gRPC.
+Use `metry.ExecutorWrap` to instrument any function with shape `func(context.Context, Req) (Res, error)` (database calls, LLM clients, internal pipelines) without tying it to HTTP or gRPC.
 
-**Logging:** structured logs (start, errors, panics) are emitted only when you pass `slog` via `executor.WithLogger`. Without a logger you still get **traces and metrics** only. Start and error/panic lines include `trace_id` when the span has a W3C trace id. **Request/response bodies are never logged** on purpose (PII / payload safety); this is library policy, not an omission.
+**Logging:** structured logs (start, errors, panics) are emitted only when you pass `slog` via `metry.WithExecutorLogger`. Without a logger you still get **traces and metrics** only. Start and error/panic lines include `trace_id` when the span has a W3C trace id. **Request/response bodies are never logged** on purpose (PII / payload safety); this is library policy, not an omission.
 
-**Options:** `WithLogStart` / `WithLogError` map to optional telemetry in the task spec; there is no response-body logging (`LogResponses`) unless introduced in a separate change.
+**Options:** `WithExecutorLogStart` / `WithExecutorLogError` map to optional telemetry in the task spec; there is no response-body logging (`LogResponses`) unless introduced in a separate change.
 
 ```go
-import metryexec "github.com/skosovsky/metry/middleware/executor"
+import "github.com/skosovsky/metry"
 
-run := metryexec.Wrap(provider, "my.pipeline.step", func(ctx context.Context, req MyReq) (MyRes, error) {
+run := metry.ExecutorWrap(provider, "my.pipeline.step", func(ctx context.Context, req MyReq) (MyRes, error) {
     return doWork(ctx, req)
 })
 res, err := run(ctx, req)
@@ -494,7 +531,7 @@ func (f ExecutorFunc[Req, Res]) Execute(ctx context.Context, req Req) (Res, erro
     return f(ctx, req)
 }
 
-wrapped := metryexec.Wrap(provider, "my_op", myLogic)
+wrapped := metry.ExecutorWrap(provider, "my_op", myLogic)
 var exec Executor[MyReq, MyRes] = ExecutorFunc[MyReq, MyRes](wrapped)
 res, err := exec.Execute(ctx, req)
 ```

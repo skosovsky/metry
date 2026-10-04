@@ -8,9 +8,11 @@ import (
 	"fmt"
 
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry/internal/traceutil"
 )
 
-const maxHandleTokenLen = 512
+const maxHandleTokenLen = traceutil.MaxTokenBytes
 
 // ErrNoSpanContext is returned when NewHandle is called without a valid span in context.
 var ErrNoSpanContext = errors.New("metry/async: no valid span context in context")
@@ -78,6 +80,9 @@ func (h Handle) Marshal() (string, error) {
 	if !h.spanContext.IsValid() {
 		return "", ErrInvalidHandle
 	}
+	if len(h.spanContext.TraceState().String()) > traceutil.MaxTraceStateBytes {
+		return "", ErrHandleTokenTooLarge
+	}
 	payload := handlePayload{
 		TraceID:    h.spanContext.TraceID().String(),
 		SpanID:     h.spanContext.SpanID().String(),
@@ -85,7 +90,7 @@ func (h Handle) Marshal() (string, error) {
 		TraceState: h.spanContext.TraceState().String(),
 		Remote:     h.spanContext.IsRemote(),
 	}
-	raw, err := json.Marshal(payload)
+	raw, err := traceutil.MarshalToken(payload)
 	if err != nil {
 		return "", fmt.Errorf("metry/async: marshal handle: %w", err)
 	}
@@ -111,6 +116,9 @@ func ParseHandle(token string) (Handle, error) {
 	var payload handlePayload
 	if unmarshalErr := json.Unmarshal(raw, &payload); unmarshalErr != nil {
 		return Handle{}, ErrInvalidHandle
+	}
+	if len(payload.TraceState) > traceutil.MaxTraceStateBytes {
+		return Handle{}, ErrHandleTokenTooLarge
 	}
 	traceID, err := trace.TraceIDFromHex(payload.TraceID)
 	if err != nil {

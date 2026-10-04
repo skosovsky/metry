@@ -4,13 +4,15 @@ import (
 	"context"
 	"testing"
 
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+
 	"github.com/skosovsky/metry/testutil"
 )
 
 func newTestProvider(t *testing.T, opts ...Option) (*Provider, *testutil.InMemoryTraceExporter) {
 	t.Helper()
 	mem := testutil.NewInMemoryTraceExporter()
-	allOpts := append([]Option{WithServiceName("test"), WithExporter(mustSpanExporter(mem))}, opts...)
+	allOpts := append([]Option{WithServiceName("test"), WithExporter(mem.SDKSpanExporter())}, opts...)
 	provider, err := New(context.Background(), allOpts...)
 	if err != nil {
 		t.Fatalf("newTestProvider: %v", err)
@@ -19,6 +21,6 @@ func newTestProvider(t *testing.T, opts ...Option) (*Provider, *testutil.InMemor
 	return provider, mem
 }
 
-func testMetricExporter(mem *testutil.InMemoryMetricExporter) MetricExporter {
-	return mustMetricExporter(mem)
+func testMetricExporter(mem *testutil.InMemoryMetricExporter) sdkmetric.Exporter {
+	return mem.SDKExporter()
 }

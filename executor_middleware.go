@@ -2,11 +2,8 @@ package metry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"reflect"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -81,7 +78,7 @@ func ExecutorWrap[Req, Res any](
 		o(&cfg)
 	}
 
-	instr, err := getOrCreateExecutorInstruments(provider.meterProvider(), executorMeterName)
+	instr, err := provider.executorInstruments()
 	if err != nil {
 		panic(err)
 	}
@@ -179,16 +176,6 @@ const (
 	ExecutorCallsMetricName = executorCallsMetricName
 )
 
-type executorInstrumentsCacheKey struct {
-	meterProviderPtr uintptr
-	scope            string
-}
-
-//nolint:gochecknoglobals // process-wide instrument cache; keys isolate distinct MeterProvider instances.
-var executorInstrumentsCache sync.Map // executorInstrumentsCacheKey -> *executorInstruments
-
-var errExecutorInstrumentsCacheCorrupt = errors.New("metry: executor instruments cache corrupted")
-
 type executorInstruments struct {
 	duration metric.Float64Histogram
 	calls    metric.Int64Counter
@@ -213,55 +200,11 @@ func newExecutorInstruments(m metric.Meter) (*executorInstruments, error) {
 	return &executorInstruments{duration: hist, calls: cnt}, nil
 }
 
-func executorMeterProviderIdentity(mp metric.MeterProvider) (uintptr, bool) {
-	if mp == nil {
-		return 0, false
-	}
-	return executorReflectValueIdentity(reflect.ValueOf(mp))
-}
-
-func executorReflectValueIdentity(v reflect.Value) (uintptr, bool) {
-	switch v.Kind() {
-	case reflect.Pointer:
-		if v.IsNil() {
-			return 0, false
-		}
-		return v.Pointer(), true
-	case reflect.Interface:
-		if v.IsNil() {
-			return 0, false
-		}
-		return executorReflectValueIdentity(v.Elem())
-	default:
-		return 0, false
-	}
-}
-
-func getOrCreateExecutorInstruments(mp metric.MeterProvider, scope string) (*executorInstruments, error) {
-	id, ok := executorMeterProviderIdentity(mp)
-	if !ok {
-		return newExecutorInstruments(mp.Meter(scope))
-	}
-	key := executorInstrumentsCacheKey{meterProviderPtr: id, scope: scope}
-	if v, ok := executorInstrumentsCache.Load(key); ok {
-		out, okCast := v.(*executorInstruments)
-		if !okCast {
-			return nil, errExecutorInstrumentsCacheCorrupt
-		}
-		return out, nil
-	}
-	inst, err := newExecutorInstruments(mp.Meter(scope))
-	if err != nil {
-		return nil, err
-	}
-	if v, loaded := executorInstrumentsCache.LoadOrStore(key, inst); loaded {
-		out, okCast := v.(*executorInstruments)
-		if !okCast {
-			return nil, errExecutorInstrumentsCacheCorrupt
-		}
-		return out, nil
-	}
-	return inst, nil
+func (p *Provider) executorInstruments() (*executorInstruments, error) {
+	p.executorOnce.Do(func() {
+		p.executorMetrics, p.executorErr = newExecutorInstruments(p.meterProvider().Meter(executorMeterName))
+	})
+	return p.executorMetrics, p.executorErr
 }
 
 func (i *executorInstruments) record(ctx context.Context, operation, status string, durationSec float64) {

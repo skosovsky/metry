@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/metry"
@@ -28,7 +30,7 @@ func newTestTrackerWithMetrics(
 	memMetric := testutil.NewInMemoryMetricExporter()
 	provider, memTrace := metrytest.NewTestProvider(t,
 		metry.WithServiceName("genai-test"),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(memMetric)),
+		metry.WithMetricExporter(memMetric.SDKExporter()),
 	)
 	opts = append([]Option{WithProfile(testInstrumentationProfile())}, opts...)
 	tracker, err := NewTrackerFromProvider(provider, opts...)
@@ -38,7 +40,7 @@ func newTestTrackerWithMetrics(
 
 func newTestTrackerWithSampler(
 	t *testing.T,
-	sampler metry.TraceSampler,
+	sampler sdktrace.Sampler,
 ) (*Tracker, *metry.Provider, *testutil.InMemoryTraceExporter) {
 	t.Helper()
 	provider, mem := metrytest.NewTestProvider(t,

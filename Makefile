@@ -1,5 +1,7 @@
 GO      := go
 MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \;)
+# Consumer fixtures are tested and linted but are not published modules.
+RELEASE_MODULES := $(filter-out ./integration/%,$(MODULES))
 
 .PHONY: lint fix test test-examples bench bench-hotpath fuzz cover release-patch release-break
 
@@ -55,8 +57,8 @@ cover:
 
 release-patch: lint test ## v0.5.0 -> v0.5.1
 	@chmod +x ./scripts/release.sh
-	@./scripts/release.sh patch "$(MODULES)"
+	@./scripts/release.sh patch "$(RELEASE_MODULES)"
 
 release-break: lint test ## v0.5.1 -> v0.6.0
 	@chmod +x ./scripts/release.sh
-	@./scripts/release.sh break "$(MODULES)"
+	@./scripts/release.sh break "$(RELEASE_MODULES)"

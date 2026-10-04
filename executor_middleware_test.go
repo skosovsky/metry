@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/skosovsky/metry"
-	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
@@ -19,8 +18,8 @@ func TestExecutorWrap_CreatesSpan(t *testing.T) {
 	provider, err := metry.New(
 		ctx,
 		metry.WithServiceName("root-exec"),
-		metry.WithExporter(metrytest.MetrySpanExporter(mem)),
-		metry.WithMetricExporter(metrytest.MetryMetricExporter(metricMem)),
+		metry.WithExporter(mem.SDKSpanExporter()),
+		metry.WithMetricExporter(metricMem.SDKExporter()),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = provider.Shutdown(ctx) })
