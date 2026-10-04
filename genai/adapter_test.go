@@ -28,11 +28,11 @@ func (a fakeProviderAdapter) ParseRequest(_ any) (Payload, Meta, error) {
 	return a.reqPayload, a.reqMeta, nil
 }
 
-func (a fakeProviderAdapter) ParseResponse(_ any) (Payload, Usage, error) {
+func (a fakeProviderAdapter) ParseResponse(_ any) (ResponseObservation, error) {
 	if a.respErr != nil {
-		return Payload{}, Usage{}, a.respErr
+		return ResponseObservation{}, a.respErr
 	}
-	return a.respPayload, a.respUsage, nil
+	return ResponseObservation{Payload: a.respPayload, Usage: a.respUsage}, nil
 }
 
 func TestRecordModelInteraction_HappyPath_MatchesDirectRecordInteraction(t *testing.T) {

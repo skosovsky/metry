@@ -82,7 +82,7 @@ func TestRuntime_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, OperationStatusError, testutil.SpanStubStringAttr(t, spans[0], OperationStatus))
-	assert.Equal(t, OperationStatusError, testutil.SpanStubStringAttr(t, spans[0], ErrorType))
+	assert.Equal(t, string(ErrorClassUnknown), testutil.SpanStubStringAttr(t, spans[0], ErrorType))
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
 }
 
@@ -119,7 +119,8 @@ func TestNoopRuntime_DropsOperationsWithoutPanic(t *testing.T) {
 		Operation{Name: "noop"},
 		OperationResult{Status: OperationStatusOK},
 	))
-	ctx, end := rec.StartTool(context.Background(), ToolCall{Name: "search"})
-	rec.RecordToolResult(ctx, ToolResult{Result: `{"ok":true}`})
-	require.NotPanics(t, func() { end() })
+	_, handle, err := rec.StartTool(context.Background(), ToolCall{Name: "search"})
+	require.NoError(t, err)
+	require.NoError(t, handle.Finish(ToolResult{Status: OperationStatusOK, Result: `{"ok":true}`}))
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 }

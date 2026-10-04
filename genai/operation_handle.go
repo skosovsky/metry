@@ -87,11 +87,12 @@ func startOperation(
 		Operation:     operation.Name,
 		Purpose:       operation.Purpose,
 		RequestModel:  operation.Model,
-		ResponseModel: operation.Model,
+		ResponseModel: "",
 		ServerAddress: "",
 		ServerPort:    0,
 		Duration:      0,
 		ErrorType:     "",
+		Status:        "",
 	}
 	meta = mergeMetaFromScope(ctx, meta)
 	started := time.Now()
@@ -196,8 +197,17 @@ func recordingLinks(ctx context.Context, options RecordingOptions) ([]trace.Link
 // successful finishes record once; later callers receive ErrFinalized. Business
 // execution results remain the caller's responsibility even on telemetry error.
 func (h *OperationHandle) Finish(result OperationResult) error {
-	if h == nil {
+	if h == nil || h.started.IsZero() {
 		return invalidObservation("recording", "missing")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished {
+		return ErrFinalized
+	}
+	status, class, outcomeErr := resolveModelOutcome(result.Status, result.ErrorType)
+	if outcomeErr != nil {
+		return outcomeErr
 	}
 	if result.Duration != 0 {
 		return invalidObservation("duration", "measured_locally")
@@ -210,11 +220,6 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 		if err := result.Usage.Validate(); err != nil {
 			return err
 		}
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.finished {
-		return ErrFinalized
 	}
 	finished := time.Now()
 	meta := h.meta
@@ -233,8 +238,9 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 		return err
 	}
 	h.finished = true
-	status := normalizeOperationStatus(result.Status, result.ErrorType)
-	meta.ErrorType = normalizeOperationErrorType(status, result.ErrorType)
+	meta.Status = Outcome(status)
+	meta.ErrorType = class
+	meta.ResponseModel = result.Response.Model
 	h.span.SetAttributes(attribute.String(OperationStatus, status))
 	h.tracker.recordInteractionOnSpan(
 		h.ctx,
@@ -255,8 +261,13 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 // adding it to metrics. Only Finish commits usage/cost; metry never estimates a
 // missing final total from partial updates.
 func (h *OperationHandle) RecordStreamingUpdate(usage Usage) error {
-	if h == nil {
+	if h == nil || h.started.IsZero() {
 		return invalidObservation("recording", "missing")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished {
+		return ErrFinalized
 	}
 	if h.tracker != nil {
 		if err := h.tracker.validateUsage(usage); err != nil {
@@ -267,10 +278,30 @@ func (h *OperationHandle) RecordStreamingUpdate(usage Usage) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// Close ends the observation with unknown outcome and no inferred resources.
+func (h *OperationHandle) Close() error {
+	if h == nil || h.started.IsZero() {
+		return invalidObservation("recording", "missing")
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.finished {
 		return ErrFinalized
 	}
+	h.finished = true
+	if h.tracker == nil {
+		return nil
+	}
+	meta := h.meta
+	meta.Status = OperationStatusUnset
+	meta.ErrorType = ""
+	meta.ResponseModel = ""
+	meta.Duration = time.Since(h.started)
+	var usage Usage
+	h.tracker.recordInteractionOnSpan(h.ctx, h.span, meta, nil, usage, h.identity.Kind != IdentityLogical)
+	h.span.End()
 	return nil
 }

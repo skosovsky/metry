@@ -19,8 +19,24 @@ root; metry does not own execution, retry decisions, storage or pricing.
 | Serialized JSON sliced as text | Structural prefix/envelope with `truncated: true` | Minimum byte budget fits the marker-only envelope; text channels retain text truncation | Parse the truncation envelope, configure a sufficient budget; do not attempt to repair invalid JSON fragments |
 | Unbounded sanitizer inputs or inline media bodies | Input byte/depth/count limits; media references only, no fetching | Limits precede sanitizer work; even raw mode rejects inline declared media bodies | Keep binary content/artifacts in host storage; submit bounded opaque references |
 | Arbitrary adapter error messages wrapped into diagnostics | Bounded request/response `parse_failed` diagnostic | Original adapter errors are not exported or wrapped | Handle original errors within the host adapter; do not depend on `errors.Is` matching arbitrary adapter errors |
-| Retrieval output attributes written without validation | `RecordRetrievalResult` returns an error before invalid writes | Finite distances; bounded arrays; nonnegative count; no imposed distance scale | Handle telemetry diagnostics separately from business results; check returned errors |
+| Retrieval output attributes written without validation | `RetrievalHandle.Finish` returns an error before invalid writes | Finite distances; bounded arrays; nonnegative count; no imposed distance scale | Handle telemetry diagnostics separately from business results; check returned errors |
 | Completed observation or standalone streaming completion without operation name silently dropped usage metrics | Effective operation name required, resolved from caller scope when omitted | Required `gen_ai.operation.name`; malformed name rejected before span/metric writes, including noop paths | Supply an operation name or `Scope.Operation`; model/purpose alone is insufficient |
+
+## Outcome and handle clear break
+
+The following signatures are removed, with no compatibility wrappers:
+
+- `Runtime.StartTool(ctx, call, opts...) (context.Context, ToolEnd)` and `Runtime.RecordToolResult(ctx, result)` become `Runtime.StartTool(ctx, call, opts...) (context.Context, *ToolHandle, error)` and `ToolHandle.Finish(result) error`.
+- `Tracker.StartRetrievalSpan(ctx, name, request, opts...)` and `Tracker.RecordRetrievalResult(ctx, result)` become `Tracker.StartRetrieval(ctx, name, request, opts...) (context.Context, *RetrievalHandle, error)` and `RetrievalHandle.Finish(result) error`. Runtime exposes the same start method.
+- Adapter `ParseResponse(any) (Payload, Usage, error)` becomes `ParseResponse(any) (ResponseObservation, error)`. Return all observed response facts from that call: `Payload`, `Usage`, `Metadata: ResponseMetadata{Model: actualModel}`, `Status` and `ErrorType`. Domain request/response types require no metry interface, and adapters require no mutable request state.
+
+All operation, tool and retrieval handles expose `Close() error`. Start before host I/O; finish after I/O. Defer `Close` to cover exits that cannot provide a valid result. A successful finish already closes the handle, so a deferred close returns `ErrFinalized`; it produces no additional writes. Invalid finish is repairable and produces no final usage or outcome writes. Close commits unknown without fabricated usage, tool result or retrieval chunks. Live durations use a local monotonic clock; completed observations retain their supplied known duration and completed marker.
+
+`Meta.Status`, `OperationResult.Status`, `ToolResult.Status` and `RetrievalResult.Status` use `Outcome`. Empty and `OperationStatusUnset` are unknown, `OperationStatusOK` is explicit success, and `OperationStatusError` is failure. Payload presence alone proves no outcome. Error evidence plus empty status is failure; error evidence plus explicit success or unset is a diagnostic, as are unknown enums. Status-only error uses `error.type=unknown`. Unknown outcomes export OTel Unset, never OK. Model error classes use a closed bounded taxonomy, including cancellation, deadline and stream abort. Explicit tool/retrieval classes must be allowed; classifiers may normalize unsupported values. Raw error text is never exported or wrapped in a diagnostic.
+
+Remove request-to-response model fallbacks. `Operation.Model`, `Meta.RequestModel` and scope model describe the request. Supply `OperationResult.Response.Model` or completed `Meta.ResponseModel` only from observed response evidence; omit it when unknown or when failure precedes response. Adapters cannot fabricate response metadata through request parsing. Metric normalizers receive these separate facts.
+
+Host business errors retain their identity and result. Handle telemetry diagnostics through a separate reporting path, then return the original business result/error. A telemetry diagnostic must not suppress host I/O or replace its error. Physical attempts retain explicitly known final usage even on failure; logical summaries and intermediate streaming updates do not increment it.
 
 ## Profile and ownership
 

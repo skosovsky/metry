@@ -3,11 +3,11 @@ package genai
 import (
 	"context"
 	"math"
+	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/skosovsky/metry/internal/traceutil"
 )
 
 const retrievalStartAttrCap = 5
@@ -24,18 +24,45 @@ type RetrievalRequest struct {
 type RetrievalResult struct {
 	ReturnedChunks int
 	Distances      []float64
+	Status         Outcome
+	Err            error
+	ErrorClass     ErrorClass
 }
 
-// StartRetrievalSpan starts a child span for retrieval I/O and returns an end callback.
-// Call RecordRetrievalResult before end() for explicit I/O completion semantics.
-// The end callback sets Ok when span status is still Unset.
-// Extra start options allow callers to add start-time sampling hints or attributes.
-func (t *Tracker) StartRetrievalSpan(
+// RetrievalHandle owns one local retrieval observation.
+type RetrievalHandle struct {
+	mu        sync.Mutex
+	finished  bool
+	startedAt time.Time
+	tracker   *Tracker
+	span      trace.Span
+}
+
+// StartRetrieval begins telemetry before caller-owned retrieval I/O.
+func (t *Tracker) StartRetrieval(
 	ctx context.Context,
 	name string,
 	req RetrievalRequest,
+	opts ...ChildSpanOption,
+) (context.Context, *RetrievalHandle, error) {
+	return startRetrieval(ctx, t, name, req, opts...)
+}
+
+func startRetrieval(
+	ctx context.Context,
+	t *Tracker,
+	name string,
+	req RetrievalRequest,
 	startOpts ...ChildSpanOption,
-) (context.Context, func()) {
+) (context.Context, *RetrievalHandle, error) {
+	if len(name) > maxIdentityBytes || len(req.Provider) > maxIdentityBytes || len(req.Source) > maxIdentityBytes ||
+		req.TopK < 0 {
+		return ctx, nil, invalidObservation("retrieval", "input_bounds")
+	}
+	handle := &RetrievalHandle{mu: sync.Mutex{}, finished: false, tracker: t, startedAt: time.Now(), span: nil}
+	if t == nil {
+		return ctx, handle, nil
+	}
 	spanName := name
 	if spanName == "" {
 		spanName = profileRetrievalOperation
@@ -61,16 +88,25 @@ func (t *Tracker) StartRetrievalSpan(
 		attrs = append(attrs, attribute.Key(RetrievalQuery).String(truncateContextWithConfig(query, t.cfg)))
 	}
 
-	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
+	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...), trace.WithTimestamp(handle.startedAt)}
 	opts = append(opts, childSpanOptionsToOTel(startOpts...)...)
-	ctx, span := t.tracer.Start(ctx, spanName, opts...) //nolint:spancheck // caller ends span via callback
+	ctx, span := t.tracer.Start(ctx, spanName, opts...) //nolint:spancheck // handle owns finalization
 	// Preserve deterministic helper semantics when caller start options use duplicate keys.
 	span.SetAttributes(attrs...)
-	return ctx, func() { traceutil.EndSpanOKIfUnset(span) } //nolint:spancheck // caller ends span via callback
+	handle.span = span
+	return ctx, handle, nil //nolint:spancheck // handle owns finalization
 }
 
-// RecordRetrievalResult writes retrieval result attributes on the span stored in ctx.
-func (t *Tracker) RecordRetrievalResult(ctx context.Context, result RetrievalResult) error {
+// Finish validates before committing an outcome; failed validation is correctable.
+func (h *RetrievalHandle) Finish(result RetrievalResult) error {
+	if h == nil || h.startedAt.IsZero() {
+		return invalidObservation("recording", "missing")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished {
+		return ErrFinalized
+	}
 	if result.ReturnedChunks < 0 || len(result.Distances) > maxPayloadEntries {
 		return invalidObservation("retrieval_result", "input_bounds")
 	}
@@ -79,16 +115,40 @@ func (t *Tracker) RecordRetrievalResult(ctx context.Context, result RetrievalRes
 			return invalidObservation("retrieval_distance", "non_finite")
 		}
 	}
-	mutateSpan(ctx, func(span trace.Span) {
-		attrs := []attribute.KeyValue{
-			attribute.Key(RetrievalReturnedChunks).Int(result.ReturnedChunks),
-		}
+	status, errorType, err := resolveToolOutcome(h.tracker, result.Status, result.Err, result.ErrorClass)
+	if err != nil {
+		return err
+	}
+	h.finished = true
+	if h.span != nil {
+		attrs := []attribute.KeyValue{attribute.Int(RetrievalReturnedChunks, result.ReturnedChunks)}
 		if len(result.Distances) > 0 {
-			distances := append([]float64(nil), result.Distances...)
-			attrs = append(attrs, attribute.Key(RetrievalDistances).Float64Slice(distances))
+			attrs = append(
+				attrs,
+				attribute.Float64Slice(RetrievalDistances, append([]float64(nil), result.Distances...)),
+			)
 		}
-		span.SetAttributes(attrs...)
-		traceutil.SpanOK(span)
-	})
+		h.span.SetAttributes(attrs...)
+		applyOutcome(h.span, status, errorType)
+		h.span.End()
+	}
+	return nil
+}
+
+// Close closes an observation without claiming a result or returned chunks.
+func (h *RetrievalHandle) Close() error {
+	if h == nil || h.startedAt.IsZero() {
+		return invalidObservation("recording", "missing")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished {
+		return ErrFinalized
+	}
+	h.finished = true
+	if h.span != nil {
+		applyOutcome(h.span, OperationStatusUnset, "")
+		h.span.End()
+	}
 	return nil
 }

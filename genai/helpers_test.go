@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/testutil"
@@ -74,16 +75,16 @@ func TestRuntimeTool_SetToolAttributes(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
 	recorder := tracker.Runtime()
 
-	ctx, end := recorder.StartTool(context.Background(), ToolCall{
+	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-1",
 		Arguments: `{"q":`,
 	})
-	recorder.RecordToolResult(ctx, ToolResult{
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{
 		Result: `{"result":"` + strings.Repeat("b", 256) + `"}`,
 		Err:    errors.New("tool execution failed"),
-	})
-	end()
+	}))
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -102,17 +103,17 @@ func TestRuntimeTool_SetToolAttributes(t *testing.T) {
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
 }
 
-func TestRecordToolResult_Success_SetsOkStatus(t *testing.T) {
+func TestToolHandle_ExplicitSuccess_SetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 	recorder := tracker.Runtime()
 
-	ctx, end := recorder.StartTool(context.Background(), ToolCall{
+	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-ok",
 		Arguments: `{"q":"x"}`,
 	})
-	recorder.RecordToolResult(ctx, ToolResult{Result: `{"result":"ok"}`})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: `{"result":"ok"}`}))
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -121,21 +122,23 @@ func TestRecordToolResult_Success_SetsOkStatus(t *testing.T) {
 	testutil.AssertSpanStubOkStatus(t, spans[0])
 }
 
-func TestRuntimeTool_EndOnly_SetsOkStatus(t *testing.T) {
+func TestRuntimeTool_CloseOnly_PreservesUnknownStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 	recorder := tracker.Runtime()
 
-	_, end := recorder.StartTool(context.Background(), ToolCall{
+	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-end-only",
 		Arguments: `{"q":"x"}`,
 	})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, end.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	testutil.AssertSpanStubOkStatus(t, spans[0])
+	assert.Equal(t, codes.Unset, spans[0].Status.Code)
+	assert.Equal(t, OperationStatusUnset, testutil.SpanStubStringAttr(t, spans[0], OperationStatus))
 }
 
 func TestRecordInteraction_ErrorType_SetsSpanErrorStatus(t *testing.T) {
@@ -154,21 +157,18 @@ func TestRecordInteraction_ErrorType_SetsSpanErrorStatus(t *testing.T) {
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
 }
 
-func TestRecordInteraction_ErrorType_NormalizesUnboundedText(t *testing.T) {
+func TestRecordInteraction_ErrorType_RejectsUnboundedTextBeforeWrites(t *testing.T) {
+	// Arrange.
 	tracker, provider, mem := newTestTracker(t)
-
-	require.NoError(t, tracker.RecordInteraction(context.Background(), Meta{
-		Provider:  "openai",
-		Operation: "chat",
-		ErrorType: "timeout for user bob@example.com",
-	}, Payload{}, Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}))
-
+	// Act.
+	err := tracker.RecordInteraction(context.Background(), Meta{
+		Provider: "openai", Operation: "chat", ErrorType: "timeout for user bob@example.com",
+	}, Payload{}, Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)})
 	flushTestProvider(t, provider)
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Equal(t, OperationStatusError, testutil.SpanStubStringAttr(t, spans[0], ErrorType))
-	assert.NotContains(t, spans[0].Status.Description, "bob@example.com")
-	testutil.AssertSpanStubErrorStatus(t, spans[0])
+	// Assert.
+	require.ErrorIs(t, err, ErrInvalidObservation)
+	assert.NotContains(t, err.Error(), "bob@example.com")
+	assert.Empty(t, mem.GetSpans())
 }
 
 func TestRecordInteraction_Success_SetsOkStatus(t *testing.T) {
@@ -201,7 +201,7 @@ func TestRuntimeTool_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) 
 	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
 	recorder := tracker.Runtime()
 
-	_, end := recorder.StartTool(
+	_, end, startErr := recorder.StartTool(
 		context.Background(),
 		ToolCall{
 			Name:      "search",
@@ -210,7 +210,8 @@ func TestRuntimeTool_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) 
 		},
 		WithSpanSamplingKeep(),
 	)
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, end.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -223,7 +224,7 @@ func TestRuntimeTool_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.
 	tracker, provider, mem := newTestTracker(t)
 	recorder := tracker.Runtime()
 
-	_, end := recorder.StartTool(
+	_, end, startErr := recorder.StartTool(
 		context.Background(),
 		ToolCall{
 			Name:      "search",
@@ -232,7 +233,8 @@ func TestRuntimeTool_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.
 		},
 		WithSpanAttributes(metry.StringAttribute("test.caller.attr", "present")),
 	)
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, end.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -246,7 +248,7 @@ func TestRuntimeTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 	recorder := tracker.Runtime()
 
-	_, end := recorder.StartTool(
+	_, end, startErr := recorder.StartTool(
 		context.Background(),
 		ToolCall{
 			Name:      "search",
@@ -259,7 +261,8 @@ func TestRuntimeTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 			metry.StringAttribute(ToolCallID, "override"),
 		),
 	)
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, end.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -321,6 +324,7 @@ func TestRecordCacheHit_AndRecordAgentStep(t *testing.T) {
 
 func testMeta() Meta {
 	return Meta{
+		Status:        OperationStatusOK,
 		Provider:      "openai",
 		Operation:     "chat",
 		RequestModel:  "gpt-4o-mini",

@@ -13,6 +13,7 @@ const (
 	totalTokenTypeCount       = 2
 	componentTokenTypeCount   = 3
 	semanticDimensionCapacity = 3
+	outcomeCount              = 3
 )
 
 // metricDimensions normalizes inputs only; the metric SDK owns aggregation/export.
@@ -46,7 +47,7 @@ func (d *metricDimensions) normalize(instrument string, attrs []attribute.KeyVal
 	semantic := make([]attribute.KeyValue, 0, semanticDimensionCapacity)
 	for _, attr := range attrs {
 		key := string(attr.Key)
-		if key == TokenType || key == usageSourceKey || key == ToolMetricLabelStatus ||
+		if key == TokenType || key == usageSourceKey || key == ToolMetricLabelStatus || key == OperationStatus ||
 			(instrument == CostMetricName && key == CostCurrency) {
 			normalized = append(normalized, attr)
 			semantic = append(semantic, attr)
@@ -91,8 +92,10 @@ func overflowReserve(instrument string) int {
 	case TokenComponentUsageMetricName:
 		return componentTokenTypeCount * provenanceCount
 	case CostMetricName, VideoSecondsMetricName, VideoFramesMetricName,
-		ToolDurationMetricName, StreamingTPSMetricName, StreamingTBTMetricName:
+		StreamingTPSMetricName, StreamingTBTMetricName:
 		return provenanceCount
+	case ToolDurationMetricName, OperationDurationMetricName:
+		return outcomeCount // Preserve success/error/unknown in separate overflow series.
 	default:
 		return 1
 	}

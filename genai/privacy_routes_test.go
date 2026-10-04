@@ -52,21 +52,19 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 				tracker.RecordInteraction(
 					context.Background(),
 					Meta{Provider: secret, Operation: secret, RequestModel: secret, ResponseModel: secret,
-						ServerAddress: secret, Purpose: secret, ErrorType: secret},
+						ServerAddress: secret, Purpose: secret, ErrorType: "timeout"},
 					payload,
 					Usage{InputTokens: Observe(0, UnitTokens, SourceMeasured), Purpose: secret, PriceReference: secret},
 				),
 			)
 			runtime := tracker.Runtime().ForProvider(secret)
-			ctx, end := runtime.StartTool(context.Background(), ToolCall{
+			_, end, startErr := runtime.StartTool(context.Background(), ToolCall{
 				Name: secret, CallID: secret, Arguments: `{"` + secret + `":"` + secret + `"}`,
 			})
-			runtime.
-				RecordToolResult(
-					ctx,
-					ToolResult{Result: `{"` + secret + `":"` + secret + `"}`, Err: errors.New(secret)},
-				)
-			end()
+			require.NoError(t, startErr)
+			require.NoError(t, end.Finish(
+				ToolResult{Result: `{"` + secret + `":"` + secret + `"}`, Err: errors.New(secret)},
+			))
 			_, operation, err := runtime.
 				StartOperation(
 					context.Background(),
@@ -83,7 +81,8 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 					},
 				)
 			require.NoError(t, err)
-			require.NoError(t, operation.Finish(OperationResult{ErrorType: secret}))
+			require.ErrorIs(t, operation.Finish(OperationResult{ErrorType: secret}), ErrInvalidObservation)
+			require.NoError(t, operation.Finish(OperationResult{ErrorType: "timeout"}))
 			evaluation := successfulEvaluation()
 			evaluation.Metric = EvaluationMetric(secret)
 			evaluation.ObservationID, evaluation.Outcome, evaluation.Reasoning = secret, secret, secret
@@ -97,13 +96,13 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 				GraderReference:  secret,
 			}
 			require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
-			retrievalCtx, finishRetrieval := tracker.StartRetrievalSpan(context.Background(), secret,
+			retrievalCtx, finishRetrieval, retrievalErr := tracker.StartRetrieval(context.Background(), secret,
 				RetrievalRequest{Provider: secret, Source: secret, Query: secret})
-			tracker.RecordRetrievalResult(retrievalCtx, RetrievalResult{ReturnedChunks: 0})
+			require.NoError(t, retrievalErr)
 			tracker.RecordAgentStep(retrievalCtx, secret, secret, secret)
 			tracker.RecordCacheHit(retrievalCtx, true, secret)
 			require.NoError(t, tracker.RecordTraceIO(retrievalCtx, payload, payload))
-			finishRetrieval()
+			require.NoError(t, finishRetrieval.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedChunks: 0}))
 			origin, err := runtime.StartAsync(context.Background(), secret)
 			require.NoError(t, err)
 			require.NoError(

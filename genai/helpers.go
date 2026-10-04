@@ -3,7 +3,6 @@ package genai
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -11,8 +10,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/skosovsky/metry/internal/traceutil"
 )
 
 const truncationSuffix = "... [truncated]"
@@ -27,6 +24,7 @@ const (
 
 // Meta describes operation-level metadata used for official GenAI semconv.
 type Meta struct {
+	Status        Outcome
 	Provider      string
 	Operation     string
 	Purpose       string
@@ -115,6 +113,12 @@ func (t *Tracker) RecordInteraction(
 	payload Payload,
 	usage Usage,
 ) error {
+	status, class, outcomeErr := resolveModelOutcome(meta.Status, meta.ErrorType)
+	if outcomeErr != nil {
+		return outcomeErr
+	}
+	meta.Status = Outcome(status)
+	meta.ErrorType = class
 	if err := t.validateUsage(usage); err != nil {
 		return err
 	}
@@ -147,14 +151,12 @@ func (t *Tracker) recordInteractionOnSpan(
 	usage Usage,
 	accounting bool,
 ) {
-	if meta.ErrorType != "" {
-		meta.ErrorType = normalizeErrorType(meta.ErrorType)
-	}
 	if usage.Purpose == "" && meta.Purpose != "" {
 		usage.Purpose = meta.Purpose
 	}
 	attrs := make([]attribute.KeyValue, 0, attrCapInteractionAttrs)
 	attrs = append(attrs, buildMetaAttributes(meta, t.cfg)...)
+	attrs = append(attrs, attribute.String(OperationStatus, string(meta.Status)))
 	attrs = append(attrs, payloadAttrs...)
 	if hasUsageData(usage) {
 		attrs = append(attrs, buildUsageAttributes(usage, t.cfg)...)
@@ -162,11 +164,7 @@ func (t *Tracker) recordInteractionOnSpan(
 	if len(attrs) > 0 {
 		span.SetAttributes(attrs...)
 	}
-	if meta.ErrorType != "" {
-		traceutil.SpanError(span, errors.New(meta.ErrorType))
-	} else {
-		traceutil.SpanOK(span)
-	}
+	applyOutcome(span, string(meta.Status), meta.ErrorType)
 
 	if accounting {
 		t.recordUsageMetrics(ctx, meta, usage)
@@ -339,7 +337,7 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage
 		return
 	}
 
-	baseAttrs, ok := metricAttributesFromMeta(meta)
+	baseAttrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
 	if ok && t.metrics.TokenUsage != nil {
 		t.recordIntHistogram(
 			ctx,
@@ -420,7 +418,8 @@ func (t *Tracker) recordOperationDuration(ctx context.Context, meta Meta) {
 	if t.metrics == nil || t.metrics.OperationDuration == nil || meta.Duration <= 0 {
 		return
 	}
-	attrs, ok := metricAttributesFromMeta(meta)
+	attrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
+	attrs = append(attrs, attribute.String(OperationStatus, string(meta.Status)))
 	if !ok {
 		return
 	}
@@ -501,4 +500,20 @@ func (t *Tracker) RecordAgentStep(ctx context.Context, agentName, agentRole, ste
 			attribute.Key(WorkflowStep).String(referenceWithConfig(step, t.cfg)),
 		))
 	})
+}
+
+// metricMeta applies the same bounded metadata policy to actual metric facts.
+func metricMeta(meta Meta, cfg runtimeConfig) Meta {
+	meta.Provider = metadataWithConfig(ProviderName, meta.Provider, cfg)
+	meta.Operation = metadataWithConfig(OperationName, meta.Operation, cfg)
+	if meta.RequestModel != "" {
+		meta.RequestModel = metadataWithConfig(RequestModel, meta.RequestModel, cfg)
+	}
+	if meta.ResponseModel != "" {
+		meta.ResponseModel = metadataWithConfig(ResponseModel, meta.ResponseModel, cfg)
+	}
+	if meta.ServerAddress != "" {
+		meta.ServerAddress = metadataWithConfig(ServerAddress, meta.ServerAddress, cfg)
+	}
+	return meta
 }

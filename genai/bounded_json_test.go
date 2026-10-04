@@ -111,12 +111,15 @@ func TestInvalidPayloadCanBeCorrectedBeforeHandleFinalization(t *testing.T) {
 func TestToolStructuredPayloadLimitsAndBoundedDiagnostic(t *testing.T) {
 	// Arrange.
 	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
-	ctx, end := tracker.Runtime().StartTool(context.Background(), ToolCall{
+	_, end, startErr := tracker.Runtime().StartTool(context.Background(), ToolCall{
 		Name: "search", Arguments: `{"large":"` + strings.Repeat("secret", 200) + `"}`,
 	})
+	require.NoError(t, startErr)
 	// Act.
-	tracker.Runtime().RecordToolResult(ctx, ToolResult{Result: strings.Repeat("secret", maxPayloadInputBytes)})
-	end()
+	require.NoError(
+		t,
+		end.Finish(ToolResult{Status: OperationStatusOK, Result: strings.Repeat("secret", maxPayloadInputBytes)}),
+	)
 	flushTestProvider(t, provider)
 	// Assert: only bounded valid JSON escapes; diagnostic contains field/rule, no raw.
 	spans := exporter.GetSpans()

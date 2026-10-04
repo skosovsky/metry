@@ -15,7 +15,7 @@ func (t *Tracker) RecordTTFT(ctx context.Context, meta Meta, duration time.Durat
 		return
 	}
 	meta = mergeMetaFromScope(ctx, meta)
-	attrs, ok := metricAttributesFromMeta(meta)
+	attrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
 	if !ok {
 		return
 	}
@@ -31,20 +31,20 @@ func (t *Tracker) RecordStreamingCompletion(
 	ctx context.Context,
 	event StreamingCompletion,
 ) error {
-	if err := t.validateUsage(event.Usage); err != nil {
-		return err
-	}
 	timing := StreamTimings{TTFT: event.TTFT, FirstTokenPresent: event.FirstTokenPresent}
 	if err := validateStreamTimings(timing, event.TotalDuration); err != nil {
 		return err
 	}
-	meta := mergeMetaFromScope(ctx, event.Meta)
-	if err := validateOperationName(meta.Operation); err != nil {
+	meta := event.Meta
+	meta.Duration = event.TotalDuration
+	var payload Payload
+	if err := t.RecordInteraction(ctx, meta, payload, event.Usage); err != nil {
 		return err
 	}
-	meta.Duration = event.TotalDuration
-	t.recordUsageMetrics(ctx, meta, event.Usage)
-	t.recordOperationDuration(ctx, meta)
+	meta = mergeMetaFromScope(ctx, meta)
+	status, class, _ := resolveModelOutcome(meta.Status, meta.ErrorType)
+	meta.Status = Outcome(status)
+	meta.ErrorType = class
 	t.recordStreamingQuality(ctx, meta, event.Usage.OutputTokens, timing, event.TotalDuration)
 	return nil
 }
@@ -68,7 +68,7 @@ func (t *Tracker) recordStreamingQuality(
 		return
 	}
 
-	attrs, ok := metricAttributesFromMeta(meta)
+	attrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
 	if !ok {
 		return
 	}

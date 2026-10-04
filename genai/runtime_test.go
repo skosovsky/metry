@@ -109,14 +109,17 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 		TotalDuration:     3 * time.Second,
 		FirstTokenPresent: true,
 	}))
-	end()
 
+	end()
 	flushTestProvider(t, provider)
 	spans := memTrace.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Contains(t, testutil.SpanStubStringAttr(t, spans[0], InputMessages), "question")
-	assert.Contains(t, testutil.SpanStubStringAttr(t, spans[0], OutputMessages), "answer")
-	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
+	require.Len(t, spans, 2)
+	handler := testutil.SpanByName(t, spans, "chat-handler")
+	completed := testutil.SpanByName(t, spans, "chat")
+	assert.Equal(t, "completed", testutil.SpanStubStringAttr(t, completed, "metry.observation.kind"))
+	assert.Contains(t, testutil.SpanStubStringAttr(t, handler, InputMessages), "question")
+	assert.Contains(t, testutil.SpanStubStringAttr(t, handler, OutputMessages), "answer")
+	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, handler, ProviderName))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
@@ -253,9 +256,9 @@ func TestRuntime_ToolErrorClassifier_DefaultAndCustomClassesAreBounded(t *testin
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 	runtime := tracker.Runtime()
 
-	ctx, end := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
-	runtime.RecordToolResult(ctx, ToolResult{Err: errors.Join(context.DeadlineExceeded)})
-	end()
+	_, end, startErr := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Err: errors.Join(context.DeadlineExceeded)}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
@@ -271,13 +274,13 @@ func TestRuntime_StartTool_ForProviderSetsProviderAttribute(t *testing.T) {
 	tracker, provider, _, memTrace := newTestTrackerWithMetrics(t)
 	runtime := tracker.Runtime().ForProvider("gemini")
 
-	ctx, end := runtime.StartTool(
+	_, end, startErr := runtime.StartTool(
 		context.Background(),
 		ToolCall{Name: "search"},
 		WithSpanAttributes(metry.StringAttribute(ProviderName, "caller-provider")),
 	)
-	runtime.RecordToolResult(ctx, ToolResult{Result: `{"ok":true}`})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: `{"ok":true}`}))
 
 	flushTestProvider(t, provider)
 	span := testutil.SpanByName(t, memTrace.GetSpans(), "tool: search")
@@ -288,9 +291,9 @@ func TestRuntime_ToolErrorClassifier_StatusOnlyErrorDefaultsUnknown(t *testing.T
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
 	runtime := tracker.Runtime()
 
-	ctx, end := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
-	runtime.RecordToolResult(ctx, ToolResult{Status: OperationStatusError})
-	end()
+	_, end, startErr := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusError}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
@@ -314,9 +317,9 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t, WithToolErrorClassifier(classifier))
 	runtime := tracker.Runtime()
 
-	ctx, end := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
-	runtime.RecordToolResult(ctx, ToolResult{Err: errors.New("429")})
-	end()
+	_, end, startErr := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Err: errors.New("429")}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
@@ -332,9 +335,9 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 		WithAllowedToolErrorClasses("provider_overloaded"),
 	)
 	runtime = tracker.Runtime()
-	ctx, end = runtime.StartTool(context.Background(), ToolCall{Name: "search"})
-	runtime.RecordToolResult(ctx, ToolResult{Err: errors.New("429")})
-	end()
+	_, end, startErr = runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Err: errors.New("429")}))
 
 	rm = metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist = metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)

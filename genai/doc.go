@@ -6,7 +6,11 @@
 //
 // StartOperation encloses local I/O and measures duration using a monotonic clock.
 // Its handle commits final usage once; invalid input may be corrected before a
-// successful Finish. Completed-result helpers are observation spans, not execution
+// successful Finish. ToolHandle and RetrievalHandle follow the same once-only
+// contract. Close commits unknown without fabricated results. Explicit Outcome
+// success is required; absent response metadata is never copied from the request.
+// Stateless adapters return ResponseObservation facts from the actual response.
+// Completed-result helpers are observation spans, not execution
 // intervals. Logical summaries do not account physical resource usage again.
 // Causal IDs and links are optional, caller-owned and never metric dimensions.
 // Opaque continuation tokens contain trace references, not business identities.

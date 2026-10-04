@@ -54,13 +54,17 @@ func TestToolPayloadPolicy_RedactsArgumentsAndResult(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t, WithPayloadPolicy(RedactPayloadPolicy()))
 	recorder := tracker.Runtime()
 
-	ctx, end := recorder.StartTool(context.Background(), ToolCall{
+	_, handle, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-1",
 		Arguments: `{"secret":"arg","nested":{"id":123}}`,
 	})
-	recorder.RecordToolResult(ctx, ToolResult{Result: `{"secret":"result","items":[1,"two"]}`})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(
+		t,
+		handle.Finish(ToolResult{Status: OperationStatusOK, Result: `{"secret":"result","items":[1,"two"]}`}),
+	)
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -79,13 +83,14 @@ func TestWithRawPayloads_ExportsToolPayloadsExplicitly(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t, WithRawPayloads())
 	recorder := tracker.Runtime()
 
-	ctx, end := recorder.StartTool(context.Background(), ToolCall{
+	_, handle, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-1",
 		Arguments: `{"secret":"arg"}`,
 	})
-	recorder.RecordToolResult(ctx, ToolResult{Result: `{"secret":"result"}`})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Finish(ToolResult{Status: OperationStatusOK, Result: `{"secret":"result"}`}))
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()

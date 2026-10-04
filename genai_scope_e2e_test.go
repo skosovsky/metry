@@ -91,7 +91,8 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 
 	interaction := testutil.SpanByName(t, spans, "chat")
 	assert.Equal(t, "openai", testutil.SpanStubStringAttr(t, interaction, genai.ProviderName))
-	assert.Equal(t, "gpt-4o-mini", testutil.SpanStubStringAttr(t, interaction, genai.ResponseModel))
+	assert.Equal(t, "gpt-4o-mini", testutil.SpanStubStringAttr(t, interaction, genai.RequestModel))
+	assert.False(t, testutil.SpanStubHasAttr(interaction, genai.ResponseModel))
 	assert.Equal(t, genai.PurposeGeneration, testutil.SpanStubStringAttr(t, interaction, genai.OperationPurpose))
 	testutil.AssertSpanStubOkStatus(t, interaction)
 

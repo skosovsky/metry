@@ -2,39 +2,50 @@ package genai
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/skosovsky/metry/internal/traceutil"
 )
 
 const unknownToolName = "unknown"
 
-type toolSpanStateKey struct{}
-
-type toolSpanState struct {
+// ToolHandle owns one local tool observation, never the tool execution.
+type ToolHandle struct {
 	mu        sync.Mutex
-	endOnce   sync.Once
+	finished  bool
+	tracker   *Tracker
+	ctx       context.Context
+	span      trace.Span
 	toolName  string
 	startedAt time.Time
-	status    string
-	errorType string
 }
 
-func (t *Tracker) startTool(
+func startTool(
 	ctx context.Context,
+	t *Tracker,
 	call ToolCall,
 	startOpts ...ToolOption,
-) (context.Context, ToolEnd) {
+) (context.Context, *ToolHandle, error) {
+	if len(call.Name) > maxIdentityBytes || len(call.CallID) > maxIdentityBytes {
+		return ctx, nil, invalidObservation("tool", "input_bounds")
+	}
+	state := &ToolHandle{
+		mu:        sync.Mutex{},
+		finished:  false,
+		tracker:   t,
+		ctx:       ctx,
+		span:      nil,
+		toolName:  "",
+		startedAt: time.Now(),
+	}
+	if t == nil {
+		return ctx, state, nil
+	}
 	toolName := toolNameWithConfig(call.Name, t.cfg)
 	call.Name = toolName
-
 	attrs := []attribute.KeyValue{
 		attribute.Key(OperationName).String(profileToolOperation),
 		attribute.Key(ToolName).String(toolName),
@@ -52,54 +63,45 @@ func (t *Tracker) startTool(
 			}
 		}
 	}
-
-	otelOpts := childSpanOptionsToOTel(startOpts...)
-	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...)}
-	opts = append(opts, otelOpts...)
+	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...), trace.WithTimestamp(state.startedAt)}
+	opts = append(opts, childSpanOptionsToOTel(startOpts...)...)
 	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...)
 	span.SetAttributes(attrs...)
 	if payloadErr != nil {
 		recordPayloadDiagnostic(span, payloadErr)
 	}
-
-	state := &toolSpanState{
-		mu:        sync.Mutex{},
-		endOnce:   sync.Once{},
-		toolName:  toolName,
-		startedAt: time.Now(),
-		status:    OperationStatusOK,
-		errorType: "",
-	}
-	ctx = context.WithValue(ctx, toolSpanStateKey{}, state)
-
-	return ctx, func() {
-		state.endOnce.Do(func() {
-			status, errorType, elapsed := state.snapshot()
-			t.recordToolDuration(ctx, toolName, elapsed, status, errorType)
-			traceutil.EndSpanOKIfUnset(span)
-		})
-	}
+	state.ctx, state.span, state.toolName = ctx, span, toolName
+	return ctx, state, nil
 }
 
-func (t *Tracker) recordToolResult(ctx context.Context, result ToolResult) {
-	status, errorType := t.spanStatusFromToolResult(result)
-	if state, ok := ctx.Value(toolSpanStateKey{}).(*toolSpanState); ok && state != nil {
-		state.setResult(status, errorType)
+// Finish commits a validated result exactly once. Invalid input is correctable.
+func (h *ToolHandle) Finish(result ToolResult) error {
+	if h == nil || h.startedAt.IsZero() {
+		return invalidObservation("recording", "missing")
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished {
+		return ErrFinalized
+	}
+	status, errorType, err := resolveToolOutcome(h.tracker, result.Status, result.Err, result.ErrorClass)
+	if err != nil {
+		return err
+	}
+	h.finished = true
+	if h.tracker != nil {
+		h.tracker.recordToolPayloadResult(h.span, result)
+		h.span.SetAttributes(attribute.Bool(ToolError, status == OperationStatusError))
+		applyOutcome(h.span, status, errorType)
+		h.tracker.recordToolDuration(h.ctx, h.toolName, time.Since(h.startedAt), status, errorType)
+		h.span.End()
+	}
+	return nil
+}
 
-	mutateSpan(ctx, func(span trace.Span) {
-		t.recordToolPayloadResult(span, result)
-		if status == OperationStatusError {
-			span.SetAttributes(
-				attribute.Key(ToolError).Bool(true),
-				attribute.Key(ErrorType).String(errorType),
-			)
-			traceutil.SpanError(span, errors.New(errorType))
-			return
-		}
-		span.SetAttributes(attribute.Key(ToolError).Bool(false))
-		traceutil.SpanOK(span)
-	})
+// Close closes incomplete telemetry with unknown outcome and no fabricated result.
+func (h *ToolHandle) Close() error {
+	return h.Finish(ToolResult{Status: OperationStatusUnset, Result: "", Err: nil, ErrorClass: ""})
 }
 
 func (t *Tracker) recordToolPayloadResult(span trace.Span, result ToolResult) {
@@ -121,23 +123,6 @@ func (t *Tracker) recordToolPayloadResult(span trace.Span, result ToolResult) {
 	}
 }
 
-func (s *toolSpanState) setResult(status, errorType string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status = status
-	s.errorType = errorType
-}
-
-func (s *toolSpanState) snapshot() (string, string, time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	status := s.status
-	if status == "" {
-		status = OperationStatusOK
-	}
-	return status, s.errorType, time.Since(s.startedAt)
-}
-
 func (t *Tracker) recordToolDuration(
 	ctx context.Context,
 	toolName string,
@@ -149,7 +134,7 @@ func (t *Tracker) recordToolDuration(
 		return
 	}
 	if status == "" {
-		status = OperationStatusOK
+		status = OperationStatusUnset
 	}
 	attrs := []attribute.KeyValue{
 		attribute.String(ToolMetricLabelTool, normalizeToolName(toolName)),
@@ -167,21 +152,6 @@ func (t *Tracker) recordToolDuration(
 
 func normalizeToolName(name string) string {
 	return sanitizeMetricValue(name, unknownToolName)
-}
-
-func (t *Tracker) spanStatusFromToolResult(result ToolResult) (string, string) {
-	status := strings.ToLower(strings.TrimSpace(result.Status))
-	class := t.classifyToolError(result.Err, result.ErrorClass)
-	if result.Err != nil || class != "" || status == OperationStatusError {
-		if class == "" {
-			class = ErrorClassUnknown
-		}
-		return OperationStatusError, errorClassString(class)
-	}
-	if status == "" {
-		return OperationStatusOK, ""
-	}
-	return normalizeOperationStatus(status, ""), ""
 }
 
 func (t *Tracker) classifyToolError(err error, explicit ErrorClass) ErrorClass {

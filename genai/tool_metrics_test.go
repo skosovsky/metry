@@ -16,10 +16,14 @@ func TestRuntime_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t, WithRawPayloads())
 	rec := tracker.Runtime()
 
-	ctx, end := rec.StartTool(context.Background(), ToolCall{Name: "search", CallID: "call-1", Arguments: `{"q":"x"}`})
-	rec.RecordToolResult(ctx, ToolResult{Result: `{"ok":true}`})
-	end()
-	end()
+	_, handle, startErr := rec.StartTool(
+		context.Background(),
+		ToolCall{Name: "search", CallID: "call-1", Arguments: `{"q":"x"}`},
+	)
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Finish(ToolResult{Status: OperationStatusOK, Result: `{"ok":true}`}))
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
@@ -33,12 +37,13 @@ func TestRuntime_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T)
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
 	rec := tracker.Runtime()
 
-	ctx, end := rec.StartTool(context.Background(), ToolCall{Name: "", CallID: "call-1"})
-	rec.RecordToolResult(ctx, ToolResult{
+	_, handle, startErr := rec.StartTool(context.Background(), ToolCall{Name: "", CallID: "call-1"})
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Finish(ToolResult{
 		Err:        errors.New("contains user email bob@example.com"),
-		ErrorClass: ErrorClass("timeout with user data and spaces"),
-	})
-	end()
+		ErrorClass: ErrorClassUnknown,
+	}))
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)

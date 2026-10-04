@@ -85,13 +85,9 @@ func main() {
 		panic(err)
 	}
 
-	toolCtx, endTool := runtime.StartTool(ctx, genai.ToolCall{
-		Name:      "search",
-		CallID:    "call-1",
-		Arguments: `{"query":"private"}`,
-	})
-	runtime.RecordToolResult(toolCtx, genai.ToolResult{Result: `{"matches":1}`})
-	endTool()
+	if err := recordExampleTool(ctx, runtime); err != nil {
+		panic(err)
+	}
 	endRequest()
 
 	if err := resumeExampleConsumer(provider, token); err != nil {
@@ -220,4 +216,15 @@ func attrString(attrs []attribute.KeyValue, key string) string {
 		return ""
 	}
 	return value.AsString()
+}
+
+func recordExampleTool(ctx context.Context, runtime genai.Runtime) error {
+	_, tool, err := runtime.StartTool(ctx, genai.ToolCall{
+		Name: "search", CallID: "call-1", Arguments: `{"query":"private"}`,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tool.Close() }()
+	return tool.Finish(genai.ToolResult{Status: genai.OperationStatusOK, Result: `{"matches":1}`})
 }

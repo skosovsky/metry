@@ -17,7 +17,7 @@ var ErrAdapterRequired = errors.New("genai: adapter is required")
 // Raw parameters are intentionally any: adapters perform type assertions at the boundary.
 type ProviderAdapter interface {
 	ParseRequest(req any) (Payload, Meta, error)
-	ParseResponse(resp any) (Payload, Usage, error)
+	ParseResponse(resp any) (ResponseObservation, error)
 }
 
 // RecordModelInteraction parses raw request/response via adapter and records a standard interaction.
@@ -36,13 +36,16 @@ func (t *Tracker) RecordModelInteraction(
 		return invalidObservation("adapter_request", "parse_failed")
 	}
 
-	outPayload, usage, err := adapter.ParseResponse(rawResp)
+	response, err := adapter.ParseResponse(rawResp)
 	if err != nil {
 		return invalidObservation("adapter_response", "parse_failed")
 	}
 
-	merged := mergePayload(payload, outPayload)
-	return t.RecordInteraction(ctx, meta, merged, usage)
+	meta.ResponseModel = response.Metadata.Model
+	meta.Status = response.Status
+	meta.ErrorType = response.ErrorType
+	merged := mergePayload(payload, response.Payload)
+	return t.RecordInteraction(ctx, meta, merged, response.Usage)
 }
 
 func mergePayload(reqPayload, respPayload Payload) Payload {
@@ -51,4 +54,16 @@ func mergePayload(reqPayload, respPayload Payload) Payload {
 		InputMessages:      reqPayload.InputMessages,
 		OutputMessages:     respPayload.OutputMessages,
 	}
+}
+
+// ResponseMetadata contains only facts observed in a received response.
+type ResponseMetadata struct{ Model string }
+
+// ResponseObservation is a stateless adapter result; no request fallback applies.
+type ResponseObservation struct {
+	Payload   Payload
+	Usage     Usage
+	Metadata  ResponseMetadata
+	Status    Outcome
+	ErrorType string
 }

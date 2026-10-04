@@ -78,6 +78,13 @@ func (p Profile) Enumerations() []EnumDeclaration {
 			PolicyEncodedUnknown: true,
 		},
 	}
+	for _, dimension := range p.Dimensions {
+		if dimension.Key == ErrorType || dimension.Key == ToolMetricLabelErrorType {
+			enums = append(enums, EnumDeclaration{
+				Name: dimension.Key, Values: append([]string(nil), dimension.Values...), PolicyEncodedUnknown: false,
+			})
+		}
+	}
 	enums = append(
 		enums,
 		EnumDeclaration{

@@ -42,19 +42,51 @@ func runStandalone(ctx context.Context, tracker *genai.Tracker) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = model.Close() }()
 	// The host performs model I/O here and supplies only its final telemetry.
-	if finishErr := model.Finish(genai.OperationResult{Usage: genai.Usage{
+	if finishErr := model.Finish(genai.OperationResult{Status: genai.OperationStatusOK, Usage: genai.Usage{
 		InputTokens: genai.Observe(0, genai.UnitTokens, genai.SourceProvider),
 	}}); finishErr != nil {
 		return finishErr
 	}
-	toolCtx, endTool := runtime.StartTool(ctx, genai.ToolCall{Name: "lookup"})
-	// The host performs tool I/O here; the default profile buckets unknown names.
-	runtime.RecordToolResult(toolCtx, genai.ToolResult{Result: `{"found":true}`})
-	endTool()
-	retrievalCtx, endRetrieval := tracker.StartRetrievalSpan(ctx, "", genai.RetrievalRequest{TopK: 1})
-	// The host performs retrieval I/O; no model usage is inferred from its result.
-	err = tracker.RecordRetrievalResult(retrievalCtx, genai.RetrievalResult{ReturnedChunks: 1})
-	endRetrieval()
-	return err
+	// This host-owned call preserves its business result even if instrumentation fails.
+	if _, businessErr := observeLookup(ctx, runtime, func(context.Context) (string, error) {
+		return `{"found":true}`, nil
+	}, func(err error) { fmt.Printf("tool telemetry: %v\n", err) }); businessErr != nil {
+		return businessErr
+	}
+	_, retrieval, err := tracker.StartRetrieval(ctx, "", genai.RetrievalRequest{TopK: 1})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = retrieval.Close() }()
+	// Metry neither performs retrieval nor infers model usage from its result.
+	return retrieval.Finish(genai.RetrievalResult{Status: genai.OperationStatusOK, ReturnedChunks: 1})
+}
+
+// observeLookup controls only this application's I/O; metry owns its observation.
+func observeLookup(ctx context.Context, runtime genai.Runtime,
+	call func(context.Context) (string, error), reportTelemetry func(error),
+) (string, error) {
+	toolCtx, tool, telemetryErr := runtime.StartTool(ctx, genai.ToolCall{Name: "lookup"})
+	if telemetryErr != nil {
+		reportTelemetry(telemetryErr)
+		toolCtx = ctx
+	}
+	if tool != nil {
+		defer func() { _ = tool.Close() }()
+	}
+	result, businessErr := call(toolCtx)
+	status := genai.Outcome(genai.OperationStatusOK)
+	if businessErr != nil {
+		status = genai.OperationStatusError
+	}
+	if tool != nil {
+		if telemetryErr := tool.Finish(
+			genai.ToolResult{Status: status, Result: result, Err: businessErr},
+		); telemetryErr != nil {
+			reportTelemetry(telemetryErr)
+		}
+	}
+	return result, businessErr
 }

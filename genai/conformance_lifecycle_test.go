@@ -81,12 +81,12 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	tracker.RecordAgentStep(modelCtx, "agent", "assistant", "model")
 	require.NoError(t, model.Finish(result))
 	toolStarted := time.Now()
-	toolCtx, endTool := runtime.StartTool(
+	_, endTool, startErr := runtime.StartTool(
 		context.Background(),
 		ToolCall{Name: "lookup", Arguments: `{"key":"private"}`},
 	)
-	runtime.RecordToolResult(toolCtx, ToolResult{Result: `{"found":true}`})
-	endTool()
+	require.NoError(t, startErr)
+	require.NoError(t, endTool.Finish(ToolResult{Status: OperationStatusOK, Result: `{"found":true}`}))
 	toolElapsed := time.Since(toolStarted)
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)

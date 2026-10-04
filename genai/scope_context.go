@@ -103,9 +103,6 @@ func mergeMetaFromScopeWithScope(meta Meta, scope Scope, ok bool) Meta {
 	if meta.RequestModel == "" {
 		meta.RequestModel = scope.Model
 	}
-	if meta.ResponseModel == "" {
-		meta.ResponseModel = scope.Model
-	}
 	if meta.Purpose == "" {
 		meta.Purpose = scope.Purpose
 	}

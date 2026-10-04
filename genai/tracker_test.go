@@ -58,11 +58,12 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	recorder1 := tracker1.Runtime()
 	recorder2 := tracker2.Runtime()
 
-	ctx1, end1 := recorder1.StartTool(context.Background(), ToolCall{
+	ctx1, end1, startErr := recorder1.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-1",
 		Arguments: toolJSON,
 	})
+	require.NoError(t, startErr)
 	require.NoError(t, tracker1.RecordInteraction(ctx1, testMeta(), testPayload(), Usage{
 		InputTokens: Observe(12, UnitTokens, SourceMeasured),
 
@@ -72,21 +73,23 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 
 		ReasoningOutputTokens: Observe(2, UnitTokens, SourceMeasured),
 	}))
-	recorder1.RecordToolResult(ctx1, ToolResult{Result: `{"result":"` + strings.Repeat("b", 512) + `"}`})
-	end1()
+	require.NoError(
+		t,
+		end1.Finish(ToolResult{Status: OperationStatusOK, Result: `{"result":"` + strings.Repeat("b", 512) + `"}`}),
+	)
 
-	ctx2, end2 := recorder2.StartTool(context.Background(), ToolCall{
+	ctx2, end2, startErr := recorder2.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-2",
 		Arguments: toolJSON,
 	})
+	require.NoError(t, startErr)
 	require.NoError(t, tracker2.RecordInteraction(ctx2, testMeta(), testPayload(), Usage{
 		InputTokens: Observe(4, UnitTokens, SourceMeasured),
 
 		OutputTokens: Observe(2, UnitTokens, SourceMeasured),
 	}))
-	recorder2.RecordToolResult(ctx2, ToolResult{Result: `{"result":"ok"}`})
-	end2()
+	require.NoError(t, end2.Finish(ToolResult{Status: OperationStatusOK, Result: `{"result":"ok"}`}))
 
 	flushTestProvider(t, provider1)
 	flushTestProvider(t, provider2)

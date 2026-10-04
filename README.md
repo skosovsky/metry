@@ -147,8 +147,9 @@ Use `genai.Runtime` as the application boundary:
 - `RecordTraceIO(ctx, input, output)`
 - `RecordTTFT(ctx, duration)`
 - `RecordStreamingCompletion(ctx, StreamingCompletion)`
-- `StartTool(ctx, ToolCall, opts...)`
-- `RecordToolResult(ctx, ToolResult)`
+- `StartTool(ctx, ToolCall, opts...) (context.Context, *ToolHandle, error)`
+- `ToolHandle.Finish(ToolResult) error` / `Close() error`
+- `StartRetrieval(ctx, name, RetrievalRequest, opts...)` followed by `RetrievalHandle.Finish(RetrievalResult)` / `Close()`
 - `StartAsync(ctx, name, opts...)`
 - `RecordAsyncResult(ctx, AsyncHandle, AsyncResult)`
 - `RecordAsyncTokenResult(ctx, token, AsyncResult)`
@@ -237,6 +238,10 @@ the same effective-name contract before committing any measurements.
 
 An active context can supply the parent. With `Detached: true`, recording creates a new root linked to the context's trace reference, including a restored snapshot after the predecessor has ended. Additional `Links` use existing opaque `AsyncHandle` references for fan-in; duplicates are removed. Business identity remains separate from trace tokens. `Predecessor` is caller-owned evidence (or unknown), not an inference from the sampling flag. A carried `PolicyID` is resolved locally before recording; an unknown identity is rejected, never replaced with raw mode.
 
+`Outcome` is a closed enum shared by model, tool and retrieval results. Explicit success is `OperationStatusOK`, failure is `OperationStatusError`, and empty or `OperationStatusUnset` denotes unknown. Model error classes are bounded; invalid raw classes are rejected before usage/outcome writes. Known stream abort uses `stream_aborted`. Error evidence conflicts with explicit success or unset and must be corrected before finishing.
+
+Request and observed response models are separate. `Operation.Model` and request scope supply the request model. Supply `OperationResult.Response: ResponseMetadata{Model: actualModel}` only when a response was observed. Completed `Meta.ResponseModel` has the same caller-evidence requirement. Missing response metadata is omitted, including errors before response. Stateless `ProviderAdapter.ParseResponse(any) (ResponseObservation, error)` returns payload, usage, response metadata, status and bounded error class; it never needs to retain request state.
+
 For streaming, `RecordStreamingUpdate` validates intermediate cumulative usage without recording or storing totals. Only successful `Finish` commits final usage and cost. An aborted stream with missing final usage stays missing even if earlier updates contained counts. `OperationResult.Streaming` supplies TTFT measured from the same local start; `FirstTokenPresent` distinguishes unknown TTFT from a known zero. Impossible intervals are rejected before finalization and may be corrected. Concurrent successful finalization records once; further calls return `ErrFinalized`.
 
 `RecordStreamingCompletion` accepts a standalone final DTO with explicit usage and total duration. It is a stateless completed observation, not a deduplication handle: the producer must deliver it once. Use `StartOperation`/`Finish` when local duplicate-finalization protection is needed. Do not separately call `RecordTTFT` for a final DTO that already supplies TTFT, or emit the same usage through both recording paths.
@@ -244,21 +249,30 @@ For streaming, `RecordStreamingUpdate` validates intermediate cumulative usage w
 ## Tool lifecycle
 
 ```go
-toolCtx, endTool := runtime.StartTool(ctx, genai.ToolCall{
-    Name:      "search",
-    CallID:    callID,
-    Arguments: argsJSON,
+toolCtx, tool, telemetryErr := runtime.StartTool(ctx, genai.ToolCall{
+    Name: "search", CallID: callID, Arguments: argsJSON,
 })
-defer endTool()
-
-result, err := runTool(toolCtx)
-runtime.RecordToolResult(toolCtx, genai.ToolResult{
-    Result: resultJSON,
-    Err:    err,
-})
+if telemetryErr != nil {
+    reportTelemetryError(telemetryErr)
+    toolCtx = ctx
+}
+if tool != nil {
+    defer func() { _ = tool.Close() }()
+}
+result, businessErr := runTool(toolCtx)
+status := genai.Outcome(genai.OperationStatusOK)
+if businessErr != nil { status = genai.OperationStatusError }
+if tool != nil {
+    if telemetryErr := tool.Finish(genai.ToolResult{
+        Status: status, Result: resultJSON, Err: businessErr,
+    }); telemetryErr != nil { reportTelemetryError(telemetryErr) }
+}
+return result, businessErr
 ```
 
-Tool lifecycle writes a duration metric with bounded labels: `tool`, `status`, `error_type`. `status` is normalized to `ok`, `error`, or `unset`; unknown error details collapse to `unknown`. Pass a stable tool name, not a prompt, query, user id, or runtime payload. Use `WithToolErrorClassifier(...)` and `WithAllowedToolErrorClasses(...)` when adapter code needs an explicit bounded taxonomy.
+Tool duration labels `tool`, `status`, and `error_type` use the same outcome as the span. Only explicit `OperationStatusOK` means success; empty status and `OperationStatusUnset` mean unknown. Error evidence without an explicit status means error. Contradictory outcomes and invalid enums return a bounded diagnostic before final writes and can be corrected. `Close` ends an unfinished observation with unknown outcome and no fabricated result; successful `Finish` or `Close` commits once. Subsequent calls return `ErrFinalized`.
+
+Explicit error classes must belong to the declared bounded taxonomy. Classifiers may map provider errors into configured classes through `WithToolErrorClassifier` and `WithAllowedToolErrorClasses`. Raw business errors never become exported messages. Metry observes host I/O; it does not run or cancel it.
 
 ## Unified observability context (Enrich)
 
@@ -386,7 +400,7 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 **Footgun (payload policy):** payload recording is off until you pass `WithPayloadPolicy(...)` or `WithRawPayloads()`. Use raw export only after application-level privacy handling.
 
-**Footgun (GenAI errors):** `Meta.ErrorType` sets span status to Error in addition to the `error.type` attribute. `Runtime.RecordToolResult(ctx, ToolResult{Err: err, ErrorClass: kind})` uses bounded `error_type` for tool metrics. Pass `nil` on success, and register custom classes with `WithAllowedToolErrorClasses(...)`.
+**Footgun (GenAI errors):** `Meta.ErrorType` sets span status to Error in addition to the `error.type` attribute. `ToolHandle.Finish(ToolResult{Err: err, ErrorClass: kind})` uses bounded `error_type` for tool metrics. Pass explicit `Status: OperationStatusOK` on known success, and register custom classes with `WithAllowedToolErrorClasses(...)`.
 
 **Footgun (propagation):** `Provider.InjectToMap` / `ExtractFromMap` are for protocol-level carriers. For queue payloads, checkpoints, and durable resume, use `TraceSnapshot`.
 
@@ -408,8 +422,9 @@ if err != nil {
     return err
 }
 
-_, end := runtime.StartTool(ctx, genai.ToolCall{Name: "retrieval"}, genai.WithSpanSamplingKeep())
-defer end()
+_, tool, err := runtime.StartTool(ctx, genai.ToolCall{Name: "retrieval"}, genai.WithSpanSamplingKeep())
+if err != nil { return err }
+defer func() { _ = tool.Close() }()
 ```
 
 The keep hint is evaluated at span start in the SDK sampler.
@@ -420,29 +435,30 @@ When caller options contain duplicate attribute keys, helper built-in keys win.
 
 ## Adapter helper: retrieval spans
 
-Use this in retriever adapters that need dedicated retrieval spans. Application code should still use `Runtime` for the main GenAI operation. The callback style keeps host code away from `trace.Span`, `otel/codes`, and manual status handling:
+Use a typed handle to observe retrieval I/O without importing OTel status APIs. `Tracker` and `Runtime` expose the same `StartRetrieval` contract:
 
 ```go
-retrievalCtx, end := adapterTracker.StartRetrievalSpan(ctx, "vector.search", genai.RetrievalRequest{
-    Provider: "qdrant",
-    Source:   "knowledge_base",
-    Query:    query,
-    TopK:     5,
+retrievalCtx, retrieval, telemetryErr := adapterTracker.StartRetrieval(ctx, "vector.search", genai.RetrievalRequest{
+    Provider: "qdrant", Source: "knowledge_base", Query: query, TopK: 5,
 }, genai.WithSpanSamplingKeep())
-defer end()
-
-chunks, distances, err := retriever.Search(retrievalCtx, query)
-if err != nil {
-    return err
+if telemetryErr != nil {
+    reportTelemetryError(telemetryErr)
+    retrievalCtx = ctx
 }
-
-adapterTracker.RecordRetrievalResult(retrievalCtx, genai.RetrievalResult{
-    ReturnedChunks: len(chunks),
-    Distances:      distances,
-})
+if retrieval != nil { defer func() { _ = retrieval.Close() }() }
+chunks, distances, businessErr := retriever.Search(retrievalCtx, query)
+status := genai.Outcome(genai.OperationStatusOK)
+if businessErr != nil { status = genai.OperationStatusError }
+if retrieval != nil {
+    if telemetryErr := retrieval.Finish(genai.RetrievalResult{
+        Status: status, Err: businessErr,
+        ReturnedChunks: len(chunks), Distances: distances,
+    }); telemetryErr != nil { reportTelemetryError(telemetryErr) }
+}
+return chunks, businessErr
 ```
 
-`RecordRetrievalResult` returns a diagnostic for negative chunk counts, more than 4,096 distance values or non-finite distances before copying or mutating span attributes. Handle this telemetry diagnostic separately from the retrieval's business result/error. Finite distances may be negative; their scale belongs to the caller's metric contract.
+`Finish` rejects negative chunk counts, more than 4,096 distances, non-finite distances and invalid or conflicting outcomes before result writes. It copies caller slices. Finite distances may be negative; their scale belongs to the caller. Cancellation and deadline errors derive their bounded classes from `errors.Is`; explicit error classes use the declared taxonomy. `Close` without a result remains unknown. Telemetry failure never replaces the retrieval business error.
 
 ## Completed evaluation observations
 

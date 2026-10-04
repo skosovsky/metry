@@ -129,6 +129,11 @@ func DefaultProfile() Profile {
 			},
 			{Key: RequestModel, Values: nil},
 			{Key: ResponseModel, Values: nil},
+			{Key: OperationStatus, Values: []string{OperationStatusOK, OperationStatusError, OperationStatusUnset}},
+			{
+				Key:    ToolMetricLabelStatus,
+				Values: []string{OperationStatusOK, OperationStatusError, OperationStatusUnset},
+			},
 			{Key: ServerAddress, Values: nil},
 			{Key: ServerPort, Values: nil},
 			{Key: ToolMetricLabelTool, Values: nil},
@@ -140,16 +145,19 @@ func DefaultProfile() Profile {
 			{
 				Key: ErrorType,
 				Values: []string{
-					"unknown",
+					string(ErrorClassUnknown),
 					OperationStatusError,
 					string(ErrorClassCancelled),
 					string(ErrorClassDeadlineExceeded),
+					string(ErrorClassStreamAborted),
+					"timeout", "rate_limit", "quota_exceeded", "validation", "unavailable",
+					"permission_denied", "unauthenticated", "not_found", "conflict", "internal",
 				},
 			},
 			{
 				Key: ToolMetricLabelErrorType,
 				Values: []string{
-					"unknown",
+					string(ErrorClassUnknown),
 					"cancelled",
 					string(ErrorClassDeadlineExceeded),
 					"paused",
@@ -288,6 +296,8 @@ func isMetricDimension(key string) bool {
 			ServerAddress,
 			ServerPort,
 			ToolMetricLabelTool,
+			OperationStatus,
+			ToolMetricLabelStatus,
 			OperationPurpose,
 			CostCurrency,
 			ErrorType,

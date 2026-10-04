@@ -30,11 +30,11 @@ func TestPayloadPoliciesProtectDynamicKeys(t *testing.T) {
 		}
 		// Act.
 		call := policy.SanitizeToolCall(ToolCall{Arguments: raw})
-		result := policy.SanitizeToolResult(ToolResult{Result: raw})
+		result := policy.SanitizeToolResult(ToolResult{Status: OperationStatusOK, Result: raw})
 		require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), payload, Usage{}))
-		ctx, end := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "test", Arguments: raw})
-		tracker.Runtime().RecordToolResult(ctx, ToolResult{Result: raw})
-		end()
+		_, end, startErr := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "test", Arguments: raw})
+		require.NoError(t, startErr)
+		require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: raw}))
 		flushTestProvider(t, provider)
 		// Assert.
 		assert.NotContains(t, call.Arguments, secret)
@@ -86,9 +86,9 @@ func TestPayloadJSONInputIsBounded(t *testing.T) {
 	}
 	// The regular recording path must use the same policy boundary.
 	tracker, provider, exporter := newTestTracker(t, WithPayloadPolicy(policy))
-	ctx, end := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "test", Arguments: inputs[0]})
-	tracker.Runtime().RecordToolResult(ctx, ToolResult{Result: inputs[1]})
-	end()
+	_, end, startErr := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "test", Arguments: inputs[0]})
+	require.NoError(t, startErr)
+	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: inputs[1]}))
 	flushTestProvider(t, provider)
 	require.Len(t, exporter.GetSpans(), 1)
 	assert.False(t, testutil.SpanStubHasAttr(exporter.GetSpans()[0], ToolCallArguments))

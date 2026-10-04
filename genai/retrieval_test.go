@@ -24,10 +24,11 @@ func TestRetrievalResultRejectsUnboundedAndNonFiniteBeforeMutation(t *testing.T)
 	} {
 		// Arrange.
 		tracker, provider, exporter := newTestTracker(t)
-		ctx, end := tracker.StartRetrievalSpan(context.Background(), "", RetrievalRequest{})
+		_, handle, startErr := tracker.StartRetrieval(context.Background(), "", RetrievalRequest{})
+		require.NoError(t, startErr)
 		// Act.
-		err := tracker.RecordRetrievalResult(ctx, result)
-		end()
+		err := handle.Finish(result)
+		require.NoError(t, handle.Close())
 		flushTestProvider(t, provider)
 		// Assert: validation precedes slice copy/attribute writes.
 		require.ErrorIs(t, err, ErrInvalidObservation)
@@ -38,7 +39,7 @@ func TestRetrievalResultRejectsUnboundedAndNonFiniteBeforeMutation(t *testing.T)
 	}
 }
 
-func TestStartRetrievalSpan_SetsAttributesAndParent(t *testing.T) {
+func TestStartRetrieval_SetsAttributesAndParent(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
 		WithPayloadPolicy(RedactPayloadPolicy()),
 		WithMaxContextLength(32),
@@ -46,18 +47,20 @@ func TestStartRetrievalSpan_SetsAttributesAndParent(t *testing.T) {
 
 	parentCtx, endParent, err := provider.StartSpan(context.Background(), "genai-retrieval", "request")
 	require.NoError(t, err)
-	ctx, end := tracker.StartRetrievalSpan(parentCtx, "vector.search", RetrievalRequest{
+	ctx, handle, startErr := tracker.StartRetrieval(parentCtx, "vector.search", RetrievalRequest{
 		Provider: "qdrant",
 		Source:   "knowledge_base",
 		Query:    strings.Repeat("a", 128),
 		TopK:     5,
 	})
+	require.NoError(t, startErr)
 	require.NotNil(t, ctx)
-	tracker.RecordRetrievalResult(ctx, RetrievalResult{
+	require.NoError(t, handle.Finish(RetrievalResult{
+		Status:         OperationStatusOK,
 		ReturnedChunks: 0,
 		Distances:      []float64{0.9, 0.8},
-	})
-	end()
+	}))
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 	endParent()
 
 	flushTestProvider(t, provider)
@@ -85,15 +88,16 @@ func TestStartRetrievalSpan_SetsAttributesAndParent(t *testing.T) {
 	testutil.AssertSpanStubOkStatus(t, retrieval)
 }
 
-func TestRecordRetrievalResult_SetsOkStatus(t *testing.T) {
+func TestRetrievalFinish_SuccessSetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	ctx, end := tracker.StartRetrievalSpan(context.Background(), "vector.search", RetrievalRequest{
+	_, handle, startErr := tracker.StartRetrieval(context.Background(), "vector.search", RetrievalRequest{
 		Provider: "qdrant",
 		TopK:     3,
 	})
-	tracker.RecordRetrievalResult(ctx, RetrievalResult{ReturnedChunks: 2})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedChunks: 2}))
+	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -101,15 +105,16 @@ func TestRecordRetrievalResult_SetsOkStatus(t *testing.T) {
 	testutil.AssertSpanStubOkStatus(t, spans[0])
 }
 
-func TestStartRetrievalSpan_WithoutRecordPayloads_DoesNotSetQuery(t *testing.T) {
+func TestStartRetrieval_WithoutRecordPayloads_DoesNotSetQuery(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	_, end := tracker.StartRetrievalSpan(context.Background(), "vector.search", RetrievalRequest{
+	_, handle, startErr := tracker.StartRetrieval(context.Background(), "vector.search", RetrievalRequest{
 		Provider: "qdrant",
 		Query:    "sensitive",
 		TopK:     5,
 	})
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -117,16 +122,17 @@ func TestStartRetrievalSpan_WithoutRecordPayloads_DoesNotSetQuery(t *testing.T) 
 	assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalQuery))
 }
 
-func TestStartRetrievalSpan_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
+func TestStartRetrieval_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
 	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
 
-	_, end := tracker.StartRetrievalSpan(
+	_, handle, startErr := tracker.StartRetrieval(
 		context.Background(),
 		"vector.search",
 		RetrievalRequest{Provider: "qdrant", TopK: 3},
 		WithSpanSamplingKeep(),
 	)
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -135,16 +141,17 @@ func TestStartRetrievalSpan_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *test
 	assert.True(t, spans[0].SpanContext.IsSampled())
 }
 
-func TestStartRetrievalSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
+func TestStartRetrieval_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	_, end := tracker.StartRetrievalSpan(
+	_, handle, startErr := tracker.StartRetrieval(
 		context.Background(),
 		"vector.search",
 		RetrievalRequest{Provider: "qdrant", Source: "knowledge_base", TopK: 3},
 		WithSpanAttributes(metry.StringAttribute("test.retrieval.caller", "present")),
 	)
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
@@ -159,10 +166,10 @@ func TestStartRetrievalSpan_WithCallerAttributes_PreservesBuiltInAttributes(t *t
 	assert.Equal(t, "present", testutil.SpanStubStringAttr(t, spans[0], "test.retrieval.caller"))
 }
 
-func TestStartRetrievalSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
+func TestStartRetrieval_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	_, end := tracker.StartRetrievalSpan(
+	_, handle, startErr := tracker.StartRetrieval(
 		context.Background(),
 		"vector.search",
 		RetrievalRequest{Provider: "qdrant", Source: "knowledge_base", TopK: 3},
@@ -173,7 +180,8 @@ func TestStartRetrievalSpan_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 			metry.IntAttribute(RetrievalTopK, 99),
 		),
 	)
-	end()
+	require.NoError(t, startErr)
+	require.NoError(t, handle.Close())
 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()

@@ -32,7 +32,8 @@ type Operation struct {
 
 // OperationResult describes the final outcome of one GenAI operation.
 type OperationResult struct {
-	Status    string
+	Status    Outcome
+	Response  ResponseMetadata
 	ErrorType string
 	Duration  time.Duration
 	Usage     Usage
@@ -59,11 +60,8 @@ type ToolResult struct {
 	Result     string
 	Err        error
 	ErrorClass ErrorClass
-	Status     string
+	Status     Outcome
 }
-
-// ToolEnd ends a tool span.
-type ToolEnd func()
 
 // ToolOption configures tool span start behavior.
 type ToolOption = ChildSpanOption
@@ -112,8 +110,13 @@ type Runtime interface {
 	RecordTraceIO(ctx context.Context, input, output Payload) error
 	RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error
 	RecordTTFT(ctx context.Context, duration time.Duration)
-	StartTool(ctx context.Context, call ToolCall, opts ...ToolOption) (context.Context, ToolEnd)
-	RecordToolResult(ctx context.Context, result ToolResult)
+	StartTool(ctx context.Context, call ToolCall, opts ...ToolOption) (context.Context, *ToolHandle, error)
+	StartRetrieval(
+		ctx context.Context,
+		name string,
+		req RetrievalRequest,
+		opts ...ChildSpanOption,
+	) (context.Context, *RetrievalHandle, error)
 	StartAsync(ctx context.Context, name string, opts ...AsyncOption) (metry.AsyncHandle, error)
 	RecordAsyncResult(ctx context.Context, handle metry.AsyncHandle, result AsyncResult) error
 	RecordAsyncTokenResult(ctx context.Context, token string, result AsyncResult) error
@@ -188,6 +191,9 @@ func (noopRuntime) RecordTraceIO(context.Context, Payload, Payload) error {
 }
 
 func (noopRuntime) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
+	if _, _, err := resolveModelOutcome(event.Meta.Status, event.Meta.ErrorType); err != nil {
+		return err
+	}
 	meta := mergeMetaFromScope(ctx, event.Meta)
 	if err := validateOperationName(meta.Operation); err != nil {
 		return err
@@ -203,11 +209,22 @@ func (noopRuntime) RecordStreamingCompletion(ctx context.Context, event Streamin
 
 func (noopRuntime) RecordTTFT(context.Context, time.Duration) {}
 
-func (noopRuntime) StartTool(ctx context.Context, _ ToolCall, _ ...ToolOption) (context.Context, ToolEnd) {
-	return ctx, func() {}
+func (noopRuntime) StartTool(
+	ctx context.Context,
+	call ToolCall,
+	opts ...ToolOption,
+) (context.Context, *ToolHandle, error) {
+	return startTool(ctx, nil, call, opts...)
 }
 
-func (noopRuntime) RecordToolResult(context.Context, ToolResult) {}
+func (noopRuntime) StartRetrieval(
+	ctx context.Context,
+	name string,
+	req RetrievalRequest,
+	opts ...ChildSpanOption,
+) (context.Context, *RetrievalHandle, error) {
+	return startRetrieval(ctx, nil, name, req, opts...)
+}
 
 func (noopRuntime) StartAsync(context.Context, string, ...AsyncOption) (metry.AsyncHandle, error) {
 	return metry.NoopAsyncHandle(), nil
@@ -250,15 +267,19 @@ func (r trackerRuntime) RecordOperation(
 	if err := r.tracker.validateUsage(result.Usage); err != nil {
 		return err
 	}
-	status := normalizeOperationStatus(result.Status, result.ErrorType)
+	status, class, outcomeErr := resolveModelOutcome(result.Status, result.ErrorType)
+	if outcomeErr != nil {
+		return outcomeErr
+	}
 	meta := Meta{ //nolint:exhaustruct_v5 // only operation-level fields are relevant here.
 		Provider:      r.runtimeProvider(),
 		Operation:     op.Name,
 		Purpose:       op.Purpose,
 		RequestModel:  op.Model,
-		ResponseModel: op.Model,
+		ResponseModel: result.Response.Model,
 		Duration:      result.Duration,
-		ErrorType:     normalizeOperationErrorType(status, result.ErrorType),
+		ErrorType:     class,
+		Status:        Outcome(status),
 	}
 	if result.Usage.Purpose == "" && op.Purpose != "" {
 		result.Usage.Purpose = op.Purpose
@@ -291,6 +312,9 @@ func (r trackerRuntime) RecordOperation(
 }
 
 func validateCompletedResult(result OperationResult) error {
+	if _, _, err := resolveModelOutcome(result.Status, result.ErrorType); err != nil {
+		return err
+	}
 	if err := result.Usage.Validate(); err != nil {
 		return err
 	}
@@ -333,24 +357,31 @@ func (r trackerRuntime) RecordTTFT(ctx context.Context, duration time.Duration) 
 	r.tracker.RecordTTFT(ctx, r.bindMeta(emptyMeta()), duration)
 }
 
-func (r trackerRuntime) StartTool(ctx context.Context, call ToolCall, opts ...ToolOption) (context.Context, ToolEnd) {
+func (r trackerRuntime) StartTool(
+	ctx context.Context,
+	call ToolCall,
+	opts ...ToolOption,
+) (context.Context, *ToolHandle, error) {
 	if r.tracker == nil {
-		return ctx, func() {}
+		return startTool(ctx, nil, call, opts...)
 	}
-	opts = append(
-		opts,
+	options := append([]ToolOption(nil), opts...)
+	options = append(
+		options,
 		WithSpanAttributes(
 			metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
 		),
 	)
-	return r.tracker.startTool(ctx, call, opts...)
+	return startTool(ctx, r.tracker, call, options...)
 }
 
-func (r trackerRuntime) RecordToolResult(ctx context.Context, result ToolResult) {
-	if r.tracker == nil {
-		return
-	}
-	r.tracker.recordToolResult(ctx, result)
+func (r trackerRuntime) StartRetrieval(
+	ctx context.Context,
+	name string,
+	req RetrievalRequest,
+	opts ...ChildSpanOption,
+) (context.Context, *RetrievalHandle, error) {
+	return startRetrieval(ctx, r.tracker, name, req, opts...)
 }
 
 func (r trackerRuntime) StartAsync(
@@ -455,10 +486,13 @@ func (r trackerRuntime) asyncStatusAndClass(result AsyncResult) (string, ErrorCl
 		}
 		return OperationStatusError, class
 	}
-	if status == "" {
+	if status == "" || status == OperationStatusOK {
 		return OperationStatusOK, ""
 	}
-	return normalizeOperationStatus(status, ""), ""
+	if status == OperationStatusUnset {
+		return OperationStatusUnset, ""
+	}
+	return OperationStatusUnset, ""
 }
 
 func buildAsyncStartConfig(opts ...AsyncOption) asyncStartConfig {
@@ -482,6 +516,7 @@ func emptyMeta() Meta {
 		ServerPort:    0,
 		Duration:      0,
 		ErrorType:     "",
+		Status:        "",
 	}
 }
 
@@ -499,32 +534,6 @@ func filterAsyncResultAttributes(attrs []metry.Attribute) []metry.Attribute {
 		}
 	}
 	return out
-}
-
-func normalizeOperationStatus(status, errorType string) string {
-	if errorType != "" {
-		return OperationStatusError
-	}
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "", OperationStatusOK:
-		return OperationStatusOK
-	case OperationStatusError:
-		return OperationStatusError
-	case OperationStatusUnset:
-		return OperationStatusUnset
-	default:
-		return OperationStatusUnset
-	}
-}
-
-func normalizeOperationErrorType(status, errorType string) string {
-	if errorType != "" {
-		return normalizeErrorType(errorType)
-	}
-	if status == OperationStatusError {
-		return OperationStatusError
-	}
-	return ""
 }
 
 func metryAttributesToOTel(attrs []metry.Attribute) []attribute.KeyValue {
@@ -580,26 +589,4 @@ func sanitizeMetricValue(value, fallback string) string {
 		return fallback
 	}
 	return b.String()
-}
-
-func normalizeErrorType(errorType string) string {
-	switch sanitizeMetricValue(strings.ToLower(errorType), "") {
-	case "canceled", string(ErrorClassCancelled):
-		return string(ErrorClassCancelled)
-	case "timeout",
-		string(ErrorClassDeadlineExceeded),
-		"rate_limit",
-		"quota_exceeded",
-		"validation",
-		"unavailable",
-		"permission_denied",
-		"unauthenticated",
-		"not_found",
-		"conflict",
-		"internal",
-		OperationStatusError:
-		return sanitizeMetricValue(strings.ToLower(errorType), OperationStatusError)
-	default:
-		return OperationStatusError
-	}
 }

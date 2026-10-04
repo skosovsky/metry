@@ -258,8 +258,7 @@ func TestCardinalityBudgetBoundsConcurrentModelToolSeries(t *testing.T) {
 					t.Errorf("unexpected observation validation: %v", err)
 					return
 				}
-				_, end := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: name})
-				end()
+				closeTestTool(t, tracker.Runtime(), name)
 			}
 		})
 	}
@@ -390,4 +389,16 @@ func TestCostOverflowPreservesCurrency(t *testing.T) {
 	assert.InDelta(t, 30.0, totals[profileCurrencyUSD], 1e-9)
 	assert.InDelta(t, 30.0, totals["EUR"], 1e-9)
 	assert.Len(t, totals, 2)
+}
+
+func closeTestTool(t *testing.T, runtime Runtime, name string) {
+	t.Helper()
+	_, handle, err := runtime.StartTool(context.Background(), ToolCall{Name: name})
+	if err != nil {
+		t.Errorf("unexpected tool start validation: %v", err)
+		return
+	}
+	if err := handle.Close(); err != nil {
+		t.Errorf("unexpected tool close diagnostic: %v", err)
+	}
 }
