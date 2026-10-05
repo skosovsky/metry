@@ -25,7 +25,7 @@ func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 
 	err := rec.RecordOperation(
 		context.Background(),
-		Operation{Name: "extract", Model: "model", Purpose: PurposeGeneration},
+		Operation{Locality: ExecutionRemote, Name: "extract", Model: "model", Purpose: PurposeGeneration},
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: 2 * time.Second,
@@ -43,7 +43,7 @@ func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	spans := memTrace.GetSpans()
 	require.Len(t, spans, 1)
 	span := spans[0]
-	assert.Equal(t, "extract", span.Name)
+	assert.Equal(t, "extract model", span.Name)
 	assert.Equal(t, unknownProviderName, testutil.SpanStubStringAttr(t, span, ProviderName))
 	assert.Equal(t, "extract", testutil.SpanStubStringAttr(t, span, OperationName))
 	assert.Equal(t, "model", testutil.SpanStubStringAttr(t, span, RequestModel))
@@ -55,31 +55,19 @@ func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	assert.InDelta(
 		t,
 		2,
-		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: OperationDurationMetricName}),
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: ObservedOperationDurationMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		5,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, rm, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		3,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeOutput,
-		),
+		testInt64HistogramSum(t, rm, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
 		1e-9,
 	)
 }
@@ -90,7 +78,7 @@ func TestRuntime_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
 
 	err := rec.RecordOperation(
 		context.Background(),
-		Operation{Name: "extract"},
+		Operation{Locality: ExecutionRemote, Name: "extract"},
 		OperationResult{Status: OperationStatusError, Duration: time.Second},
 	)
 
@@ -109,7 +97,7 @@ func TestRuntime_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) 
 
 	err := rec.RecordOperation(
 		context.Background(),
-		Operation{Name: "extract"},
+		Operation{Locality: ExecutionRemote, Name: "extract"},
 		OperationResult{
 			Status: OperationStatusOK,
 			Payload: Payload{
@@ -133,7 +121,7 @@ func TestNoopRuntime_DropsOperationsWithoutPanic(t *testing.T) {
 
 	require.NoError(t, rec.RecordOperation(
 		context.Background(),
-		Operation{Name: "noop"},
+		Operation{Locality: ExecutionRemote, Name: "noop"},
 		OperationResult{Status: OperationStatusOK},
 	))
 	_, handle, err := rec.StartTool(context.Background(), ToolCall{Name: "search"})

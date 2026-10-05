@@ -47,7 +47,11 @@ func TestToolAndRetrievalOutcomeMatrix(t *testing.T) {
 			tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
 			_, tool, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "lookup"})
 			require.NoError(t, err)
-			_, retrieval, err := tracker.StartRetrieval(context.Background(), "lookup", RetrievalRequest{})
+			_, retrieval, err := tracker.StartRetrieval(
+				context.Background(),
+				"lookup",
+				RetrievalRequest{Locality: ExecutionLocal},
+			)
 			require.NoError(t, err)
 			// Act.
 			require.NoError(t, tool.Finish(ToolResult{Status: tc.status, Err: tc.err, ErrorClass: tc.class}))
@@ -69,13 +73,13 @@ func TestToolAndRetrievalOutcomeMatrix(t *testing.T) {
 			assert.Equal(
 				t,
 				tc.resolved,
-				testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelStatus),
+				testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, OperationStatus),
 			)
 			if tc.classLabel != "" {
 				assert.Equal(
 					t,
 					tc.classLabel,
-					testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
+					testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ErrorType),
 				)
 			}
 		})
@@ -92,7 +96,12 @@ func TestToolAndRetrievalInvalidFinishCorrectable(t *testing.T) {
 			}
 			_, tool, err := startTool(context.Background(), tracker, ToolCall{Name: "lookup"})
 			require.NoError(t, err)
-			_, retrieval, err := startRetrieval(context.Background(), tracker, "lookup", RetrievalRequest{})
+			_, retrieval, err := startRetrieval(
+				context.Background(),
+				tracker,
+				"lookup",
+				RetrievalRequest{Locality: ExecutionLocal},
+			)
 			require.NoError(t, err)
 			// Act and assert.
 			for _, tc := range []ToolResult{{Status: "not-known"}, {Status: OperationStatusOK, Err: errors.New("private")}, {Status: OperationStatusUnset, ErrorClass: ErrorClassCancelled}, {ErrorClass: "raw personal message"}} {
@@ -116,7 +125,11 @@ func TestToolAndRetrievalConcurrentFinishClose(t *testing.T) {
 	tracker, provider, metrics, exporter := newTestTrackerWithMetrics(t)
 	_, tool, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "lookup"})
 	require.NoError(t, err)
-	_, retrieval, err := tracker.StartRetrieval(context.Background(), "lookup", RetrievalRequest{})
+	_, retrieval, err := tracker.StartRetrieval(
+		context.Background(),
+		"lookup",
+		RetrievalRequest{Locality: ExecutionLocal},
+	)
 	require.NoError(t, err)
 	var toolCommitted, retrievalCommitted, unexpectedErrors atomic.Int32
 	var wait sync.WaitGroup
@@ -162,26 +175,35 @@ func TestToolAndRetrievalConcurrentFinishClose(t *testing.T) {
 func TestRetrievalCopiesResultAndCloseHasNoChunks(t *testing.T) {
 	// Arrange.
 	tracker, provider, exporter := newTestTracker(t)
-	distances := []float64{0.2, 0.3}
-	_, resultHandle, err := tracker.StartRetrieval(context.Background(), "result", RetrievalRequest{})
+	documents := []RetrievalDocument{{Relevance: new(0.2)}, {Relevance: new(0.3)}}
+	_, resultHandle, err := tracker.StartRetrieval(
+		context.Background(),
+		"result",
+		RetrievalRequest{Locality: ExecutionLocal},
+	)
 	require.NoError(t, err)
-	_, closeHandle, err := tracker.StartRetrieval(context.Background(), "close", RetrievalRequest{})
+	_, closeHandle, err := tracker.StartRetrieval(
+		context.Background(),
+		"close",
+		RetrievalRequest{Locality: ExecutionLocal},
+	)
 	require.NoError(t, err)
 	// Act.
 	require.NoError(
 		t,
-		resultHandle.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedChunks: 2, Distances: distances}),
+		resultHandle.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedDocuments: 2, Documents: documents}),
 	)
-	distances[0] = 99
+	*documents[0].Relevance = 99
+	documents[0].ID = "mutated"
 	require.NoError(t, closeHandle.Close())
 	flushTestProvider(t, provider)
 	// Assert.
 	spans := exporter.GetSpans()
 	require.Len(t, spans, 2)
 	result, closed := spans[0], spans[1]
-	assert.Equal(t, []float64{0.2, 0.3}, testutil.SpanStubFloat64SliceAttr(t, result, RetrievalDistances))
+	assert.JSONEq(t, `[{"score":0.2},{"score":0.3}]`, testutil.SpanStubStringAttr(t, result, RetrievalDocuments))
 	assert.Equal(t, codes.Unset, closed.Status.Code)
-	assert.False(t, testutil.SpanStubHasAttr(closed, RetrievalReturnedChunks))
+	assert.False(t, testutil.SpanStubHasAttr(closed, RetrievalReturnedDocuments))
 }
 
 func TestToolAndRetrievalZeroHandlesReject(t *testing.T) {
@@ -200,7 +222,11 @@ func TestToolAndRetrievalDroppedSamplingStillValidate(t *testing.T) {
 	tracker, provider, exporter := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
 	_, tool, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "lookup"})
 	require.NoError(t, err)
-	_, retrieval, err := tracker.StartRetrieval(context.Background(), "lookup", RetrievalRequest{})
+	_, retrieval, err := tracker.StartRetrieval(
+		context.Background(),
+		"lookup",
+		RetrievalRequest{Locality: ExecutionLocal},
+	)
 	require.NoError(t, err)
 	// Act.
 	require.ErrorIs(t, tool.Finish(ToolResult{Status: OperationStatusOK, Err: context.Canceled}), ErrInvalidObservation)

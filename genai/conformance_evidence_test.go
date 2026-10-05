@@ -25,8 +25,8 @@ func TestConformanceAccountingAndWireEvidenceRejectSafeMismatches(t *testing.T) 
 			case "duplicate":
 				observation.Accounting.Actual[0].Count = 2
 			case "duplicate_tool":
-				declaration.Boundaries = []string{ToolMetricLabelTool}
-				observation = ObservedBoundary{Boundary: ToolMetricLabelTool, Operation: profileToolOperation,
+				declaration.Boundaries = []string{"tool"}
+				observation = ObservedBoundary{Boundary: "tool", Operation: profileToolOperation,
 					Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1,
 						Expected: []AccountingMeasurement{{Instrument: ToolDurationMetricName, Count: 1, Total: 1}},
 						Actual:   []AccountingMeasurement{{Instrument: ToolDurationMetricName, Count: 2, Total: 1}}}}
@@ -43,7 +43,7 @@ func TestConformanceAccountingAndWireEvidenceRejectSafeMismatches(t *testing.T) 
 			case "missing_enum":
 				observation.Enums = nil
 			case "event_name", "event_owner", "event_field":
-				event := ObservedEvent{Name: AgentStepEvent, Owner: "metry.genai"}
+				event := ObservedEvent{Name: "gen_ai.evaluation.result", Owner: "metry.genai"}
 				switch scenario {
 				case "event_name":
 					event.Name = "private_fixture_secret"
@@ -83,8 +83,8 @@ func TestConformanceToolPayloadKeepsHostOwnedEnvelopeLikeKeys(t *testing.T) {
 		// Arrange: these are business JSON keys, not a typed message envelope.
 		profile := DefaultProfile()
 		declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping,
-			Boundaries: []string{ToolMetricLabelTool}}
-		observation := ObservedBoundary{Boundary: ToolMetricLabelTool, Operation: profileToolOperation,
+			Boundaries: []string{"tool"}}
+		observation := ObservedBoundary{Boundary: "tool", Operation: profileToolOperation,
 			Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1},
 			Payloads: []PayloadEvidence{{Attribute: channel,
 				Value: `{"truncated":true,"reason":"private_fixture_secret"}`}}}
@@ -126,7 +126,7 @@ func TestConformanceIntegerAccountingPreservesPrecision(t *testing.T) {
 
 func zeroAccountingObservation(profile Profile) ObservedBoundary {
 	fields := make([]ProfileField, 0, 4)
-	for _, name := range []string{OperationName, InputTokens, InputTokens + ".source", InputTokens + ".unit"} {
+	for _, name := range []string{OperationName, InputTokens, measurementProvenanceKey(InputTokens) + ".source", measurementProvenanceKey(InputTokens) + ".unit"} {
 		field, _ := declaredField(profile, name)
 		fields = append(fields, field)
 	}
@@ -134,16 +134,16 @@ func zeroAccountingObservation(profile Profile) ObservedBoundary {
 		Boundary: profileModelBoundary, Operation: profileChatOperation, Fields: fields,
 		Usage: Usage{InputTokens: Observe(0, UnitTokens, SourceMeasured)},
 		Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1,
-			Expected: []AccountingMeasurement{{Instrument: TokenUsageMetricName, Count: 1, Total: 0}},
-			Actual:   []AccountingMeasurement{{Instrument: TokenUsageMetricName, Count: 1, Total: 0}}},
-		Enums: []ObservedEnum{{Name: InputTokens + ".source", Value: string(SourceMeasured)},
-			{Name: InputTokens + ".unit", Value: string(UnitTokens)}},
+			Expected: []AccountingMeasurement{{Instrument: InputTokenUsageMetricName, Count: 1, Total: 0}},
+			Actual:   []AccountingMeasurement{{Instrument: InputTokenUsageMetricName, Count: 1, Total: 0}}},
+		Enums: []ObservedEnum{{Name: measurementProvenanceKey(InputTokens) + ".source", Value: string(SourceMeasured)},
+			{Name: measurementProvenanceKey(InputTokens) + ".unit", Value: string(UnitTokens)}},
 	}
 }
 
 func TestConformanceRejectsDuplicateModelTimingMeasurements(t *testing.T) {
 	for _, instrument := range []string{OperationDurationMetricName, TTFTMetricName,
-		StreamingTPSMetricName, StreamingTBTMetricName} {
+		DerivedOutputTokensPerSecondMetricName, DerivedMeanOutputTokenIntervalMetricName} {
 		t.Run(instrument, func(t *testing.T) {
 			// Arrange: one scenario observation, two actual histogram writes.
 			profile := DefaultProfile()
@@ -183,7 +183,7 @@ func TestConformanceKnownZeroAndPolicyEncodedPayloadEnums(t *testing.T) {
 			role = "private_fixture_secret"
 		}
 		observation.Payloads = []PayloadEvidence{{Attribute: InputMessages,
-			Value: fmt.Sprintf(`[{"role":%q,"parts":[{"type":"tool_call"}]}]`, role)}}
+			Value: fmt.Sprintf(`[{"role":%q,"parts":[{"type":"tool_call","name":"lookup"}]}]`, role)}}
 		field, _ := declaredField(profile, InputMessages)
 		observation.Fields = append(observation.Fields, field)
 		// Act.

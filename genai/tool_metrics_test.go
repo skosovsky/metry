@@ -29,8 +29,8 @@ func TestRuntime_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Greater(t, hist.DataPoints[0].Sum, 0.0)
-	assert.Equal(t, "search", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelTool))
-	assert.Equal(t, OperationStatusOK, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelStatus))
+	assert.Equal(t, "search", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolName))
+	assert.Equal(t, OperationStatusOK, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, OperationStatus))
 }
 
 func TestRuntime_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T) {
@@ -48,16 +48,16 @@ func TestRuntime_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T)
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
-	assert.Equal(t, unknownToolName, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelTool))
+	assert.Equal(t, unknownToolName, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolName))
 	assert.Equal(
 		t,
 		OperationStatusError,
-		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelStatus),
+		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, OperationStatus),
 	)
 	assert.Equal(
 		t,
 		string(ErrorClassUnknown),
-		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
+		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ErrorType),
 	)
 
 	flushTestProvider(t, provider)

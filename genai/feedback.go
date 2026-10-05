@@ -3,6 +3,7 @@ package genai
 import (
 	"context"
 	"math"
+	"unicode/utf8"
 
 	"github.com/skosovsky/metry"
 )
@@ -18,7 +19,8 @@ func (t *Tracker) RecordAsyncFeedback(
 	if !handle.IsValid() {
 		return ErrInvalidAsyncHandle
 	}
-	if math.IsNaN(score) || math.IsInf(score, 0) || len(feedbackText) > maxPayloadInputBytes {
+	if math.IsNaN(score) || math.IsInf(score, 0) || len(feedbackText) > maxPayloadInputBytes ||
+		!utf8.ValidString(feedbackText) {
 		return invalidObservation("feedback", "invalid_or_out_of_bounds")
 	}
 
@@ -29,7 +31,12 @@ func (t *Tracker) RecordAsyncFeedback(
 	return handle.RecordLinkedSpan(ctx, t.provider, "user_feedback", func(w metry.LinkedSpanWriter) error {
 		if t.cfg.RecordPayloads() && feedbackText != "" {
 			feedbackText = sanitizeTextWithConfig(feedbackText, t.cfg)
-			w.SetAttributes(metry.StringAttribute(EvaluationText, truncateContextWithConfig(feedbackText, t.cfg)))
+			w.SetAttributes(
+				metry.StringAttribute(
+					EvaluationExplanation,
+					truncateContextWithLimit(feedbackText, t.cfg.MaxEventLength()),
+				),
+			)
 		}
 		return nil
 	}, spanOpts...)

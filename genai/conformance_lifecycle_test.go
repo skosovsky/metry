@@ -30,7 +30,7 @@ func TestConformanceTwoAdaptersSyncStreamCancelResume(t *testing.T) {
 		{
 			ProfileID:  profile.ID,
 			Mapping:    profile.Mapping,
-			Boundaries: []string{ToolMetricLabelTool},
+			Boundaries: []string{"tool"},
 			Units:      nil,
 		},
 	}
@@ -63,7 +63,11 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 		ctx = completedCheckpointContext(t, provider, runtime)
 		options.Detached = true
 	}
-	modelCtx, model, err := runtime.StartOperation(ctx, Operation{Name: profileChatOperation}, options)
+	modelCtx, model, err := runtime.StartOperation(
+		ctx,
+		Operation{Name: profileChatOperation, Locality: ExecutionRemote},
+		options,
+	)
 	require.NoError(t, err)
 	result := OperationResult{
 		Usage: Usage{OutputTokens: Observe(2, UnitTokens, SourceProvider)},
@@ -78,7 +82,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	if scenario == "cancel" {
 		result.Status, result.ErrorType = OperationStatusError, string(ErrorClassCancelled)
 	}
-	tracker.RecordAgentStep(modelCtx, "agent", "assistant", "model")
+	_ = modelCtx
 	require.NoError(t, model.Finish(result))
 	toolStarted := time.Now()
 	_, endTool, startErr := runtime.StartTool(
@@ -91,7 +95,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: all scenarios account a final measurement once, including cancel.
-	tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	require.Len(t, tokens.DataPoints, 1)
 	assert.Equal(t, uint64(1), tokens.DataPoints[0].Count)
 	assert.Equal(t, int64(2), tokens.DataPoints[0].Sum)
@@ -123,7 +127,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	}
 	actualModels, actualTools := 0, 0
 	for _, item := range observed {
-		if item.Boundary == ToolMetricLabelTool {
+		if item.Boundary == "tool" {
 			actualTools++
 		} else {
 			actualModels++
@@ -133,7 +137,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 		item := &observed[index]
 		item.Accounting.ExpectedSpans = expectedModels
 		item.Accounting.ActualSpans = actualModels
-		if item.Boundary == ToolMetricLabelTool {
+		if item.Boundary == "tool" {
 			item.Accounting.ExpectedSpans, item.Accounting.ActualSpans = 1, actualTools
 			item.Accounting.Expected = []AccountingMeasurement{
 				{Instrument: ToolDurationMetricName, Count: 1, Total: toolPoint.Sum},
@@ -146,11 +150,11 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 			item.Accounting.Expected = slices.Clone(modelExpected)
 			item.Accounting.Actual = slices.Clone(modelActual)
 			item.Accounting.Expected = append(item.Accounting.Expected, AccountingMeasurement{
-				Instrument: TokenUsageMetricName, Count: 1, IntegerTotal: 2,
+				Instrument: OutputTokenUsageMetricName, Count: 1, IntegerTotal: 2,
 			})
 			item.Accounting.Actual = append(
 				item.Accounting.Actual,
-				AccountingMeasurement{Instrument: TokenUsageMetricName,
+				AccountingMeasurement{Instrument: OutputTokenUsageMetricName,
 					Count: tokens.DataPoints[0].Count, IntegerTotal: tokens.DataPoints[0].Sum},
 			)
 		}
@@ -177,16 +181,21 @@ func projectModelAccounting(
 	actual := []AccountingMeasurement{projectFloatAccounting(t, metrics, OperationDurationMetricName)}
 	if scenario == "stream" {
 		require.Positive(t, finalDuration)
-		expected = append(expected,
+		expected = append(
+			expected,
 			AccountingMeasurement{Instrument: TTFTMetricName, Count: 1, Total: 0},
-			AccountingMeasurement{Instrument: StreamingTPSMetricName, Count: 1, Total: 2 / finalDuration},
-			AccountingMeasurement{Instrument: StreamingTBTMetricName, Count: 1, Total: finalDuration},
+			AccountingMeasurement{
+				Instrument: DerivedOutputTokensPerSecondMetricName,
+				Count:      1,
+				Total:      2 / finalDuration,
+			},
+			AccountingMeasurement{Instrument: DerivedMeanOutputTokenIntervalMetricName, Count: 1, Total: finalDuration},
 		)
-		for _, instrument := range []string{TTFTMetricName, StreamingTPSMetricName, StreamingTBTMetricName} {
+		for _, instrument := range []string{TTFTMetricName, DerivedOutputTokensPerSecondMetricName, DerivedMeanOutputTokenIntervalMetricName} {
 			actual = append(actual, projectFloatAccounting(t, metrics, instrument))
 		}
 	} else {
-		for _, instrument := range []string{TTFTMetricName, StreamingTPSMetricName, StreamingTBTMetricName} {
+		for _, instrument := range []string{TTFTMetricName, DerivedOutputTokensPerSecondMetricName, DerivedMeanOutputTokenIntervalMetricName} {
 			metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: instrument})
 		}
 	}
@@ -208,7 +217,7 @@ func completedCheckpointContext(t *testing.T, provider *metry.Provider, runtime 
 	t.Helper()
 	ctx, checkpoint, err := runtime.StartOperation(
 		context.Background(),
-		Operation{Name: profileChatOperation},
+		Operation{Name: profileChatOperation, Locality: ExecutionRemote},
 		RecordingOptions{},
 	)
 	require.NoError(t, err)
@@ -235,7 +244,7 @@ func projectLifecycleWire(t *testing.T, profile Profile, spans tracetest.SpanStu
 		operation := testutil.SpanStubStringAttr(t, span, OperationName)
 		boundary := profileModelBoundary
 		if operation == "execute_tool" {
-			boundary = ToolMetricLabelTool
+			boundary = "tool"
 		}
 		item := ObservedBoundary{Boundary: boundary, Operation: operation,
 			Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1}}
@@ -274,7 +283,7 @@ func projectLifecycleAttribute(
 	field, found := declaredField(profile, string(attr.Key))
 	require.True(t, found, "undeclared: %s", attr.Key)
 	if field.Unit != "" {
-		field.Unit = Unit(testutil.SpanStubStringAttr(t, span, field.Name+".unit"))
+		field.Unit = Unit(testutil.SpanStubStringAttr(t, span, measurementProvenanceKey(field.Name)+".unit"))
 	}
 	item.Fields = append(item.Fields, field)
 	if _, controlled := testContract(profile, false).payloadChannel(field.Name); controlled {
@@ -283,7 +292,7 @@ func projectLifecycleAttribute(
 	if string(attr.Key) == OutputTokens {
 		require.Equal(t, attribute.INT64, attr.Value.Type())
 		item.Usage.OutputTokens = Observe(int(attr.Value.AsInt64()), field.Unit,
-			Source(testutil.SpanStubStringAttr(t, span, OutputTokens+".source")))
+			Source(testutil.SpanStubStringAttr(t, span, measurementProvenanceKey(OutputTokens)+".source")))
 	}
 	for _, enum := range profile.Enumerations() {
 		if enum.Name == field.Name {

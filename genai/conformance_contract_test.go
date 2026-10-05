@@ -23,7 +23,7 @@ func TestConformanceUsesExportedEffectiveJSONBudgets(t *testing.T) {
 				boundary, operation := profileModelBoundary, profileChatOperation
 				// Act.
 				if channel == ToolCallArguments || channel == ToolCallResult {
-					boundary, operation = ToolMetricLabelTool, profileToolOperation
+					boundary, operation = "tool", profileToolOperation
 					_, h, err := tracker.Runtime().
 						StartTool(context.Background(), ToolCall{Name: "search", Arguments: `{"value":"` + content + `"}`})
 					require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestConformanceUsesExportedEffectiveJSONBudgets(t *testing.T) {
 				require.NoError(t, err)
 				rejected, err := CheckConformance(smaller, declarations, fixture)
 				require.NoError(t, err)
-				require.Equal(t, budget == len(truncatedJSONMarker), rejected.Passed())
+				require.Equal(t, len(value) <= len(truncatedJSONMarker), rejected.Passed())
 			})
 		}
 	}
@@ -87,12 +87,12 @@ func TestConformanceEventPayloadRequiresActualEvidenceAndLocalBudget(t *testing.
 			require.NoError(t, err)
 			profile := contract.Profile()
 			observed := zeroAccountingObservation(profile)
-			field, _ := declaredField(profile, EvaluationReasoning)
+			field, _ := declaredField(profile, EvaluationExplanation)
 			event := ObservedEvent{
-				Name:     profileEvaluationOperation,
+				Name:     "gen_ai.evaluation.result",
 				Owner:    "metry.genai",
 				Fields:   []ProfileField{field},
-				Payloads: []PayloadEvidence{{Attribute: EvaluationReasoning, Value: "abc"}},
+				Payloads: []PayloadEvidence{{Attribute: EvaluationExplanation, Value: "abc"}},
 			}
 			switch scenario {
 			case "oversize":
@@ -120,7 +120,7 @@ func TestConformanceEventPayloadRequiresActualEvidenceAndLocalBudget(t *testing.
 	}
 }
 
-func TestConformanceExporterDerivedEvaluationTextBudget(t *testing.T) {
+func TestConformanceExporterDerivedEvaluationLabelBudget(t *testing.T) {
 	// Arrange: host scenario text is not used as exported evidence.
 	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxEventLength(17))
 	evaluation := successfulEvaluation()
@@ -224,15 +224,21 @@ func TestConformanceNegativeEvidenceDerivedFromRealExports(t *testing.T) {
 			observations := projectLifecycleWire(t, profile, spans)
 			require.Len(t, observations, 1)
 			metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
-			tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+			tokens := metrytest.FindInt64Histogram(
+				t,
+				metrics,
+				metrytest.MetricSelector{Name: OutputTokenUsageMetricName},
+			)
 			require.Len(t, tokens.DataPoints, 1)
 			observations[0].Accounting = &AccountingEvidence{
 				ExpectedSpans: 1,
 				ActualSpans:   len(spans),
-				Expected:      []AccountingMeasurement{{Instrument: TokenUsageMetricName, Count: 1, IntegerTotal: 0}},
+				Expected: []AccountingMeasurement{
+					{Instrument: OutputTokenUsageMetricName, Count: 1, IntegerTotal: 0},
+				},
 				Actual: []AccountingMeasurement{
 					{
-						Instrument:   TokenUsageMetricName,
+						Instrument:   OutputTokenUsageMetricName,
 						Count:        tokens.DataPoints[0].Count,
 						IntegerTotal: tokens.DataPoints[0].Sum,
 					},
@@ -301,7 +307,7 @@ func TestConformanceDuplicateToolAccountingFromRealExports(t *testing.T) {
 	observations := lifecycleExporterFixture(t, profile, "sync")
 	declarations := []AdapterDeclaration{
 		{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{profileModelBoundary}},
-		{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{ToolMetricLabelTool}},
+		{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{"tool"}},
 	}
 	fixture := func() ([]ObservedBoundary, error) { return observations, nil }
 	baseline, err := CheckConformance(contract, declarations, fixture)
@@ -310,7 +316,7 @@ func TestConformanceDuplicateToolAccountingFromRealExports(t *testing.T) {
 	// Act: duplicate only the exported tool measurement count.
 	mutated := false
 	for index := range observations {
-		if observations[index].Boundary == ToolMetricLabelTool {
+		if observations[index].Boundary == "tool" {
 			observations[index].Accounting.Actual[0].Count++
 			mutated = true
 		}

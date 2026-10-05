@@ -38,7 +38,9 @@ func main() {
 
 func runStandalone(ctx context.Context, tracker *genai.Tracker) error {
 	runtime := tracker.Runtime()
-	_, model, err := runtime.StartOperation(ctx, genai.Operation{Name: "chat"}, genai.RecordingOptions{})
+	_, model, err := runtime.StartOperation(
+		ctx, genai.Operation{Name: "chat", Locality: genai.ExecutionRemote}, genai.RecordingOptions{},
+	)
 	if err != nil {
 		return err
 	}
@@ -55,13 +57,17 @@ func runStandalone(ctx context.Context, tracker *genai.Tracker) error {
 	}, func(err error) { fmt.Printf("tool telemetry: %v\n", err) }); businessErr != nil {
 		return businessErr
 	}
-	_, retrieval, err := tracker.StartRetrieval(ctx, "", genai.RetrievalRequest{TopK: 1})
+	_, retrieval, err := tracker.StartRetrieval(
+		ctx,
+		"",
+		genai.RetrievalRequest{TopK: 1, Locality: genai.ExecutionLocal},
+	)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = retrieval.Close() }()
 	// Metry neither performs retrieval nor infers model usage from its result.
-	return retrieval.Finish(genai.RetrievalResult{Status: genai.OperationStatusOK, ReturnedChunks: 1})
+	return retrieval.Finish(genai.RetrievalResult{Status: genai.OperationStatusOK, ReturnedDocuments: 1})
 }
 
 // observeLookup controls only this application's I/O; metry owns its observation.

@@ -38,9 +38,13 @@ func TestNoopAndSamplingPreserveHostBusinessResultAndDiagnostic(t *testing.T) {
 
 func syntheticHostOperation(runtime Runtime, tokens int, businessErr error) (string, error, error) {
 	result := "host result"
-	diagnostic := runtime.RecordOperation(context.Background(), Operation{Name: profileChatOperation}, OperationResult{
-		Status: OperationStatusError,
-		Usage:  Usage{InputTokens: Observe(tokens, UnitTokens, SourceMeasured)},
-	})
+	diagnostic := runtime.RecordOperation(
+		context.Background(),
+		Operation{Locality: ExecutionRemote, Name: profileChatOperation},
+		OperationResult{
+			Status: OperationStatusError,
+			Usage:  Usage{InputTokens: Observe(tokens, UnitTokens, SourceMeasured)},
+		},
+	)
 	return result, businessErr, diagnostic
 }

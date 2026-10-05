@@ -89,7 +89,7 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 	spans := mem.GetSpans()
 	require.GreaterOrEqual(t, len(spans), 3)
 
-	interaction := testutil.SpanByName(t, spans, "chat")
+	interaction := testutil.SpanByName(t, spans, "chat gpt-4o-mini")
 	assert.Equal(t, "openai", testutil.SpanStubStringAttr(t, interaction, genai.ProviderName))
 	assert.Equal(t, "gpt-4o-mini", testutil.SpanStubStringAttr(t, interaction, genai.RequestModel))
 	assert.False(t, testutil.SpanStubHasAttr(interaction, genai.ResponseModel))

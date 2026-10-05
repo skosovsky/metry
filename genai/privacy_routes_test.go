@@ -41,10 +41,10 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 			tracker, err := NewTrackerFromProvider(provider, mode.option)
 			require.NoError(t, err)
 			const secret = "private_marker_7"
-			payload := Payload{InputMessages: []Message{{Role: secret, FinishReason: secret, Parts: []ContentPart{{
+			payload := Payload{InputMessages: []Message{{Role: secret, Parts: []ContentPart{{
 				Type: secret, Content: secret, ID: secret, Name: secret,
 				Arguments: []byte(`{"` + secret + `":{"nested":"` + secret + `"}}`),
-				Result:    []byte(`[{"` + secret + `":"` + secret + `"}]`),
+				Response:  []byte(`[{"` + secret + `":"` + secret + `"}]`),
 			}}}}}
 			// Act: content, schema metadata, dynamic keys, references and raw errors.
 			require.NoError(
@@ -68,7 +68,7 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 			_, operation, err := runtime.
 				StartOperation(
 					context.Background(),
-					Operation{Name: secret, Model: secret, Purpose: secret},
+					Operation{Locality: ExecutionRemote, Name: secret, Model: secret, Purpose: secret},
 					RecordingOptions{
 						Identity: CausalIdentity{
 							RunID:          secret,
@@ -97,12 +97,18 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 			}
 			require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
 			retrievalCtx, finishRetrieval, retrievalErr := tracker.StartRetrieval(context.Background(), secret,
-				RetrievalRequest{Provider: secret, Source: secret, Query: secret})
+				RetrievalRequest{Locality: ExecutionRemote, Provider: secret, Source: secret, Query: secret})
 			require.NoError(t, retrievalErr)
-			tracker.RecordAgentStep(retrievalCtx, secret, secret, secret)
+			_, invocation, invocationErr := tracker.StartAgent(
+				retrievalCtx,
+				AgentInvocation{Name: secret, ID: secret, Version: secret, Locality: ExecutionLocal},
+				RecordingOptions{},
+			)
+			require.NoError(t, invocationErr)
+			require.NoError(t, invocation.Finish(InvocationResult{Status: OperationStatusOK}))
 			tracker.RecordCacheHit(retrievalCtx, true, secret)
 			require.NoError(t, tracker.RecordTraceIO(retrievalCtx, payload, payload))
-			require.NoError(t, finishRetrieval.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedChunks: 0}))
+			require.NoError(t, finishRetrieval.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedDocuments: 0}))
 			origin, err := runtime.StartAsync(context.Background(), secret)
 			require.NoError(t, err)
 			require.NoError(
@@ -118,7 +124,7 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 			// Assert: no secret in any owned span/event/status field on either route.
 			for _, sink := range []*testutil.InMemoryTraceExporter{first, second} {
 				spans := sink.GetSpans()
-				require.Len(t, spans, 8)
+				require.Len(t, spans, 9)
 				priceReference := testutil.SpanStubStringAttr(t, spans[0], "metry.usage.price_reference")
 				assertExportedPriceReference(t, priceReference, secret, mode.raw)
 				for _, span := range spans {

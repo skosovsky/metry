@@ -207,7 +207,7 @@ func TestEvaluationPrivacyAndBoundedReasoning(t *testing.T) {
 			for _, attr := range span.Attributes {
 				assert.NotContains(t, attr.Value.AsString(), "secret-marker")
 			}
-			reasoning := testutil.SpanStubStringAttr(t, span, EvaluationReasoning)
+			reasoning := testutil.SpanStubStringAttr(t, span, EvaluationExplanation)
 			assert.LessOrEqual(t, len(reasoning), 64)
 			assert.True(t, utf8.ValidString(reasoning))
 		}
@@ -246,7 +246,7 @@ func TestEvaluationRawReasoningLimitsAndCallerDefinedScoreScale(t *testing.T) {
 		spans := exporter.GetSpans()
 		require.Len(t, spans, 1)
 		assert.InDelta(t, score, testutil.SpanStubFloat64Attr(t, spans[0], EvaluationScore), 1e-9)
-		reasoning := testutil.SpanStubStringAttr(t, spans[0], EvaluationReasoning)
+		reasoning := testutil.SpanStubStringAttr(t, spans[0], EvaluationExplanation)
 		assert.LessOrEqual(t, len(reasoning), limit)
 		assert.True(t, strings.HasSuffix(reasoning, truncationSuffix))
 		assert.True(t, utf8.ValidString(reasoning))

@@ -27,10 +27,10 @@ func TestMigrationPreservesKnownZeroUnitsAndHostCustomNames(t *testing.T) {
 	}
 	// Act: logical and physical boundary choices are explicit, not inferred.
 	require.NoError(t, tracker.Runtime().RecordOperation(context.Background(),
-		Operation{Name: profileChatOperation}, OperationResult{Usage: usage},
+		Operation{Locality: ExecutionRemote, Name: profileChatOperation}, OperationResult{Usage: usage},
 		metry.StringAttribute("host.custom.name", "safe-static-value")))
 	_, summary, err := tracker.Runtime().StartOperation(context.Background(),
-		Operation{
+		Operation{Locality: ExecutionRemote,
 			Name: "logical",
 		}, RecordingOptions{Identity: CausalIdentity{RunID: "run", OperationID: "operation", Kind: IdentityLogical}})
 	require.NoError(t, err)
@@ -42,10 +42,18 @@ func TestMigrationPreservesKnownZeroUnitsAndHostCustomNames(t *testing.T) {
 	spans := traceExporter.GetSpans()
 	require.Len(t, spans, 2)
 	assert.Equal(t, "safe-static-value", testutil.SpanStubStringAttr(t, spans[0], "host.custom.name"))
-	assert.Equal(t, string(UnitTokens), testutil.SpanStubStringAttr(t, spans[0], InputTokens+".unit"))
-	assert.Equal(t, string(SourceMeasured), testutil.SpanStubStringAttr(t, spans[0], InputTokens+".source"))
+	assert.Equal(
+		t,
+		string(UnitTokens),
+		testutil.SpanStubStringAttr(t, spans[0], "metry.gen_ai.measurement.input_tokens.unit"),
+	)
+	assert.Equal(
+		t,
+		string(SourceMeasured),
+		testutil.SpanStubStringAttr(t, spans[0], "metry.gen_ai.measurement.input_tokens.source"),
+	)
 	assert.Equal(t, "completed", testutil.SpanStubStringAttr(t, spans[0], "metry.observation.kind"))
-	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
 	require.Len(t, histogram.DataPoints, 1)
 	assert.Equal(t, uint64(1), histogram.DataPoints[0].Count)
 	assert.Equal(t, int64(0), histogram.DataPoints[0].Sum)

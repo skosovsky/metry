@@ -23,7 +23,7 @@ func toolNameWithConfig(value string, cfg runtimeConfig) string {
 		return name
 	}
 	for _, dimension := range cfg.profile.Dimensions {
-		if dimension.Key == ToolMetricLabelTool && slices.Contains(dimension.Values, name) {
+		if dimension.Key == ToolName && slices.Contains(dimension.Values, name) {
 			return name
 		}
 	}

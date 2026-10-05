@@ -31,7 +31,18 @@ func init() {
 		if provider.otelTracer == nil {
 			return nil, nil, ErrNilTracerProvider
 		}
-		return provider.otelMeter.Meter(genaiMeterName), provider.otelTracer.Tracer(genaiTracerName), nil
+		const version = "semconv-genai-e07f4eb+metry-v1"
+		const schema = "https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev"
+		return provider.otelMeter.Meter(
+				genaiMeterName,
+				metric.WithInstrumentationVersion(version),
+				metric.WithSchemaURL(schema),
+			),
+			provider.otelTracer.Tracer(
+				genaiTracerName,
+				trace.WithInstrumentationVersion(version),
+				trace.WithSchemaURL(schema),
+			), nil
 	}
 
 	metrytestwire.NewProviderFromDeps = func(

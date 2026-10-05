@@ -4,7 +4,7 @@ import "slices"
 
 const (
 	// InstrumentationProfileID identifies the supported metry observation schema.
-	InstrumentationProfileID  = "metry.genai.effective"
+	InstrumentationProfileID  = "metry.genai.semconv.e07f4eb.v1"
 	defaultSeriesBudget       = 256
 	maxSeriesBudget           = 4096
 	minSeriesBudget           = 16
@@ -98,7 +98,7 @@ func DefaultProfile() Profile {
 			{Name: OutputTokens, Unit: UnitTokens, Stability: StabilityDevelopment, Encoding: EncodingInteger},
 			{Name: CacheReadInputTokens, Unit: UnitTokens, Stability: StabilityDevelopment, Encoding: EncodingInteger},
 			{
-				Name:      CacheCreationInputTokens,
+				Name:      CacheWriteInputTokens,
 				Unit:      UnitTokens,
 				Stability: StabilityDevelopment,
 				Encoding:  EncodingInteger,
@@ -106,7 +106,7 @@ func DefaultProfile() Profile {
 			{
 				Name:      UsageReasoningOutputTokens,
 				Unit:      UnitTokens,
-				Stability: StabilityExtension,
+				Stability: StabilityDevelopment,
 				Encoding:  EncodingInteger,
 			},
 			{Name: UsageCost, Unit: UnitCurrency, Stability: StabilityExtension, Encoding: EncodingFloat},
@@ -116,10 +116,12 @@ func DefaultProfile() Profile {
 		}),
 		Boundaries: []Boundary{
 			{Name: profileModelBoundary, Operation: profileChatOperation, Accounting: true},
-			{Name: ToolMetricLabelTool, Operation: profileToolOperation, Accounting: true},
+			{Name: payloadToolRole, Operation: profileToolOperation, Accounting: true},
 			{Name: profileRetrievalOperation, Operation: profileRetrievalOperation, Accounting: false},
 			{Name: string(IdentityLogical), Operation: string(IdentityLogical), Accounting: false},
 			{Name: profileEvaluationOperation, Operation: profileEvaluationOperation, Accounting: false},
+			{Name: "agent", Operation: "invoke_agent", Accounting: false},
+			{Name: "workflow", Operation: "invoke_workflow", Accounting: false},
 		},
 		Dimensions: []Dimension{
 			{Key: ProviderName, Values: nil},
@@ -130,13 +132,9 @@ func DefaultProfile() Profile {
 			{Key: RequestModel, Values: nil},
 			{Key: ResponseModel, Values: nil},
 			{Key: OperationStatus, Values: []string{OperationStatusOK, OperationStatusError, OperationStatusUnset}},
-			{
-				Key:    ToolMetricLabelStatus,
-				Values: []string{OperationStatusOK, OperationStatusError, OperationStatusUnset},
-			},
 			{Key: ServerAddress, Values: nil},
 			{Key: ServerPort, Values: nil},
-			{Key: ToolMetricLabelTool, Values: nil},
+			{Key: ToolName, Values: nil},
 			{
 				Key:    OperationPurpose,
 				Values: []string{PurposeGeneration, PurposeGuardEvaluation, PurposeQualityEvaluation},
@@ -151,17 +149,7 @@ func DefaultProfile() Profile {
 					string(ErrorClassDeadlineExceeded),
 					string(ErrorClassStreamAborted),
 					"timeout", "rate_limit", "quota_exceeded", "validation", "unavailable",
-					"permission_denied", "unauthenticated", "not_found", "conflict", "internal",
-				},
-			},
-			{
-				Key: ToolMetricLabelErrorType,
-				Values: []string{
-					string(ErrorClassUnknown),
-					"cancelled",
-					string(ErrorClassDeadlineExceeded),
-					"paused",
-					"stream_aborted",
+					"permission_denied", "unauthenticated", "not_found", "conflict", "internal", "paused",
 				},
 			},
 		},
@@ -295,13 +283,13 @@ func isMetricDimension(key string) bool {
 			ResponseModel,
 			ServerAddress,
 			ServerPort,
-			ToolMetricLabelTool,
+			ToolName,
 			OperationStatus,
-			ToolMetricLabelStatus,
+			OperationStatus,
 			OperationPurpose,
 			CostCurrency,
 			ErrorType,
-			ToolMetricLabelErrorType,
+			ErrorType,
 		},
 		key,
 	)

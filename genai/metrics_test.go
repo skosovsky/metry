@@ -28,25 +28,13 @@ func TestRecordInteraction_RecordsTokenHistogramAndCost(t *testing.T) {
 	assert.InDelta(
 		t,
 		10,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, rm, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		20,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeOutput,
-		),
+		testInt64HistogramSum(t, rm, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(t, 0.001, metrytest.Float64SumValue(t, rm, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
@@ -100,13 +88,13 @@ func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
 	assert.InDelta(
 		t,
 		2.2,
-		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTPSMetricName}),
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: DerivedOutputTokensPerSecondMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		0.5,
-		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTBTMetricName}),
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: DerivedMeanOutputTokenIntervalMetricName}),
 		1e-9,
 	)
 }
@@ -141,7 +129,11 @@ func TestRecordStreamingCompletion_WithScope_UsesScopeProviderInMetrics(t *testi
 	)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: StreamingTPSMetricName})
+	hist := metrytest.FindFloat64Histogram(
+		t,
+		rm,
+		metrytest.MetricSelector{Name: DerivedOutputTokensPerSecondMetricName},
+	)
 	require.NotEmpty(t, hist.DataPoints)
 	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
@@ -163,5 +155,6 @@ func TestRecordInteraction_WithScopeModelOnly_RejectsMissingOperation(t *testing
 	// Assert: no silent usage loss or malformed span under the new contract.
 	require.ErrorIs(t, err, ErrInvalidObservation)
 	assert.Empty(t, exporter.GetSpans())
-	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 }

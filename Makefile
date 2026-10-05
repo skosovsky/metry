@@ -28,7 +28,7 @@ test:
 	done
 
 test-examples:
-	@for d in examples/enrich examples/propagation_map examples/async_handle examples/metrics_registry examples/scope examples/executor examples/genai_recorder examples/genai_standalone; do \
+	@for d in examples/enrich examples/propagation_map examples/async_handle examples/metrics_registry examples/scope examples/executor examples/genai_recorder examples/genai_standalone examples/agent_workflow; do \
 		echo "test-example - $$d"; \
 		(cd "$$d" && $(GO) run .) || exit 1; \
 	done

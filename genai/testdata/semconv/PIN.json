@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/open-telemetry/semantic-conventions-genai",
+  "commit": "e07f4ebacb08f56db8c4c882d117720333fbca04",
+  "schema_url": "https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev",
+  "status": "Development",
+  "dependency": "open-telemetry/semantic-conventions v1.44.0",
+  "sha256": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "model/manifest.yaml": "53f3589761cd853c6d234761cd07290ee6bc58b4b9758bc4b7b7039c3343e7b6",
+    "model/gen-ai/registry.yaml": "a6ec0bb847ebc48692a17282ea7d05764c998a39be27b82353d81d5b21795d1f",
+    "model/gen-ai/spans.yaml": "37bec197b05564f04641f645b8cc9ef3fefa1890381f4eb6b601020f13d67265",
+    "model/gen-ai/metrics.yaml": "e7e2936d8f383c049dba10841e85c0aef225f9ac7b6d1c45136378e13cdc4555",
+    "model/gen-ai/token-metrics.yaml": "3d9839948f6859f5d8ff1cc0685baff6acf51920b760a4b85fb6b83f554a6c6f",
+    "model/gen-ai/events.yaml": "55de2362957db4525298c4bc838d79367f9448accc0cbb0f6fc258f16c85d00e",
+    "model/gen-ai/gen-ai-system-instructions.json": "208195efb86d3d8ebb604d81ee8ff49215aea82f2ec81e7f0fc743690748da30",
+    "model/gen-ai/gen-ai-input-messages.json": "034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad",
+    "model/gen-ai/gen-ai-output-messages.json": "cb1e0296de9a5c15237f4e49af2f13e1409ffc9a671f89767da20ad986f37461",
+    "model/gen-ai/gen-ai-tool-call-arguments.json": "73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea",
+    "model/gen-ai/gen-ai-tool-call-result.json": "44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412",
+    "model/gen-ai/gen-ai-retrieval-documents.json": "051d5e2f31789949763fc27c69356e8e5cfb7067fe6262a2a24066a7a474af29"
+  }
+}

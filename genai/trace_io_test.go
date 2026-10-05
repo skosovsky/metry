@@ -70,6 +70,7 @@ func TestRecordTraceIO_TruncatesLongPayload(t *testing.T) {
 	require.Len(t, spans, 1)
 	out := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(out), limit)
-	assert.Contains(t, out, `"truncated":true`)
+	assert.Equal(t, "[]", out)
+	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], "metry.gen_ai.payload.input_messages.truncated"))
 	assert.True(t, utf8.ValidString(out))
 }

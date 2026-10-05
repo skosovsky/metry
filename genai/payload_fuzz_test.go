@@ -17,7 +17,8 @@ func FuzzBoundedJSON(f *testing.F) {
 			t.Skip()
 		}
 		limit := max(int(budget), len(truncatedJSONMarker))
-		// Act.
+		// Act: the array route has its own schema-preserving prefix contract.
+		assertBoundedArrayPreserved(t, raw, limit)
 		output, err := boundedJSON(json.RawMessage(raw), limit)
 		// Assert.
 		if err != nil {
@@ -115,4 +116,22 @@ func FuzzPayloadSanitizer(f *testing.F) {
 			}
 		}
 	})
+}
+
+func assertBoundedArrayPreserved(t *testing.T, raw string, limit int) {
+	t.Helper()
+	arrayOutput, truncated, arrayErr := boundedJSONArray(json.RawMessage(raw), limit)
+	if arrayErr == nil && arrayOutput != "" {
+		original, inputErr := decodePayloadJSON(raw)
+		actual, outputErr := decodePayloadJSON(arrayOutput)
+		if inputErr != nil || outputErr != nil || len(arrayOutput) > limit {
+			t.Fatal("invalid array output")
+		}
+		input, inputOK := original.([]any)
+		prefix, prefixOK := actual.([]any)
+		if !inputOK || !prefixOK || len(prefix) > len(input) || !reflect.DeepEqual(input[:len(prefix)], prefix) ||
+			truncated != (len(prefix) < len(input)) {
+			t.Fatal("array prefix changed")
+		}
+	}
 }

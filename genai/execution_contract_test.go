@@ -19,7 +19,11 @@ func TestStandaloneExecutionBoundariesEncloseModelToolRetrievalIO(t *testing.T) 
 	runtime := tracker.Runtime()
 	ctx := context.Background()
 	// Act: recording starts before each I/O boundary and finishes after it.
-	modelCtx, model, err := runtime.StartOperation(ctx, Operation{Name: profileChatOperation}, RecordingOptions{})
+	modelCtx, model, err := runtime.StartOperation(
+		ctx,
+		Operation{Locality: ExecutionRemote, Name: profileChatOperation},
+		RecordingOptions{},
+	)
 	require.NoError(t, err)
 	require.True(t, trace.SpanFromContext(modelCtx).IsRecording())
 	modelIOStart, modelIOEnd := syntheticIOInterval()
@@ -29,11 +33,15 @@ func TestStandaloneExecutionBoundariesEncloseModelToolRetrievalIO(t *testing.T) 
 	require.True(t, trace.SpanFromContext(toolCtx).IsRecording())
 	toolIOStart, toolIOEnd := syntheticIOInterval()
 	require.NoError(t, endTool.Finish(ToolResult{Status: OperationStatusOK, Result: `{"found":true}`}))
-	retrievalCtx, endRetrieval, startErr := tracker.StartRetrieval(ctx, "", RetrievalRequest{TopK: 1})
+	retrievalCtx, endRetrieval, startErr := tracker.StartRetrieval(
+		ctx,
+		"",
+		RetrievalRequest{Locality: ExecutionRemote, TopK: 1},
+	)
 	require.NoError(t, startErr)
 	require.True(t, trace.SpanFromContext(retrievalCtx).IsRecording())
 	retrievalIOStart, retrievalIOEnd := syntheticIOInterval()
-	require.NoError(t, endRetrieval.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedChunks: 1}))
+	require.NoError(t, endRetrieval.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedDocuments: 1}))
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: exported intervals enclose actual local I/O, not result recording.

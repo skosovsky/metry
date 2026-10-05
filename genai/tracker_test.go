@@ -96,37 +96,25 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 
 	spans1 := memTrace1.GetSpans()
 	require.Len(t, spans1, 2)
-	chatSpan1 := testutil.SpanByName(t, spans1, "chat")
+	chatSpan1 := testutil.SpanByName(t, spans1, "chat "+fingerprintPayloadLabel("gpt-4o-mini"))
 	require.True(t, testutil.SpanStubHasAttr(chatSpan1, InputMessages))
 
 	spans2 := memTrace2.GetSpans()
 	require.Len(t, spans2, 2)
-	chatSpan2 := testutil.SpanByName(t, spans2, "chat")
+	chatSpan2 := testutil.SpanByName(t, spans2, "chat "+fingerprintPayloadLabel("gpt-4o-mini"))
 	require.False(t, testutil.SpanStubHasAttr(chatSpan2, InputMessages))
 
 	rm1 := metrytest.CollectResourceMetrics(t, provider1, memMetric1)
 	assert.InDelta(
 		t,
 		12,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm1,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, rm1, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		6,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm1,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeOutput,
-		),
+		testInt64HistogramSum(t, rm1, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
@@ -137,7 +125,7 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 			rm1,
 			metrytest.MetricSelector{Name: TokenComponentUsageMetricName},
 			TokenType,
-			TokenTypeInputCacheRead,
+			TokenComponentCacheRead,
 		),
 		1e-9,
 	)
@@ -149,7 +137,7 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 			rm1,
 			metrytest.MetricSelector{Name: TokenComponentUsageMetricName},
 			TokenType,
-			TokenTypeOutputReasoning,
+			TokenComponentReasoning,
 		),
 		1e-9,
 	)
@@ -158,25 +146,13 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	assert.InDelta(
 		t,
 		4,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm2,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, rm2, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		2,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			rm2,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeOutput,
-		),
+		testInt64HistogramSum(t, rm2, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
 		1e-9,
 	)
 	metrytest.AssertMetricAbsent(t, rm2, metrytest.MetricSelector{Name: TokenComponentUsageMetricName})

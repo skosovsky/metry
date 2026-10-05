@@ -106,7 +106,7 @@ func main() {
 		panic("runtime operation span not exported")
 	}
 	rm := metricMem.LastResourceMetrics()
-	if !hasFloat64Histogram(rm, genai.OperationDurationMetricName) {
+	if !hasFloat64Histogram(rm, genai.ObservedOperationDurationMetricName) {
 		panic("operation duration metric not exported")
 	}
 	if !hasFloat64Histogram(rm, genai.ToolDurationMetricName) {
@@ -114,7 +114,7 @@ func main() {
 	}
 
 	fmt.Printf("exported spans: %d\n", traceMem.Len())
-	fmt.Printf("exported operation metric: %s\n", genai.OperationDurationMetricName)
+	fmt.Printf("exported operation metric: %s\n", genai.ObservedOperationDurationMetricName)
 	fmt.Printf("exported tool metric: %s\n", genai.ToolDurationMetricName)
 }
 
@@ -126,7 +126,7 @@ func exampleRecorders(provider *metry.Provider) (genai.Runtime, *genai.Evaluatio
 			profile.Dimensions[index].Values = []string{"provider"}
 		case genai.RequestModel, genai.ResponseModel:
 			profile.Dimensions[index].Values = []string{"model"}
-		case genai.ToolMetricLabelTool:
+		case genai.ToolName:
 			profile.Dimensions[index].Values = []string{"search"}
 		}
 	}
@@ -170,7 +170,7 @@ func recordExampleEvaluation(recorder *genai.EvaluationRecorder, origin metry.As
 
 func hasRuntimeOperationSpan(spans tracetest.SpanStubs) bool {
 	for _, span := range spans {
-		if span.Name != demoOperation {
+		if span.Name != demoOperation+" model" {
 			continue
 		}
 		if span.Status.Code.String() != "Ok" {

@@ -29,16 +29,19 @@ type Tracker struct {
 }
 
 type metricsHolder struct {
-	TokenUsage          metric.Int64Histogram
-	TokenComponentUsage metric.Int64Histogram
-	OperationDuration   metric.Float64Histogram
-	Cost                metric.Float64Counter
-	TTFT                metric.Float64Histogram
-	TPS                 metric.Float64Histogram
-	TBT                 metric.Float64Histogram
-	VideoSeconds        metric.Float64Histogram
-	VideoFrames         metric.Int64Histogram
-	ToolDuration        metric.Float64Histogram
+	InputTokenUsage                metric.Int64Histogram
+	OutputTokenUsage               metric.Int64Histogram
+	TokenComponentUsage            metric.Int64Histogram
+	OperationDuration              metric.Float64Histogram
+	ObservedOperationDuration      metric.Float64Histogram
+	InvocationDuration             metric.Float64Histogram
+	Cost                           metric.Float64Counter
+	TTFT                           metric.Float64Histogram
+	DerivedOutputTokensPerSecond   metric.Float64Histogram
+	DerivedMeanOutputTokenInterval metric.Float64Histogram
+	VideoSeconds                   metric.Float64Histogram
+	VideoFrames                    metric.Int64Histogram
+	ToolDuration                   metric.Float64Histogram
 }
 
 // NewTrackerFromProvider creates a GenAI tracker using the provider meter and tracer.
@@ -98,7 +101,7 @@ func validatePolicyDeclaration(cfg runtimeConfig) error {
 //nolint:funlen // Sequential OTel instrument registration; splitting would obscure error handling.
 func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
 	tokenUsage, err := meter.Int64Histogram(
-		TokenUsageMetricName,
+		InputTokenUsageMetricName,
 		metric.WithUnit("{token}"),
 		metric.WithDescription("Number of GenAI tokens used per operation."),
 		metric.WithExplicitBucketBoundaries(
@@ -117,6 +120,30 @@ func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
 			16777216,
 			67108864,
 		),
+	)
+	if err != nil {
+		return nil, err
+	}
+	outputTokenUsage, err := meter.Int64Histogram(
+		OutputTokenUsageMetricName,
+		metric.WithUnit("{token}"),
+		metric.WithDescription("Output tokens used per inference operation."),
+	)
+	if err != nil {
+		return nil, err
+	}
+	observedOperationDuration, err := meter.Float64Histogram(
+		ObservedOperationDurationMetricName,
+		metric.WithUnit("s"),
+		metric.WithDescription("Local or completed model observation duration."),
+	)
+	if err != nil {
+		return nil, err
+	}
+	invocationDuration, err := meter.Float64Histogram(
+		InvocationDurationMetricName,
+		metric.WithUnit("s"),
+		metric.WithDescription("Caller-bounded agent or workflow invocation duration."),
 	)
 	if err != nil {
 		return nil, err
@@ -202,19 +229,23 @@ func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
 	if err != nil {
 		return nil, err
 	}
-	tps, err := meter.Float64Histogram(
-		StreamingTPSMetricName,
-		metric.WithUnit("token/s"),
-		metric.WithDescription("Client-observed tokens per second during streaming generation."),
+	derivedOutputTokensPerSecond, err := meter.Float64Histogram(
+		DerivedOutputTokensPerSecondMetricName,
+		metric.WithUnit("{token}/s"),
+		metric.WithDescription(
+			"Derived output token rate: output_tokens / (duration - TTFT), not measured chunk throughput.",
+		),
 		metric.WithExplicitBucketBoundaries(0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512),
 	)
 	if err != nil {
 		return nil, err
 	}
-	tbt, err := meter.Float64Histogram(
-		StreamingTBTMetricName,
+	derivedMeanOutputTokenInterval, err := meter.Float64Histogram(
+		DerivedMeanOutputTokenIntervalMetricName,
 		metric.WithUnit("s"),
-		metric.WithDescription("Client-observed time between output tokens."),
+		metric.WithDescription(
+			"Derived mean output token interval: (duration - TTFT) / (output_tokens - 1), not measured inter-chunk latency.",
+		),
 		metric.WithExplicitBucketBoundaries(0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.5),
 	)
 	if err != nil {
@@ -264,15 +295,18 @@ func newMetricsHolder(meter metric.Meter) (*metricsHolder, error) {
 	}
 
 	return &metricsHolder{
-		TokenUsage:          tokenUsage,
-		TokenComponentUsage: tokenComponentUsage,
-		OperationDuration:   operationDuration,
-		Cost:                cost,
-		TTFT:                ttft,
-		TPS:                 tps,
-		TBT:                 tbt,
-		VideoSeconds:        videoSeconds,
-		VideoFrames:         videoFrames,
-		ToolDuration:        toolDuration,
+		InputTokenUsage:                tokenUsage,
+		OutputTokenUsage:               outputTokenUsage,
+		ObservedOperationDuration:      observedOperationDuration,
+		InvocationDuration:             invocationDuration,
+		TokenComponentUsage:            tokenComponentUsage,
+		OperationDuration:              operationDuration,
+		Cost:                           cost,
+		TTFT:                           ttft,
+		DerivedOutputTokensPerSecond:   derivedOutputTokensPerSecond,
+		DerivedMeanOutputTokenInterval: derivedMeanOutputTokenInterval,
+		VideoSeconds:                   videoSeconds,
+		VideoFrames:                    videoFrames,
+		ToolDuration:                   toolDuration,
 	}, nil
 }

@@ -251,13 +251,16 @@ func categorical(valid bool) string {
 func safeInstrument(name string) string {
 	if slices.Contains(
 		[]string{
-			TokenUsageMetricName,
+			InputTokenUsageMetricName,
+			OutputTokenUsageMetricName,
+			ObservedOperationDurationMetricName,
+			InvocationDurationMetricName,
 			TokenComponentUsageMetricName,
 			OperationDurationMetricName,
 			CostMetricName,
 			TTFTMetricName,
-			StreamingTPSMetricName,
-			StreamingTBTMetricName,
+			DerivedOutputTokensPerSecondMetricName,
+			DerivedMeanOutputTokenIntervalMetricName,
 			VideoSecondsMetricName,
 			VideoFramesMetricName,
 			ToolDurationMetricName,

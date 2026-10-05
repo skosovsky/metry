@@ -63,9 +63,13 @@ func startTool(
 			}
 		}
 	}
-	opts := []trace.SpanStartOption{trace.WithAttributes(attrs...), trace.WithTimestamp(state.startedAt)}
+	opts := []trace.SpanStartOption{
+		trace.WithAttributes(attrs...),
+		trace.WithTimestamp(state.startedAt),
+		trace.WithSpanKind(trace.SpanKindInternal),
+	}
 	opts = append(opts, childSpanOptionsToOTel(startOpts...)...)
-	ctx, span := t.tracer.Start(ctx, "tool: "+toolName, opts...)
+	ctx, span := t.tracer.Start(ctx, "execute_tool "+toolName, opts...)
 	span.SetAttributes(attrs...)
 	if payloadErr != nil {
 		recordPayloadDiagnostic(span, payloadErr)
@@ -137,11 +141,11 @@ func (t *Tracker) recordToolDuration(
 		status = OperationStatusUnset
 	}
 	attrs := []attribute.KeyValue{
-		attribute.String(ToolMetricLabelTool, normalizeToolName(toolName)),
-		attribute.String(ToolMetricLabelStatus, status),
+		attribute.String(ToolName, normalizeToolName(toolName)),
+		attribute.String(OperationStatus, status),
 	}
 	if errorType != "" {
-		attrs = append(attrs, attribute.String(ToolMetricLabelErrorType, errorType))
+		attrs = append(attrs, attribute.String(ErrorType, errorType))
 	}
 	t.metrics.ToolDuration.Record(
 		ctx,

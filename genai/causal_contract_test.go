@@ -26,7 +26,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 	parentIdentity := CausalIdentity{RunID: "parent", OperationID: "request", Kind: IdentityLogical}
 	ctx, parent, err := runtime.StartOperation(
 		context.Background(),
-		Operation{Name: profileChatOperation},
+		Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 		RecordingOptions{Identity: parentIdentity},
 	)
 	require.NoError(t, err)
@@ -35,7 +35,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 	for _, child := range []string{"child-one", "child-two"} {
 		childCtx, childHandle, startErr := runtime.StartOperation(
 			ctx,
-			Operation{Name: profileChatOperation},
+			Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 			RecordingOptions{
 				Identity: CausalIdentity{
 					RunID:       child,
@@ -57,7 +57,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 			}
 			_, attempt, attemptErr := runtime.StartOperation(
 				childCtx,
-				Operation{Name: profileChatOperation},
+				Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 				RecordingOptions{Identity: identity},
 			)
 			require.NoError(t, attemptErr)
@@ -106,13 +106,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 	assert.InDelta(
 		t,
 		40.0,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(t, 0.4, metrytest.Float64SumValue(t, metrics, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
@@ -127,7 +121,7 @@ func TestOperationHandleConcurrentFinalizationAndValidationRetry(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: profileChatOperation}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	invalid := OperationResult{Usage: Usage{InputTokens: Observe(-1, UnitTokens, SourceMeasured)}}
 	// Act: invalid finalization may be corrected; concurrent finalization is local-only.
@@ -160,13 +154,7 @@ func TestOperationHandleConcurrentFinalizationAndValidationRetry(t *testing.T) {
 	assert.InDelta(
 		t,
 		5.0,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.Greater(t, traceExporter.GetSpans()[0].EndTime.Sub(traceExporter.GetSpans()[0].StartTime), time.Duration(0))
@@ -182,7 +170,7 @@ func TestDetachedResumeLinksCompletedCheckpointAndFanIn(t *testing.T) {
 		Kind:        IdentityLogical,
 	}
 	ctx, origin, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: profileChatOperation}, RecordingOptions{Identity: identity})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{Identity: identity})
 	require.NoError(t, err)
 	originSC := trace.SpanContextFromContext(ctx)
 	snapshot, err := metry.TraceSnapshotFromContext(ctx)
@@ -230,7 +218,7 @@ func TestDetachedResumeLinksCompletedCheckpointAndFanIn(t *testing.T) {
 	links := []metry.AsyncHandle{firstLink, secondLink}
 	// Act.
 	_, resumed, err := tracker.Runtime().
-		StartOperation(workerCtx, Operation{Name: profileChatOperation}, RecordingOptions{Identity: restoredIdentity, Detached: true, Links: links, PolicyID: restored.Policy})
+		StartOperation(workerCtx, Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{Identity: restoredIdentity, Detached: true, Links: links, PolicyID: restored.Policy})
 	require.NoError(t, err)
 	links[0] = metry.AsyncHandle{}
 	require.NoError(t, resumed.Finish(OperationResult{}))
@@ -265,7 +253,7 @@ func TestMalformedCausalObservationsDoNotStartSpans(t *testing.T) {
 	// Act and Assert.
 	for _, option := range options {
 		_, handle, err := tracker.Runtime().
-			StartOperation(context.Background(), Operation{Name: profileChatOperation}, option)
+			StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, option)
 		require.Error(t, err)
 		assert.Nil(t, handle)
 		assert.NotContains(t, err.Error(), "secret")
@@ -278,7 +266,7 @@ func TestNoopOperationHandleHasNoExecutionDecisions(t *testing.T) {
 	// Arrange.
 	ctx := context.Background()
 	// Act.
-	gotContext, handle, err := NoopRuntime().StartOperation(ctx, Operation{Name: profileChatOperation}, RecordingOptions{})
+	gotContext, handle, err := NoopRuntime().StartOperation(ctx, Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	// Assert.
 	require.NoError(t, err)
 	assert.Equal(t, ctx, gotContext)

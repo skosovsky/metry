@@ -12,6 +12,13 @@ type EnumDeclaration struct {
 func (p Profile) Enumerations() []EnumDeclaration {
 	enums := []EnumDeclaration{
 		{
+			Name:                 DerivedCalculationKey,
+			Values:               []string{DerivedOutputTokenRateCalculation, DerivedMeanTokenIntervalCalculation},
+			PolicyEncodedUnknown: false,
+		},
+		{Name: ExecutionLocalityKey, Values: []string{"local", "remote"}, PolicyEncodedUnknown: false},
+		{Name: InvocationKindKey, Values: []string{"agent", "workflow"}, PolicyEncodedUnknown: false},
+		{
 			Name:                 causalKindKey,
 			Values:               []string{string(IdentityLogical), string(IdentityOperation), string(IdentityAttempt)},
 			PolicyEncodedUnknown: false,
@@ -45,20 +52,9 @@ func (p Profile) Enumerations() []EnumDeclaration {
 				"system",
 				payloadUserRole,
 				payloadAssistantRole,
-				ToolMetricLabelTool,
+				payloadToolRole,
 				"developer",
 				"function",
-			},
-			PolicyEncodedUnknown: true,
-		},
-		{
-			Name: "message.finish_reason",
-			Values: []string{
-				payloadStopFinish,
-				"length",
-				"tool_calls",
-				"content_filter",
-				OperationStatusError,
 			},
 			PolicyEncodedUnknown: true,
 		},
@@ -72,14 +68,14 @@ func (p Profile) Enumerations() []EnumDeclaration {
 				payloadVideoType,
 				payloadFileType,
 				payloadToolCallType,
-				"tool_result",
+				payloadToolCallResponseType,
 				reasoningLabel,
 			},
 			PolicyEncodedUnknown: true,
 		},
 	}
 	for _, dimension := range p.Dimensions {
-		if dimension.Key == ErrorType || dimension.Key == ToolMetricLabelErrorType {
+		if dimension.Key == ErrorType {
 			enums = append(enums, EnumDeclaration{
 				Name: dimension.Key, Values: append([]string(nil), dimension.Values...), PolicyEncodedUnknown: false,
 			})
@@ -90,19 +86,13 @@ func (p Profile) Enumerations() []EnumDeclaration {
 		EnumDeclaration{
 			Name: TokenType,
 			Values: []string{
-				TokenTypeInput, TokenTypeOutput, TokenTypeInputCacheRead,
-				TokenTypeInputCacheCreation, TokenTypeOutputReasoning,
+				TokenComponentCacheRead, TokenComponentCacheWrite, TokenComponentReasoning,
 			},
 			PolicyEncodedUnknown: false,
 		},
 		EnumDeclaration{
 			Name:                 usageSourceKey,
 			Values:               []string{string(SourceMeasured), string(SourceProvider), string(SourceEstimated)},
-			PolicyEncodedUnknown: false,
-		},
-		EnumDeclaration{
-			Name:                 ToolMetricLabelStatus,
-			Values:               []string{OperationStatusOK, OperationStatusError, OperationStatusUnset},
 			PolicyEncodedUnknown: false,
 		},
 		EnumDeclaration{
@@ -121,12 +111,12 @@ func usageEnumerations(fields []ProfileField) []EnumDeclaration {
 		enums = append(
 			enums,
 			EnumDeclaration{
-				Name:                 field.Name + ".source",
+				Name:                 measurementProvenanceKey(field.Name) + ".source",
 				Values:               []string{string(SourceMeasured), string(SourceProvider), string(SourceEstimated)},
 				PolicyEncodedUnknown: false,
 			},
 			EnumDeclaration{
-				Name:                 field.Name + ".unit",
+				Name:                 measurementProvenanceKey(field.Name) + ".unit",
 				Values:               []string{string(field.Unit)},
 				PolicyEncodedUnknown: false,
 			},
@@ -149,22 +139,20 @@ type EventDeclaration struct {
 func (Profile) Events() []EventDeclaration {
 	const owner = "metry.genai"
 	return []EventDeclaration{
-		{Name: AgentStepEvent, Owner: owner, Stability: StabilityExtension,
-			Fields: []string{AgentName, AgentRole, WorkflowStep}},
 		{Name: "metry.observation.rejected", Owner: owner, Stability: StabilityExtension,
 			Fields: []string{"metry.diagnostic.field", "metry.diagnostic.rule"}},
 		{Name: "exception", Owner: owner, Stability: StabilityStable,
 			Fields: []string{"exception.type", "exception.message", "exception.stacktrace"}},
-		{Name: profileEvaluationOperation, Owner: owner, Stability: StabilityExtension,
+		{Name: "gen_ai.evaluation.result", Owner: owner, Stability: StabilityDevelopment,
 			Fields: []string{
 				OperationName,
 				OperationPurpose,
 				EvaluationMetricName,
 				EvaluationScore,
-				EvaluationReasoning,
+				EvaluationExplanation,
 				evaluationStatusKey,
 				evaluationObservationKey,
-				evaluationOutcomeKey,
+				EvaluationLabel,
 				evaluationExperimentKey,
 				evaluationDatasetKey,
 				evaluationCaseKey,
@@ -191,7 +179,7 @@ type PayloadChannel struct {
 // PayloadChannels returns detached channel declarations for the supported schema.
 func (Profile) PayloadChannels() []PayloadChannel {
 	channels := make([]PayloadChannel, 0, attrCapPayloadAttrs)
-	for _, name := range []string{SystemInstructions, InputMessages, OutputMessages, ToolCallArguments, ToolCallResult} {
+	for _, name := range []string{SystemInstructions, InputMessages, OutputMessages, ToolCallArguments, ToolCallResult, RetrievalDocuments} {
 		channels = append(channels, PayloadChannel{
 			Attribute:       name,
 			Encoding:        EncodingJSON,
@@ -202,9 +190,9 @@ func (Profile) PayloadChannels() []PayloadChannel {
 			BudgetSetting:   "max_context_length",
 		})
 	}
-	for _, name := range []string{RetrievalQuery, EvaluationText, EvaluationReasoning} {
+	for _, name := range []string{RetrievalQuery, EvaluationExplanation} {
 		budget := "max_context_length"
-		if name == EvaluationReasoning {
+		if name == EvaluationExplanation {
 			budget = "max_event_length"
 		}
 		channels = append(channels, PayloadChannel{
@@ -219,3 +207,5 @@ func (Profile) PayloadChannels() []PayloadChannel {
 	}
 	return channels
 }
+
+// Invocation enum values are fixed facts; no host vocabulary enters metrics.

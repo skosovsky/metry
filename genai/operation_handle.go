@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -93,12 +94,18 @@ func startOperation(
 		Duration:      0,
 		ErrorType:     "",
 		Status:        "",
+		interval:      true,
+		locality:      operation.Locality,
 	}
 	meta = mergeMetaFromScope(ctx, meta)
+	if err := validateModelMetadata(meta.RequestModel, meta.Purpose); err != nil {
+		return ctx, nil, err
+	}
 	started := time.Now()
 	var span trace.Span
 	if tracker != nil {
 		attrs := append(buildMetaAttributes(meta, tracker.cfg), options.Identity.attributes(tracker.cfg)...)
+		attrs = append(attrs, attribute.String(ExecutionLocalityKey, string(operation.Locality)))
 		state := options.Predecessor
 		if state == "" {
 			state = PredecessorUnknown
@@ -106,6 +113,7 @@ func startOperation(
 		attrs = append(attrs, attribute.String("metry.causal.predecessor", string(state)))
 		spanOptions := []trace.SpanStartOption{
 			trace.WithTimestamp(started),
+			trace.WithSpanKind(operation.Locality.spanKind()),
 			trace.WithAttributes(attrs...),
 			trace.WithLinks(links...),
 		}
@@ -114,7 +122,7 @@ func startOperation(
 		}
 		ctx, span = tracker.tracer.Start(
 			ctx,
-			metadataWithConfig(OperationName, meta.Operation, tracker.cfg),
+			modelSpanName(meta, tracker.cfg),
 			spanOptions...)
 	}
 	handle := &OperationHandle{
@@ -131,15 +139,24 @@ func startOperation(
 }
 
 func validateRecordingOptions(tracker *Tracker, operation Operation, options RecordingOptions) error {
-	if err := options.Identity.Validate(); err != nil {
+	if err := validateCausalRecordingOptions(tracker, options); err != nil {
+		return err
+	}
+	if err := operation.Locality.Validate(); err != nil {
 		return err
 	}
 	if err := validateOperationName(operation.Name); err != nil {
 		return err
 	}
-	if len(operation.Model) > maxIdentityBytes ||
-		len(operation.Purpose) > maxMetricValueLength {
-		return invalidObservation("operation", "malformed")
+	if err := validateModelMetadata(operation.Model, operation.Purpose); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCausalRecordingOptions(tracker *Tracker, options RecordingOptions) error {
+	if err := options.Identity.Validate(); err != nil {
+		return err
 	}
 	if len(options.Links) > maxCausalLinks {
 		return invalidObservation("links", "too_large")
@@ -208,6 +225,9 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 	status, class, outcomeErr := resolveModelOutcome(result.Status, result.ErrorType)
 	if outcomeErr != nil {
 		return outcomeErr
+	}
+	if err := validateModelMetadata(result.Response.Model, ""); err != nil {
+		return err
 	}
 	if result.Duration != 0 {
 		return invalidObservation("duration", "measured_locally")
@@ -303,5 +323,13 @@ func (h *OperationHandle) Close() error {
 	var usage Usage
 	h.tracker.recordInteractionOnSpan(h.ctx, h.span, meta, nil, usage, h.identity.Kind != IdentityLogical)
 	h.span.End()
+	return nil
+}
+
+func validateModelMetadata(model, purpose string) error {
+	if len(model) > maxIdentityBytes || len(purpose) > maxMetricValueLength || !utf8.ValidString(model) ||
+		!utf8.ValidString(purpose) {
+		return invalidObservation("operation", "malformed")
+	}
 	return nil
 }

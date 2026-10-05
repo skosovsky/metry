@@ -10,10 +10,10 @@ const (
 	usageSourceKey            = "metry.usage.source"
 	overflowKey               = "metry.dimension.overflow"
 	provenanceCount           = 3
-	totalTokenTypeCount       = 2
 	componentTokenTypeCount   = 3
 	semanticDimensionCapacity = 3
 	outcomeCount              = 3
+	invocationBoundaryCount   = 3 // local agent, remote agent, local workflow
 )
 
 // metricDimensions normalizes inputs only; the metric SDK owns aggregation/export.
@@ -47,7 +47,8 @@ func (d *metricDimensions) normalize(instrument string, attrs []attribute.KeyVal
 	semantic := make([]attribute.KeyValue, 0, semanticDimensionCapacity)
 	for _, attr := range attrs {
 		key := string(attr.Key)
-		if key == TokenType || key == usageSourceKey || key == ToolMetricLabelStatus || key == OperationStatus ||
+		if key == DerivedCalculationKey || key == InvocationKindKey || key == ExecutionLocalityKey ||
+			key == TokenType || key == usageSourceKey || key == OperationStatus ||
 			(instrument == CostMetricName && key == CostCurrency) {
 			normalized = append(normalized, attr)
 			semantic = append(semantic, attr)
@@ -87,15 +88,17 @@ func (d *metricDimensions) normalize(instrument string, attrs []attribute.KeyVal
 
 func overflowReserve(instrument string) int {
 	switch instrument {
-	case TokenUsageMetricName:
-		return totalTokenTypeCount * provenanceCount
+	case InputTokenUsageMetricName, OutputTokenUsageMetricName:
+		return provenanceCount
 	case TokenComponentUsageMetricName:
 		return componentTokenTypeCount * provenanceCount
 	case CostMetricName, VideoSecondsMetricName, VideoFramesMetricName,
-		StreamingTPSMetricName, StreamingTBTMetricName:
+		DerivedOutputTokensPerSecondMetricName, DerivedMeanOutputTokenIntervalMetricName:
 		return provenanceCount
-	case ToolDurationMetricName, OperationDurationMetricName:
+	case ToolDurationMetricName, OperationDurationMetricName, ObservedOperationDurationMetricName:
 		return outcomeCount // Preserve success/error/unknown in separate overflow series.
+	case InvocationDurationMetricName:
+		return invocationBoundaryCount * outcomeCount
 	default:
 		return 1
 	}

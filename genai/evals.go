@@ -162,7 +162,7 @@ func (r *EvaluationRecorder) Record(ctx context.Context, evaluation Evaluation) 
 	options = append(options, trace.WithAttributes(attrs...))
 	_, span := r.tracker.tracer.Start(ctx, profileEvaluationOperation, options...)
 	defer span.End()
-	span.AddEvent(profileEvaluationOperation, trace.WithAttributes(attrs...))
+	span.AddEvent("gen_ai.evaluation.result", trace.WithAttributes(attrs...))
 	traceutil.SpanOK(span)
 	return nil
 }
@@ -179,7 +179,7 @@ func (r *EvaluationRecorder) attributes(e Evaluation) []attribute.KeyValue {
 		attrs = append(attrs, attribute.Float64(EvaluationScore, *e.Score))
 	}
 	for _, item := range []struct{ key, value string }{
-		{evaluationOutcomeKey, e.Outcome},
+		{EvaluationLabel, e.Outcome},
 		{evaluationExperimentKey, e.Association.ExperimentID},
 		{evaluationDatasetKey, e.Association.DatasetReference},
 		{evaluationCaseKey, e.Association.CaseID},
@@ -194,7 +194,7 @@ func (r *EvaluationRecorder) attributes(e Evaluation) []attribute.KeyValue {
 	}
 	if r.tracker.cfg.RecordPayloads() && e.Reasoning != "" {
 		attrs = append(attrs, attribute.String(
-			EvaluationReasoning,
+			EvaluationExplanation,
 			truncateContextWithLimit(
 				sanitizeTextWithConfig(e.Reasoning, r.tracker.cfg),
 				r.tracker.cfg.MaxEventLength(),

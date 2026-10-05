@@ -77,9 +77,9 @@ func testInstrumentationProfile() Profile {
 		case OperationName:
 			profile.Dimensions[index].Values = append(profile.Dimensions[index].Values,
 				"scope-chat", "enqueue_summary", "summary_done", "delivery.success", "vector.search")
-		case ToolMetricLabelTool:
+		case ToolName:
 			profile.Dimensions[index].Values = []string{"search"}
-		case ToolMetricLabelErrorType:
+		case ErrorType:
 			profile.Dimensions[index].Values = append(profile.Dimensions[index].Values, "provider_overloaded")
 		}
 	}

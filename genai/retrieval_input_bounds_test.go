@@ -11,7 +11,7 @@ import (
 func TestRetrievalQueryRejectsOversizedInputBeforeRecording(t *testing.T) {
 	// Arrange.
 	tracker, provider, exporter := newTestTracker(t, WithRawPayloads())
-	request := RetrievalRequest{Query: strings.Repeat("x", maxPayloadInputBytes+1)}
+	request := RetrievalRequest{Locality: ExecutionLocal, Query: strings.Repeat("x", maxPayloadInputBytes+1)}
 	// Act.
 	_, handle, err := tracker.StartRetrieval(context.Background(), "", request)
 	_, noopHandle, noopErr := NoopRuntime().StartRetrieval(context.Background(), "", request)

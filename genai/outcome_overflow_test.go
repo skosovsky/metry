@@ -33,7 +33,7 @@ func TestOperationOutcomeSurvivesSeriesOverflow(t *testing.T) {
 	for model := range 20 {
 		for _, status := range statuses {
 			require.NoError(t, tracker.Runtime().RecordOperation(context.Background(),
-				Operation{Name: "chat", Model: fmt.Sprintf("model-%d", model)},
+				Operation{Locality: ExecutionRemote, Name: "chat", Model: fmt.Sprintf("model-%d", model)},
 				OperationResult{Status: status, Duration: time.Millisecond}))
 		}
 	}
@@ -42,7 +42,7 @@ func TestOperationOutcomeSurvivesSeriesOverflow(t *testing.T) {
 	histogram := metrytest.FindFloat64Histogram(
 		t,
 		metrytest.CollectResourceMetrics(t, provider, metrics),
-		metrytest.MetricSelector{Name: OperationDurationMetricName},
+		metrytest.MetricSelector{Name: ObservedOperationDurationMetricName},
 	)
 	require.LessOrEqual(t, len(histogram.DataPoints), minSeriesBudget)
 	counts := map[string]uint64{}

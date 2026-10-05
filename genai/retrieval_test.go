@@ -16,15 +16,19 @@ import (
 
 func TestRetrievalResultRejectsUnboundedAndNonFiniteBeforeMutation(t *testing.T) {
 	for _, result := range []RetrievalResult{
-		{ReturnedChunks: -1},
-		{Distances: make([]float64, maxPayloadEntries+1)},
-		{Distances: []float64{math.NaN()}},
-		{Distances: []float64{math.Inf(1)}},
-		{Distances: []float64{math.Inf(-1)}},
+		{ReturnedDocuments: -1},
+		{Documents: make([]RetrievalDocument, maxPayloadEntries+1)},
+		{Documents: []RetrievalDocument{{Relevance: new(math.NaN())}}},
+		{Documents: []RetrievalDocument{{Relevance: new(math.Inf(1))}}},
+		{Documents: []RetrievalDocument{{Relevance: new(math.Inf(-1))}}},
 	} {
 		// Arrange.
 		tracker, provider, exporter := newTestTracker(t)
-		_, handle, startErr := tracker.StartRetrieval(context.Background(), "", RetrievalRequest{})
+		_, handle, startErr := tracker.StartRetrieval(
+			context.Background(),
+			"",
+			RetrievalRequest{Locality: ExecutionLocal},
+		)
 		require.NoError(t, startErr)
 		// Act.
 		err := handle.Finish(result)
@@ -34,31 +38,35 @@ func TestRetrievalResultRejectsUnboundedAndNonFiniteBeforeMutation(t *testing.T)
 		require.ErrorIs(t, err, ErrInvalidObservation)
 		spans := exporter.GetSpans()
 		require.Len(t, spans, 1)
-		assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalReturnedChunks))
-		assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalDistances))
+		assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalReturnedDocuments))
+		assert.False(t, testutil.SpanStubHasAttr(spans[0], RetrievalDocuments))
 	}
 }
 
 func TestStartRetrieval_SetsAttributesAndParent(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
 		WithPayloadPolicy(RedactPayloadPolicy()),
-		WithMaxContextLength(32),
+		WithMaxContextLength(128),
 	)
 
 	parentCtx, endParent, err := provider.StartSpan(context.Background(), "genai-retrieval", "request")
 	require.NoError(t, err)
-	ctx, handle, startErr := tracker.StartRetrieval(parentCtx, "vector.search", RetrievalRequest{
-		Provider: "qdrant",
-		Source:   "knowledge_base",
-		Query:    strings.Repeat("a", 128),
-		TopK:     5,
-	})
+	ctx, handle, startErr := tracker.StartRetrieval(
+		parentCtx,
+		"vector.search",
+		RetrievalRequest{Locality: ExecutionLocal,
+			Provider: "qdrant",
+			Source:   "knowledge_base",
+			Query:    strings.Repeat("a", 128),
+			TopK:     5,
+		},
+	)
 	require.NoError(t, startErr)
 	require.NotNil(t, ctx)
 	require.NoError(t, handle.Finish(RetrievalResult{
-		Status:         OperationStatusOK,
-		ReturnedChunks: 0,
-		Distances:      []float64{0.9, 0.8},
+		Status:            OperationStatusOK,
+		ReturnedDocuments: 0,
+		Documents:         []RetrievalDocument{{Relevance: new(0.9)}, {Relevance: new(0.8)}},
 	}))
 	require.ErrorIs(t, handle.Close(), ErrFinalized)
 	endParent()
@@ -66,12 +74,12 @@ func TestStartRetrieval_SetsAttributesAndParent(t *testing.T) {
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 2)
-	retrieval := testutil.SpanByName(t, spans, "vector.search")
+	retrieval := testutil.SpanByName(t, spans, "retrieval "+fingerprintPayloadLabel("knowledge_base"))
 	request := testutil.SpanByName(t, spans, "request")
 
 	assert.Equal(t, request.SpanContext.SpanID(), retrieval.Parent.SpanID())
 	assert.Equal(t, "retrieval", testutil.SpanStubStringAttr(t, retrieval, OperationName))
-	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, retrieval, RetrievalProvider))
+	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, retrieval, ProviderName))
 	assert.Equal(
 		t,
 		fingerprintPayloadLabel("knowledge_base"),
@@ -80,23 +88,27 @@ func TestStartRetrieval_SetsAttributesAndParent(t *testing.T) {
 	assert.Equal(t, int64(5), testutil.SpanStubInt64Attr(t, retrieval, RetrievalTopK))
 
 	query := testutil.SpanStubStringAttr(t, retrieval, RetrievalQuery)
-	assert.LessOrEqual(t, len(query), 32)
+	assert.LessOrEqual(t, len(query), 128)
 	assert.True(t, utf8.ValidString(query))
 
-	assert.Equal(t, int64(0), testutil.SpanStubInt64Attr(t, retrieval, RetrievalReturnedChunks))
-	assert.Equal(t, []float64{0.9, 0.8}, testutil.SpanStubFloat64SliceAttr(t, retrieval, RetrievalDistances))
+	assert.Equal(t, int64(0), testutil.SpanStubInt64Attr(t, retrieval, RetrievalReturnedDocuments))
+	assert.JSONEq(t, `[{"score":0.9},{"score":0.8}]`, testutil.SpanStubStringAttr(t, retrieval, RetrievalDocuments))
 	testutil.AssertSpanStubOkStatus(t, retrieval)
 }
 
 func TestRetrievalFinish_SuccessSetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	_, handle, startErr := tracker.StartRetrieval(context.Background(), "vector.search", RetrievalRequest{
-		Provider: "qdrant",
-		TopK:     3,
-	})
+	_, handle, startErr := tracker.StartRetrieval(
+		context.Background(),
+		"vector.search",
+		RetrievalRequest{Locality: ExecutionLocal,
+			Provider: "qdrant",
+			TopK:     3,
+		},
+	)
 	require.NoError(t, startErr)
-	require.NoError(t, handle.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedChunks: 2}))
+	require.NoError(t, handle.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedDocuments: 2}))
 	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	flushTestProvider(t, provider)
@@ -108,11 +120,15 @@ func TestRetrievalFinish_SuccessSetsOkStatus(t *testing.T) {
 func TestStartRetrieval_WithoutRecordPayloads_DoesNotSetQuery(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
-	_, handle, startErr := tracker.StartRetrieval(context.Background(), "vector.search", RetrievalRequest{
-		Provider: "qdrant",
-		Query:    "sensitive",
-		TopK:     5,
-	})
+	_, handle, startErr := tracker.StartRetrieval(
+		context.Background(),
+		"vector.search",
+		RetrievalRequest{Locality: ExecutionLocal,
+			Provider: "qdrant",
+			Query:    "sensitive",
+			TopK:     5,
+		},
+	)
 	require.NoError(t, startErr)
 	require.NoError(t, handle.Close())
 
@@ -128,7 +144,7 @@ func TestStartRetrieval_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.
 	_, handle, startErr := tracker.StartRetrieval(
 		context.Background(),
 		"vector.search",
-		RetrievalRequest{Provider: "qdrant", TopK: 3},
+		RetrievalRequest{Locality: ExecutionLocal, Provider: "qdrant", TopK: 3},
 		WithSpanSamplingKeep(),
 	)
 	require.NoError(t, startErr)
@@ -137,7 +153,7 @@ func TestStartRetrieval_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], RetrievalProvider))
+	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
 	assert.True(t, spans[0].SpanContext.IsSampled())
 }
 
@@ -147,7 +163,7 @@ func TestStartRetrieval_WithCallerAttributes_PreservesBuiltInAttributes(t *testi
 	_, handle, startErr := tracker.StartRetrieval(
 		context.Background(),
 		"vector.search",
-		RetrievalRequest{Provider: "qdrant", Source: "knowledge_base", TopK: 3},
+		RetrievalRequest{Locality: ExecutionLocal, Provider: "qdrant", Source: "knowledge_base", TopK: 3},
 		WithSpanAttributes(metry.StringAttribute("test.retrieval.caller", "present")),
 	)
 	require.NoError(t, startErr)
@@ -157,7 +173,7 @@ func TestStartRetrieval_WithCallerAttributes_PreservesBuiltInAttributes(t *testi
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "retrieval", testutil.SpanStubStringAttr(t, spans[0], OperationName))
-	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], RetrievalProvider))
+	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
 	assert.Equal(
 		t,
 		fingerprintPayloadLabel("knowledge_base"),
@@ -172,10 +188,10 @@ func TestStartRetrieval_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	_, handle, startErr := tracker.StartRetrieval(
 		context.Background(),
 		"vector.search",
-		RetrievalRequest{Provider: "qdrant", Source: "knowledge_base", TopK: 3},
+		RetrievalRequest{Locality: ExecutionLocal, Provider: "qdrant", Source: "knowledge_base", TopK: 3},
 		WithSpanAttributes(
 			metry.StringAttribute(OperationName, "override"),
-			metry.StringAttribute(RetrievalProvider, "override"),
+			metry.StringAttribute(ProviderName, "override"),
 			metry.StringAttribute(RetrievalSource, "override"),
 			metry.IntAttribute(RetrievalTopK, 99),
 		),
@@ -187,7 +203,7 @@ func TestStartRetrieval_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
 	assert.Equal(t, "retrieval", testutil.SpanStubStringAttr(t, spans[0], OperationName))
-	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], RetrievalProvider))
+	assert.Equal(t, "qdrant", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
 	assert.Equal(
 		t,
 		fingerprintPayloadLabel("knowledge_base"),

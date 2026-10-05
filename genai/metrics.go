@@ -88,18 +88,29 @@ func (t *Tracker) recordStreamingQuality(
 	}
 	attrs = appendAttribute(attrs, attribute.String(usageSourceKey, string(outputTokens.Source)))
 
-	if t.metrics.TPS != nil {
-		t.metrics.TPS.Record(
+	if t.metrics.DerivedOutputTokensPerSecond != nil {
+		t.metrics.DerivedOutputTokensPerSecond.Record(
 			ctx,
 			float64(outputTokens.Value)/generationWindow.Seconds(),
-			metric.WithAttributes(t.boundedMetricAttributes(StreamingTPSMetricName, attrs)...),
+			metric.WithAttributes(
+				t.boundedMetricAttributes(
+					DerivedOutputTokensPerSecondMetricName,
+					appendAttribute(attrs, attribute.String(DerivedCalculationKey, DerivedOutputTokenRateCalculation)),
+				)...),
 		)
 	}
-	if t.metrics.TBT != nil && outputTokens.Value > 1 {
-		t.metrics.TBT.Record(
+	if t.metrics.DerivedMeanOutputTokenInterval != nil && outputTokens.Value > 1 {
+		t.metrics.DerivedMeanOutputTokenInterval.Record(
 			ctx,
 			generationWindow.Seconds()/float64(outputTokens.Value-1),
-			metric.WithAttributes(t.boundedMetricAttributes(StreamingTBTMetricName, attrs)...),
+			metric.WithAttributes(
+				t.boundedMetricAttributes(
+					DerivedMeanOutputTokenIntervalMetricName,
+					appendAttribute(
+						attrs,
+						attribute.String(DerivedCalculationKey, DerivedMeanTokenIntervalCalculation),
+					),
+				)...),
 		)
 	}
 }

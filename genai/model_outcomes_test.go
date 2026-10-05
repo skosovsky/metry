@@ -40,12 +40,13 @@ func TestModelOutcomeMatrix(t *testing.T) {
 			// Arrange.
 			tracker, provider, mem := newTestTracker(t, WithProfile(observedModelProfile()), WithRawPayloads())
 			ctx := WithScope(context.Background(), Scope{Model: "router-default"})
-			_, handle, err := tracker.Runtime().StartOperation(ctx, Operation{Name: "chat"}, RecordingOptions{})
+			_, handle, err := tracker.Runtime().
+				StartOperation(ctx, Operation{Locality: ExecutionRemote, Name: "chat"}, RecordingOptions{})
 			require.NoError(t, err)
 			result := OperationResult{Status: test.status, ErrorType: test.class}
 			// Act.
 			err = handle.Finish(result)
-			noopErr := NoopRuntime().RecordOperation(context.Background(), Operation{Name: "chat"}, result)
+			noopErr := NoopRuntime().RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, result)
 			// Assert.
 			if test.invalid {
 				require.ErrorIs(t, err, ErrInvalidObservation)
@@ -77,7 +78,7 @@ func TestModelActualMetadataAndConcurrentFinish(t *testing.T) {
 		WithRawPayloads(),
 	)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: "chat", Model: "router-default"}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat", Model: "router-default"}, RecordingOptions{})
 	require.NoError(t, err)
 	var committed atomic.Int32
 	var wg sync.WaitGroup
@@ -112,7 +113,7 @@ func TestModelActualMetadataAndConcurrentFinish(t *testing.T) {
 		metrytest.Int64HistogramSumByAttr(
 			t,
 			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			metrytest.MetricSelector{Name: InputTokenUsageMetricName},
 			RequestModel,
 			"router-default",
 		),
@@ -128,7 +129,7 @@ func TestCloseDoesNotInventUsage(t *testing.T) {
 		WithRawPayloads(),
 	)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: "chat", Model: "alias"}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat", Model: "alias"}, RecordingOptions{})
 	require.NoError(t, err)
 	require.NoError(t, handle.RecordStreamingUpdate(Usage{InputTokens: Observe(99, UnitTokens, SourceMeasured)}))
 	// Act.
@@ -138,7 +139,8 @@ func TestCloseDoesNotInventUsage(t *testing.T) {
 	require.Len(t, spans.GetSpans(), 1)
 	assert.Equal(t, codes.Unset, spans.GetSpans()[0].Status.Code)
 	rm := metrytest.CollectResourceMetrics(t, provider, metrics)
-	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	var zero OperationHandle
 	require.ErrorIs(t, zero.Close(), ErrInvalidObservation)
 	require.ErrorIs(t, zero.Finish(OperationResult{}), ErrInvalidObservation)
@@ -162,7 +164,7 @@ func TestModelFinishVersusClose(t *testing.T) {
 	// Arrange.
 	tracker, provider, metrics, spans := newTestTrackerWithMetrics(t)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: "chat"}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, RecordingOptions{})
 	require.NoError(t, err)
 	var committed atomic.Int32
 	var wg sync.WaitGroup
@@ -194,18 +196,13 @@ func TestModelFinishVersusClose(t *testing.T) {
 	require.Len(t, spans.GetSpans(), 1)
 	rm := metrytest.CollectResourceMetrics(t, provider, metrics)
 	if spans.GetSpans()[0].Status.Code == codes.Unset {
-		metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	} else {
 		assert.InDelta(
 			t,
 			float64(5),
-			metrytest.Int64HistogramSumByAttr(
-				t,
-				rm,
-				metrytest.MetricSelector{Name: TokenUsageMetricName},
-				TokenType,
-				TokenTypeInput,
-			),
+			testInt64HistogramSum(t, rm, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 			1e-9,
 		)
 	}
@@ -228,7 +225,7 @@ func TestModelMetadataAcrossCompletedRoutes(t *testing.T) {
 				switch route {
 				case "completed":
 					err = tracker.Runtime().
-						RecordOperation(ctx, Operation{Name: "chat", Model: "router-default"}, OperationResult{Status: OperationStatusOK, Response: ResponseMetadata{Model: actual}, Usage: Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}})
+						RecordOperation(ctx, Operation{Locality: ExecutionRemote, Name: "chat", Model: "router-default"}, OperationResult{Status: OperationStatusOK, Response: ResponseMetadata{Model: actual}, Usage: Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}})
 				case "streaming":
 					err = tracker.RecordStreamingCompletion(
 						ctx,
@@ -259,7 +256,11 @@ func TestModelMetadataAcrossCompletedRoutes(t *testing.T) {
 					assert.False(t, testutil.SpanStubHasAttr(exported[0], ResponseModel))
 				}
 				rm := metrytest.CollectResourceMetrics(t, provider, metrics)
-				histogram := metrytest.FindInt64Histogram(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
+				histogram := metrytest.FindInt64Histogram(
+					t,
+					rm,
+					metrytest.MetricSelector{Name: InputTokenUsageMetricName},
+				)
 				require.Len(t, histogram.DataPoints, 1)
 				requestValue, ok := histogram.DataPoints[0].Attributes.Value(RequestModel)
 				require.True(t, ok)
@@ -299,7 +300,7 @@ func TestFinalizedModelRejectsAllFurtherWrites(t *testing.T) {
 				}
 				_, handle, err := runtime.StartOperation(
 					context.Background(),
-					Operation{Name: "chat"},
+					Operation{Locality: ExecutionRemote, Name: "chat"},
 					RecordingOptions{},
 				)
 				require.NoError(t, err)

@@ -21,7 +21,7 @@ func TestUsageValidation(t *testing.T) {
 		{"absent", Usage{}, ""},
 		{"zero", Usage{InputTokens: Observe(0, UnitTokens, SourceMeasured)}, ""},
 		{"estimate", Usage{InputTokens: Observe(0, UnitTokens, SourceEstimated)}, ""},
-		{"mixed", Usage{InputTokens: Observe(100, UnitTokens, SourceProvider), CacheReadInputTokens: Observe(60, UnitTokens, SourceProvider), CacheCreationInputTokens: Observe(60, UnitTokens, SourceEstimated)}, ""},
+		{"mixed", Usage{InputTokens: Observe(100, UnitTokens, SourceProvider), CacheReadInputTokens: Observe(60, UnitTokens, SourceProvider), CacheWriteInputTokens: Observe(60, UnitTokens, SourceEstimated)}, ""},
 		{"negative", Usage{InputTokens: Observe(-1, UnitTokens, SourceMeasured)}, "invalid_value"},
 		{"wrong_unit", Usage{InputTokens: Observe(1, UnitFrames, SourceMeasured)}, "incompatible_unit"},
 		{"unknown_present", Usage{InputTokens: Observe(1, UnitTokens, SourceUnknown)}, "invalid_source"},
@@ -69,9 +69,17 @@ func TestUsageZeroMissingEstimated(t *testing.T) {
 	require.Len(t, spans, 3)
 	assert.False(t, testutil.SpanStubHasAttr(spans[0], InputTokens))
 	assert.True(t, testutil.SpanStubHasAttr(spans[1], InputTokens))
-	assert.Equal(t, "measured", testutil.SpanStubStringAttr(t, spans[1], InputTokens+".source"))
-	assert.Equal(t, "estimated", testutil.SpanStubStringAttr(t, spans[2], InputTokens+".source"))
-	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	assert.Equal(
+		t,
+		"measured",
+		testutil.SpanStubStringAttr(t, spans[1], "metry.gen_ai.measurement.input_tokens.source"),
+	)
+	assert.Equal(
+		t,
+		"estimated",
+		testutil.SpanStubStringAttr(t, spans[2], "metry.gen_ai.measurement.input_tokens.source"),
+	)
+	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
 	require.Len(t, histogram.DataPoints, 2)
 	for _, point := range histogram.DataPoints {
 		assert.Equal(t, uint64(1), point.Count)
@@ -93,7 +101,7 @@ func TestNonFiniteUsageRejectedBeforeInstrumentation(t *testing.T) {
 		require.ErrorIs(
 			t,
 			tracker.Runtime().
-				RecordOperation(context.Background(), Operation{Name: "chat"}, OperationResult{Usage: usage}),
+				RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, OperationResult{Usage: usage}),
 			ErrInvalidObservation,
 		)
 		usage = Usage{VideoSeconds: Observe(value, UnitSeconds, SourceMeasured)}

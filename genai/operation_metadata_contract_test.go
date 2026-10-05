@@ -20,9 +20,9 @@ func TestCompletedObservationsRequireEffectiveOperationBeforeAnyWrites(t *testin
 		usage := Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}
 		// Act.
 		err := tracker.Runtime().
-			RecordOperation(context.Background(), Operation{Name: name}, OperationResult{Usage: usage})
+			RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: name}, OperationResult{Usage: usage})
 		interactionErr := tracker.RecordInteraction(context.Background(), Meta{Operation: name}, Payload{}, usage)
-		noopErr := NoopRuntime().RecordOperation(context.Background(), Operation{Name: name}, OperationResult{Usage: usage})
+		noopErr := NoopRuntime().RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: name}, OperationResult{Usage: usage})
 		flushTestProvider(t, provider)
 		metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 		// Assert.
@@ -31,7 +31,8 @@ func TestCompletedObservationsRequireEffectiveOperationBeforeAnyWrites(t *testin
 			assert.NotContains(t, diagnostic.Error(), "secret")
 		}
 		assert.Empty(t, exporter.GetSpans())
-		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	}
 }
 
@@ -57,8 +58,8 @@ func TestStreamingCompletionRequiresEffectiveOperationBeforeMetrics(t *testing.T
 			assert.NotContains(t, diagnostic.Error(), "secret")
 		}
 		assert.Empty(t, exporter.GetSpans())
-		for _, instrument := range []string{TokenUsageMetricName, OperationDurationMetricName,
-			TTFTMetricName, StreamingTPSMetricName, StreamingTBTMetricName} {
+		for _, instrument := range []string{InputTokenUsageMetricName, ObservedOperationDurationMetricName,
+			TTFTMetricName, DerivedOutputTokensPerSecondMetricName, DerivedMeanOutputTokenIntervalMetricName} {
 			metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: instrument})
 		}
 	}
@@ -76,7 +77,7 @@ func TestStreamingCompletionAcceptsCallerScopeOperation(t *testing.T) {
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: caller metadata permits a measured-zero observation once.
-	tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	require.Len(t, tokens.DataPoints, 1)
 	assert.Equal(t, uint64(1), tokens.DataPoints[0].Count)
 	assert.Zero(t, tokens.DataPoints[0].Sum)
@@ -88,9 +89,9 @@ func TestCompletedObservationsAcceptCallerDeclaredScopeOperation(t *testing.T) {
 	tracker, provider, exporter := newTestTracker(t)
 	ctx := WithScope(context.Background(), Scope{Operation: profileChatOperation})
 	// Act.
-	require.NoError(t, tracker.Runtime().RecordOperation(ctx, Operation{}, OperationResult{}))
+	require.NoError(t, tracker.Runtime().RecordOperation(ctx, Operation{Locality: ExecutionRemote}, OperationResult{}))
 	require.NoError(t, tracker.RecordInteraction(ctx, Meta{}, Payload{}, Usage{}))
-	require.NoError(t, NoopRuntime().RecordOperation(ctx, Operation{}, OperationResult{}))
+	require.NoError(t, NoopRuntime().RecordOperation(ctx, Operation{Locality: ExecutionRemote}, OperationResult{}))
 	flushTestProvider(t, provider)
 	// Assert: a scope value is caller-owned metadata, not a synthetic fallback.
 	spans := exporter.GetSpans()

@@ -16,12 +16,12 @@ func TestInclusiveTotalsDoNotSumOverlappingAxes(t *testing.T) {
 	// Arrange: subsets may overlap, so their sum may exceed the inclusive total.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
 	usage := Usage{
-		InputTokens:              Observe(120, UnitTokens, SourceProvider),
-		OutputTokens:             Observe(50, UnitTokens, SourceProvider),
-		CacheReadInputTokens:     Observe(80, UnitTokens, SourceProvider),
-		CacheCreationInputTokens: Observe(80, UnitTokens, SourceProvider),
-		ReasoningOutputTokens:    Observe(40, UnitTokens, SourceEstimated),
-		Mapping:                  profileInclusiveMapping,
+		InputTokens:           Observe(120, UnitTokens, SourceProvider),
+		OutputTokens:          Observe(50, UnitTokens, SourceProvider),
+		CacheReadInputTokens:  Observe(80, UnitTokens, SourceProvider),
+		CacheWriteInputTokens: Observe(80, UnitTokens, SourceProvider),
+		ReasoningOutputTokens: Observe(40, UnitTokens, SourceEstimated),
+		Mapping:               profileInclusiveMapping,
 	}
 	// Act.
 	require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), Payload{}, usage))
@@ -31,30 +31,18 @@ func TestInclusiveTotalsDoNotSumOverlappingAxes(t *testing.T) {
 	assert.InDelta(
 		t,
 		120,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		50,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeOutput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
 		1e-9,
 	)
 	require.Len(t, traceExporter.GetSpans(), 1)
 	assert.True(t, testutil.SpanStubHasAttr(traceExporter.GetSpans()[0], CacheReadInputTokens))
-	assert.True(t, testutil.SpanStubHasAttr(traceExporter.GetSpans()[0], CacheCreationInputTokens))
+	assert.True(t, testutil.SpanStubHasAttr(traceExporter.GetSpans()[0], CacheWriteInputTokens))
 }
 
 // exclusiveFixture is a synthetic caller adapter, not a backend mapping in core.
@@ -71,9 +59,9 @@ func (f exclusiveFixture) inclusive() (Usage, error) {
 		return Usage{}, invalidObservation("mapping", "unsupported")
 	}
 	usage := Usage{
-		CacheReadInputTokens:     f.read,
-		CacheCreationInputTokens: f.created,
-		Mapping:                  profileInclusiveMapping,
+		CacheReadInputTokens:  f.read,
+		CacheWriteInputTokens: f.created,
+		Mapping:               profileInclusiveMapping,
 	}
 	if err := usage.Validate(); err != nil {
 		return Usage{}, err
@@ -120,13 +108,7 @@ func TestExclusiveCallerMappingRunsOnceAndPartialTotalStaysAbsent(t *testing.T) 
 	assert.InDelta(
 		t,
 		120,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	spans := traceExporter.GetSpans()

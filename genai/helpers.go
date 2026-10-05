@@ -34,23 +34,33 @@ type Meta struct {
 	ServerPort    int
 	Duration      time.Duration
 	ErrorType     string
+	interval      bool
+	locality      ExecutionLocality
 }
 
 // ContentPart is one structured content block inside a system instruction or message.
 type ContentPart struct {
 	Type      string          `json:"type"`
-	Content   string          `json:"content,omitempty"`
+	Content   string          `json:"content"`
 	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
+	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
+	Response  json.RawMessage `json:"response"`
 }
 
 // Message is one structured GenAI message emitted on spans as JSON payload.
 type Message struct {
-	Role         string        `json:"role"`
-	Parts        []ContentPart `json:"parts"`
-	FinishReason string        `json:"finish_reason,omitempty"`
+	Role  string        `json:"role"`
+	Parts []ContentPart `json:"parts"`
+}
+
+// MarshalJSON keeps a present message's parts an array, including empty messages.
+func (message Message) MarshalJSON() ([]byte, error) {
+	type wire Message
+	if message.Parts == nil {
+		message.Parts = []ContentPart{}
+	}
+	return json.Marshal(wire(message))
 }
 
 // Payload captures structured system/input/output content for one interaction.
@@ -93,7 +103,7 @@ func truncateAtRuneBoundary(s string, limit int) string {
 
 func hasUsageData(usage Usage) bool {
 	return usage.InputTokens.Present || usage.OutputTokens.Present ||
-		usage.CacheCreationInputTokens.Present || usage.CacheReadInputTokens.Present ||
+		usage.CacheWriteInputTokens.Present || usage.CacheReadInputTokens.Present ||
 		usage.ReasoningOutputTokens.Present || usage.Cost.Present ||
 		usage.AudioSeconds.Present || usage.ImageCount.Present ||
 		usage.VideoSeconds.Present || usage.VideoFrames.Present
@@ -127,6 +137,12 @@ func (t *Tracker) RecordInteraction(
 	}
 	scope, hasScope := ScopeFromContext(ctx)
 	meta = mergeMetaFromScopeWithScope(meta, scope, hasScope)
+	if err := validateModelMetadata(meta.RequestModel, meta.Purpose); err != nil {
+		return err
+	}
+	if err := validateModelMetadata(meta.ResponseModel, ""); err != nil {
+		return err
+	}
 	if err := validateOperationName(meta.Operation); err != nil {
 		return err
 	}
@@ -134,9 +150,8 @@ func (t *Tracker) RecordInteraction(
 	if err != nil {
 		return err
 	}
-	spanName := interactionSpanNameFromMeta(meta, scope, hasScope)
-	spanName = metadataWithConfig(OperationName, spanName, t.cfg)
-	ctx, span := t.tracer.Start(ctx, spanName)
+	spanName := modelSpanName(meta, t.cfg)
+	ctx, span := t.tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 	span.SetAttributes(attribute.String("metry.observation.kind", "completed"))
 	t.recordInteractionOnSpan(ctx, span, meta, payloadAttrs, usage, true)
@@ -170,16 +185,6 @@ func (t *Tracker) recordInteractionOnSpan(
 		t.recordUsageMetrics(ctx, meta, usage)
 		t.recordOperationDuration(ctx, meta)
 	}
-}
-
-func interactionSpanNameFromMeta(meta Meta, scope Scope, hasScope bool) string {
-	if meta.Operation != "" {
-		return meta.Operation
-	}
-	if hasScope && scope.Operation != "" {
-		return scope.Operation
-	}
-	return "genai.interaction"
 }
 
 func buildMetaAttributes(meta Meta, cfg runtimeConfig) []attribute.KeyValue {
@@ -246,12 +251,15 @@ func buildPayloadAttributes(payload Payload, cfg runtimeConfig) ([]attribute.Key
 		{InputMessages, payload.InputMessages},
 		{OutputMessages, payload.OutputMessages},
 	} {
-		value, err := boundedJSON(item.value, cfg.MaxContextLength())
+		value, truncated, err := boundedJSONArray(item.value, cfg.MaxContextLength())
 		if err != nil {
 			return nil, err
 		}
 		if value != "" {
 			attrs = append(attrs, attribute.String(item.key, value))
+			if truncated {
+				attrs = append(attrs, attribute.Bool(payloadTruncationKey(item.key), true))
+			}
 		}
 	}
 	return attrs, nil
@@ -265,8 +273,8 @@ func buildUsageAttributes(usage Usage, cfg runtimeConfig) []attribute.KeyValue {
 	if usage.OutputTokens.Present {
 		attrs = append(attrs, attribute.Key(OutputTokens).Int(usage.OutputTokens.Value))
 	}
-	if usage.CacheCreationInputTokens.Present {
-		attrs = append(attrs, attribute.Key(CacheCreationInputTokens).Int(usage.CacheCreationInputTokens.Value))
+	if usage.CacheWriteInputTokens.Present {
+		attrs = append(attrs, attribute.Key(CacheWriteInputTokens).Int(usage.CacheWriteInputTokens.Value))
 	}
 	if usage.CacheReadInputTokens.Present {
 		attrs = append(attrs, attribute.Key(CacheReadInputTokens).Int(usage.CacheReadInputTokens.Value))
@@ -312,7 +320,7 @@ func buildUsageAttributes(usage Usage, cfg runtimeConfig) []attribute.KeyValue {
 	}{
 		{InputTokens, usage.InputTokens.Present, usage.InputTokens.Source, usage.InputTokens.Unit},
 		{OutputTokens, usage.OutputTokens.Present, usage.OutputTokens.Source, usage.OutputTokens.Unit},
-		{CacheCreationInputTokens, usage.CacheCreationInputTokens.Present, usage.CacheCreationInputTokens.Source, usage.CacheCreationInputTokens.Unit},
+		{CacheWriteInputTokens, usage.CacheWriteInputTokens.Present, usage.CacheWriteInputTokens.Source, usage.CacheWriteInputTokens.Unit},
 		{CacheReadInputTokens, usage.CacheReadInputTokens.Present, usage.CacheReadInputTokens.Source, usage.CacheReadInputTokens.Unit},
 		{UsageReasoningOutputTokens, usage.ReasoningOutputTokens.Present, usage.ReasoningOutputTokens.Source, usage.ReasoningOutputTokens.Unit},
 		{AudioSeconds, usage.AudioSeconds.Present, usage.AudioSeconds.Source, usage.AudioSeconds.Unit},
@@ -324,8 +332,8 @@ func buildUsageAttributes(usage Usage, cfg runtimeConfig) []attribute.KeyValue {
 		if item.present {
 			attrs = append(
 				attrs,
-				attribute.String(item.key+".source", string(item.source)),
-				attribute.String(item.key+".unit", string(item.unit)),
+				attribute.String(measurementProvenanceKey(item.key)+".source", string(item.source)),
+				attribute.String(measurementProvenanceKey(item.key)+".unit", string(item.unit)),
 			)
 		}
 	}
@@ -341,20 +349,20 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage
 	}
 
 	baseAttrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
-	if ok && t.metrics.TokenUsage != nil {
+	if ok && t.metrics.InputTokenUsage != nil {
 		t.recordIntHistogram(
 			ctx,
-			TokenUsageMetricName,
-			t.metrics.TokenUsage,
+			InputTokenUsageMetricName,
+			t.metrics.InputTokenUsage,
 			usage.InputTokens,
-			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeInput)),
+			baseAttrs,
 		)
 		t.recordIntHistogram(
 			ctx,
-			TokenUsageMetricName,
-			t.metrics.TokenUsage,
+			OutputTokenUsageMetricName,
+			t.metrics.OutputTokenUsage,
 			usage.OutputTokens,
-			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeOutput)),
+			baseAttrs,
 		)
 	}
 	if ok && t.metrics.TokenComponentUsage != nil {
@@ -362,22 +370,22 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage
 			ctx,
 			TokenComponentUsageMetricName,
 			t.metrics.TokenComponentUsage,
-			usage.CacheCreationInputTokens,
-			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeInputCacheCreation)),
+			usage.CacheWriteInputTokens,
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenComponentCacheWrite)),
 		)
 		t.recordIntHistogram(
 			ctx,
 			TokenComponentUsageMetricName,
 			t.metrics.TokenComponentUsage,
 			usage.CacheReadInputTokens,
-			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeInputCacheRead)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenComponentCacheRead)),
 		)
 		t.recordIntHistogram(
 			ctx,
 			TokenComponentUsageMetricName,
 			t.metrics.TokenComponentUsage,
 			usage.ReasoningOutputTokens,
-			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenTypeOutputReasoning)),
+			appendAttribute(baseAttrs, attribute.Key(TokenType).String(TokenComponentReasoning)),
 		)
 	}
 
@@ -418,7 +426,7 @@ func (t *Tracker) recordUsageMetrics(ctx context.Context, meta Meta, usage Usage
 }
 
 func (t *Tracker) recordOperationDuration(ctx context.Context, meta Meta) {
-	if t.metrics == nil || t.metrics.OperationDuration == nil || meta.Duration <= 0 {
+	if t.metrics == nil || meta.Duration <= 0 {
 		return
 	}
 	attrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
@@ -429,10 +437,19 @@ func (t *Tracker) recordOperationDuration(ctx context.Context, meta Meta) {
 	if meta.ErrorType != "" {
 		attrs = append(attrs, attribute.Key(ErrorType).String(meta.ErrorType))
 	}
-	t.metrics.OperationDuration.Record(
+	histogram := t.metrics.ObservedOperationDuration
+	instrument := ObservedOperationDurationMetricName
+	if meta.interval && meta.locality == ExecutionRemote {
+		histogram = t.metrics.OperationDuration
+		instrument = OperationDurationMetricName
+	}
+	if histogram == nil {
+		return
+	}
+	histogram.Record(
 		ctx,
 		meta.Duration.Seconds(),
-		metric.WithAttributes(t.boundedMetricAttributes(OperationDurationMetricName, attrs)...),
+		metric.WithAttributes(t.boundedMetricAttributes(instrument, attrs)...),
 	)
 }
 
@@ -494,17 +511,6 @@ func (t *Tracker) RecordCacheHit(ctx context.Context, hit bool, source string) {
 	})
 }
 
-// RecordAgentStep appends one agent-step event on the span stored in ctx.
-func (t *Tracker) RecordAgentStep(ctx context.Context, agentName, agentRole, step string) {
-	mutateSpan(ctx, func(span trace.Span) {
-		span.AddEvent(AgentStepEvent, trace.WithAttributes(
-			attribute.Key(AgentName).String(referenceWithConfig(agentName, t.cfg)),
-			attribute.Key(AgentRole).String(referenceWithConfig(agentRole, t.cfg)),
-			attribute.Key(WorkflowStep).String(referenceWithConfig(step, t.cfg)),
-		))
-	})
-}
-
 // metricMeta applies the same bounded metadata policy to actual metric facts.
 func metricMeta(meta Meta, cfg runtimeConfig) Meta {
 	meta.Provider = metadataWithConfig(ProviderName, meta.Provider, cfg)
@@ -519,4 +525,39 @@ func metricMeta(meta Meta, cfg runtimeConfig) Meta {
 		meta.ServerAddress = metadataWithConfig(ServerAddress, meta.ServerAddress, cfg)
 	}
 	return meta
+}
+
+func modelSpanName(meta Meta, cfg runtimeConfig) string {
+	name := metadataWithConfig(OperationName, meta.Operation, cfg)
+	if meta.RequestModel != "" {
+		name += " " + metadataWithConfig(RequestModel, meta.RequestModel, cfg)
+	}
+	return name
+}
+
+func measurementProvenanceKey(key string) string {
+	switch key {
+	case InputTokens:
+		return "metry.gen_ai.measurement.input_tokens"
+	case OutputTokens:
+		return "metry.gen_ai.measurement.output_tokens"
+	case CacheWriteInputTokens:
+		return "metry.gen_ai.measurement.cache_write_input_tokens"
+	case CacheReadInputTokens:
+		return "metry.gen_ai.measurement.cache_read_input_tokens"
+	case UsageReasoningOutputTokens:
+		return "metry.gen_ai.measurement.reasoning_output_tokens"
+	case UsageCost:
+		return "metry.gen_ai.measurement.cost"
+	case AudioSeconds:
+		return "metry.gen_ai.measurement.audio_seconds"
+	case ImageCount:
+		return "metry.gen_ai.measurement.image_count"
+	case UsageVideoSeconds:
+		return "metry.gen_ai.measurement.video_seconds"
+	case UsageVideoFrames:
+		return "metry.gen_ai.measurement.video_frames"
+	default:
+		return "metry.gen_ai.measurement.unknown"
+	}
 }

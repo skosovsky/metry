@@ -20,7 +20,7 @@ func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 
 	err := runtime.RecordOperation(
 		context.Background(),
-		Operation{Name: "expand_query", Model: "model"},
+		Operation{Locality: ExecutionRemote, Name: "expand_query", Model: "model"},
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: 2 * time.Second,
@@ -38,7 +38,7 @@ func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 	assert.InDelta(
 		t,
 		2,
-		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: OperationDurationMetricName}),
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: ObservedOperationDurationMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
@@ -47,7 +47,7 @@ func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 		metrytest.Int64HistogramSumByAttr(
 			t,
 			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			metrytest.MetricSelector{Name: InputTokenUsageMetricName},
 			ProviderName,
 			"gemini",
 		),
@@ -61,7 +61,7 @@ func TestRuntime_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
 
 	err := runtime.RecordOperation(
 		context.Background(),
-		Operation{Name: "expand_query", Model: "model"},
+		Operation{Locality: ExecutionRemote, Name: "expand_query", Model: "model"},
 		OperationResult{
 			Status:   OperationStatusOK,
 			Duration: time.Second,
@@ -82,7 +82,7 @@ func TestRuntime_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
 		metrytest.Int64HistogramSumByAttr(
 			t,
 			rm,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			metrytest.MetricSelector{Name: InputTokenUsageMetricName},
 			ProviderName,
 			unknownProviderName,
 		),
@@ -102,9 +102,8 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 		Payload{
 			SystemInstructions: nil,
 			InputMessages: []Message{{
-				Role:         "user",
-				Parts:        []ContentPart{{Type: "text", Content: "question"}},
-				FinishReason: "",
+				Role:  "user",
+				Parts: []ContentPart{{Type: "text", Content: "question"}},
 			}},
 			OutputMessages: nil,
 		},
@@ -112,9 +111,8 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 			SystemInstructions: nil,
 			InputMessages:      nil,
 			OutputMessages: []Message{{
-				Role:         "assistant",
-				Parts:        []ContentPart{{Type: "text", Content: "answer"}},
-				FinishReason: "",
+				Role:  "assistant",
+				Parts: []ContentPart{{Type: "text", Content: "answer"}},
 			}},
 		},
 	)
@@ -143,13 +141,13 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 	assert.InDelta(
 		t,
 		2.5,
-		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTPSMetricName}),
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: DerivedOutputTokensPerSecondMetricName}),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		0.5,
-		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTBTMetricName}),
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: DerivedMeanOutputTokenIntervalMetricName}),
 		1e-9,
 	)
 }
@@ -293,7 +291,7 @@ func TestRuntime_ToolErrorClassifier_DefaultAndCustomClassesAreBounded(t *testin
 	assert.Equal(
 		t,
 		string(ErrorClassDeadlineExceeded),
-		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
+		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ErrorType),
 	)
 }
 
@@ -310,7 +308,7 @@ func TestRuntime_StartTool_ForProviderSetsProviderAttribute(t *testing.T) {
 	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: `{"ok":true}`}))
 
 	flushTestProvider(t, provider)
-	span := testutil.SpanByName(t, memTrace.GetSpans(), "tool: search")
+	span := testutil.SpanByName(t, memTrace.GetSpans(), "execute_tool search")
 	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, span, ProviderName))
 }
 
@@ -328,11 +326,11 @@ func TestRuntime_ToolErrorClassifier_StatusOnlyErrorDefaultsUnknown(t *testing.T
 	assert.Equal(
 		t,
 		string(ErrorClassUnknown),
-		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
+		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ErrorType),
 	)
 
 	flushTestProvider(t, provider)
-	span := testutil.SpanByName(t, memTrace.GetSpans(), "tool: search")
+	span := testutil.SpanByName(t, memTrace.GetSpans(), "execute_tool search")
 	assert.Equal(t, string(ErrorClassUnknown), testutil.SpanStubStringAttr(t, span, ErrorType))
 	testutil.AssertSpanStubErrorStatus(t, span)
 }
@@ -354,7 +352,7 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 	assert.Equal(
 		t,
 		string(ErrorClassUnknown),
-		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
+		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ErrorType),
 	)
 
 	tracker, provider, memMetric, _ = newTestTrackerWithMetrics(t,
@@ -372,6 +370,6 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 	assert.Equal(
 		t,
 		"provider_overloaded",
-		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelErrorType),
+		testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ErrorType),
 	)
 }

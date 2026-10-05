@@ -2,6 +2,7 @@ package genai
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,7 +34,7 @@ func TestRecordAsyncFeedback_ValidRemoteLinked_AttachesSpanWithLink(t *testing.T
 	assert.Equal(t, "user_feedback", spans[0].Name)
 	testutil.AssertLinkBasedAsyncSpan(t, spans[0], testutil.ProducerSpanStub(linkedSC))
 	assert.InDelta(t, 0.9, testutil.SpanStubFloat64Attr(t, spans[0], EvaluationScore), 1e-9)
-	assert.False(t, testutil.SpanStubHasAttr(spans[0], EvaluationText))
+	assert.False(t, testutil.SpanStubHasAttr(spans[0], EvaluationExplanation))
 }
 
 func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
@@ -46,7 +47,7 @@ func TestRecordAsyncFeedback_WithPayloadRecording_SetsText(t *testing.T) {
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	assert.Equal(t, "approved", testutil.SpanStubStringAttr(t, spans[0], EvaluationText))
+	assert.Equal(t, "approved", testutil.SpanStubStringAttr(t, spans[0], EvaluationExplanation))
 }
 
 func TestRecordAsyncFeedback_WithDefaultPayloadPolicy_RedactsText(t *testing.T) {
@@ -59,7 +60,7 @@ func TestRecordAsyncFeedback_WithDefaultPayloadPolicy_RedactsText(t *testing.T) 
 	flushTestProvider(t, provider)
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	assert.Equal(t, redactedPayloadText, testutil.SpanStubStringAttr(t, spans[0], EvaluationText))
+	assert.Equal(t, redactedPayloadText, testutil.SpanStubStringAttr(t, spans[0], EvaluationExplanation))
 }
 
 func TestRecordAsyncFeedback_IgnoresContextParent_UsesLinkOnly(t *testing.T) {
@@ -133,4 +134,30 @@ func TestRecordAsyncFeedback_MetryAsyncHandle_RoundTrip(t *testing.T) {
 	require.Len(t, spans, 2)
 	testutil.AssertLinkBasedAsyncSpan(t, spans[1], originSC)
 	assert.Equal(t, "user_feedback", spans[1].Name)
+}
+
+func TestFeedbackExplanationUsesEventBudgetAndRejectsInvalidUTF8BeforeWrites(t *testing.T) {
+	// Arrange: deliberately different budgets distinguish feedback explanation from message JSON.
+	tracker, provider, exporter := newTestTracker(
+		t,
+		WithRawPayloads(),
+		WithMaxContextLength(256),
+		WithMaxEventLength(48),
+	)
+	linked := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
+	// Act.
+	require.ErrorIs(
+		t,
+		tracker.RecordAsyncFeedback(context.Background(), linked, 1, string([]byte{0xff})),
+		ErrInvalidObservation,
+	)
+	require.NoError(t, tracker.RecordAsyncFeedback(context.Background(), linked, 1, strings.Repeat("é", 100)))
+	flushTestProvider(t, provider)
+	// Assert: invalid text did not leave a partial span; valid UTF-8 explanation follows its declared event budget.
+	spans := exporter.GetSpans()
+	require.Len(t, spans, 1)
+	explanation := testutil.SpanStubStringAttr(t, spans[0], EvaluationExplanation)
+	require.LessOrEqual(t, len(explanation), 48)
+	require.NotEmpty(t, explanation)
+	assert.Contains(t, explanation, "[truncated]")
 }

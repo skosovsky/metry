@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -103,7 +104,10 @@ func validatePayloadEncodingBounds(payload Payload, input bool) error {
 	}
 	for _, messages := range [][]Message{payload.InputMessages, payload.OutputMessages} {
 		for _, message := range messages {
-			budget.bytes += len(message.Role) + len(message.FinishReason)
+			if !utf8.ValidString(message.Role) {
+				return invalidObservation("payload_json", "invalid_encoding")
+			}
+			budget.bytes += len(message.Role)
 			if budget.bytes > maxPayloadInputBytes || !budget.addParts(message.Parts, input) {
 				return invalidObservation("payload", "input_bounds")
 			}
@@ -136,15 +140,18 @@ func (b *payloadInputBudget) addParts(items []ContentPart, input bool) bool {
 		return false
 	}
 	for _, part := range items {
+		if !validContentPartStrings(part) {
+			return false
+		}
 		if input && mediaBodyIsInline(part) {
 			return false
 		}
 		b.bytes += len(part.Type) + len(part.Content) + len(part.ID) + len(part.Name) +
-			len(part.Arguments) + len(part.Result)
+			len(part.Arguments) + len(part.Response)
 		if b.bytes > maxPayloadInputBytes {
 			return false
 		}
-		for _, raw := range []json.RawMessage{part.Arguments, part.Result} {
+		for _, raw := range []json.RawMessage{part.Arguments, part.Response} {
 			if len(raw) != 0 {
 				if _, err := decodePayloadJSON(string(raw)); err != nil {
 					return false
@@ -209,4 +216,73 @@ func recordPayloadDiagnostic(span trace.Span, err error) {
 			attribute.String("metry.diagnostic.rule", diagnostic.Rule),
 		))
 	}
+}
+
+// boundedJSONArray retains only complete top-level elements. Output always has
+// the upstream array shape; truncation is carried by an independent attribute.
+func boundedJSONArray(value any, limit int) (string, bool, error) {
+	if limit < len(truncatedJSONMarker) {
+		return "", false, invalidObservation("payload_budget", "too_small")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", false, invalidObservation("payload_json", "invalid_encoding")
+	}
+	decoded, err := decodePayloadJSON(string(encoded))
+	if err != nil {
+		return "", false, err
+	}
+	if decoded == nil {
+		return "", false, nil
+	}
+	items, ok := decoded.([]any)
+	if !ok {
+		return "", false, invalidObservation("payload_json", "array_required")
+	}
+	if len(items) == 0 {
+		return "", false, nil
+	}
+	if len(encoded) <= limit {
+		return string(encoded), false, nil
+	}
+	best := "[]"
+	retained := 0
+	low, high := 0, len(items)
+	for low <= high {
+		middle := low + (high-low)/2
+		candidate, marshalErr := json.Marshal(items[:middle])
+		if marshalErr != nil {
+			return "", false, invalidObservation("payload_json", "invalid_encoding")
+		}
+		if len(candidate) <= limit {
+			best = string(candidate)
+			retained = middle
+			low = middle + 1
+		} else {
+			high = middle - 1
+		}
+	}
+	return best, retained < len(items), nil
+}
+
+func payloadTruncationKey(channel string) string {
+	switch channel {
+	case SystemInstructions:
+		return "metry.gen_ai.payload.system_instructions.truncated"
+	case InputMessages:
+		return "metry.gen_ai.payload.input_messages.truncated"
+	case OutputMessages:
+		return "metry.gen_ai.payload.output_messages.truncated"
+	default:
+		return ""
+	}
+}
+
+func validContentPartStrings(part ContentPart) bool {
+	for _, value := range []string{part.Type, part.Content, part.ID, part.Name} {
+		if !utf8.ValidString(value) {
+			return false
+		}
+	}
+	return true
 }

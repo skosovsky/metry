@@ -8,6 +8,7 @@ type Contract struct {
 	contextBytes int
 	eventBytes   int
 	raw          bool
+	referenceRaw bool
 }
 
 // NewContract validates the same options as the tracker without creating SDK instruments.
@@ -22,7 +23,7 @@ func NewContract(opts ...Option) (Contract, error) {
 func contractFromConfig(cfg runtimeConfig) Contract {
 	_, raw := cfg.PayloadPolicy().(rawPayloadPolicy)
 	return Contract{profile: cloneProfile(cfg.profile), contextBytes: cfg.maxContextLength,
-		eventBytes: cfg.maxEventLength, raw: cfg.recordPayloads && raw}
+		eventBytes: cfg.maxEventLength, raw: cfg.recordPayloads && raw, referenceRaw: raw}
 }
 
 // Contract returns the actual settings used by this tracker as a detached snapshot.
@@ -38,6 +39,9 @@ func (c Contract) Profile() Profile { return cloneProfile(c.profile) }
 
 // RawEnabled reports whether this runtime permits raw payload recording.
 func (c Contract) RawEnabled() bool { return c.raw }
+
+// ReferenceRawEnabled reports raw reference permission independently of content capture.
+func (c Contract) ReferenceRawEnabled() bool { return c.referenceRaw }
 
 // PayloadChannels returns detached channel declarations with resolved budgets.
 func (c Contract) PayloadChannels() []PayloadChannel {
@@ -59,7 +63,7 @@ func (c Contract) Validate() error {
 	if err := c.profile.Validate(); err != nil {
 		return err
 	}
-	if c.raw && (!c.profile.AllowRaw || c.profile.PayloadPolicyID != profileRawPolicy) {
+	if (c.raw || c.referenceRaw) && (!c.profile.AllowRaw || c.profile.PayloadPolicyID != profileRawPolicy) {
 		return invalidObservation("policy", "raw_not_allowed")
 	}
 	return nil

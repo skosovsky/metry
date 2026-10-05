@@ -68,7 +68,7 @@ func TestPayloadInputBoundsRejectBeforeSanitizerAndInstrumentation(t *testing.T)
 		require.ErrorIs(t, err, ErrInvalidObservation)
 		assert.Zero(t, policy.calls)
 		assert.Empty(t, exporter.GetSpans())
-		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	}
 }
 
@@ -85,7 +85,7 @@ func TestInvalidPayloadCanBeCorrectedBeforeHandleFinalization(t *testing.T) {
 	// Arrange.
 	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
 	_, handle, err := tracker.Runtime().StartOperation(context.Background(),
-		Operation{Name: profileChatOperation}, RecordingOptions{})
+		Operation{Name: profileChatOperation, Locality: ExecutionRemote}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act.
 	err = handle.Finish(
@@ -105,7 +105,7 @@ func TestInvalidPayloadCanBeCorrectedBeforeHandleFinalization(t *testing.T) {
 	encoded := testutil.SpanStubStringAttr(t, spans[0], SystemInstructions)
 	assert.True(t, json.Valid([]byte(encoded)))
 	assert.LessOrEqual(t, len(encoded), 64)
-	assert.Contains(t, encoded, `"truncated":true`)
+	assert.Equal(t, "[]", encoded)
 }
 
 func TestToolStructuredPayloadLimitsAndBoundedDiagnostic(t *testing.T) {

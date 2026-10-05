@@ -124,6 +124,9 @@ func completePayloadEvidence(contract Contract, fields []ProfileField, payloads 
 		seen[payload.Attribute] = true
 	}
 	for _, field := range fields {
+		if !validTruncationField(field, seen) {
+			return false
+		}
 		if _, controlled := contract.payloadChannel(field.Name); controlled && !seen[field.Name] {
 			return false
 		}
@@ -146,47 +149,24 @@ func validPayloadEvidence(contract Contract, payload PayloadEvidence) bool {
 	if payload.Attribute == ToolCallArguments || payload.Attribute == ToolCallResult {
 		return true // Host-owned keys must never be interpreted as library metadata.
 	}
-	data, valid := payloadEnvelope(json.RawMessage(payload.Value))
-	if !valid {
+	data := json.RawMessage(payload.Value)
+	if len(data) == 0 || data[0] != '[' {
 		return false
-	}
-	if len(data) == 0 {
-		return true
 	}
 	switch payload.Attribute {
 	case InputMessages, OutputMessages:
-		var messages []Message
-		if !decodePayloadShape(data, &messages) {
+		return validMessageEvidence(data, profile, raw)
+	case RetrievalDocuments:
+		return validRetrievalDocumentsEvidence(data)
+	case SystemInstructions:
+		if !validContentWire(data, false) {
 			return false
 		}
-		for _, message := range messages {
-			if !optionalPayloadEnum(profile, raw, "message.role", message.Role) ||
-				!optionalPayloadEnum(profile, raw, "message.finish_reason", message.FinishReason) ||
-				!validPartEnums(profile, raw, message.Parts) {
-				return false
-			}
-		}
-		return true
-	case SystemInstructions:
 		var parts []ContentPart
 		return decodePayloadShape(data, &parts) && validPartEnums(profile, raw, parts)
 	default:
 		return false
 	}
-}
-
-func payloadEnvelope(data json.RawMessage) (json.RawMessage, bool) {
-	var envelope struct {
-		Data      json.RawMessage `json:"data"`
-		Truncated bool            `json:"truncated"`
-	}
-	if len(data) > 0 && data[0] == '{' && json.Unmarshal(data, &envelope) == nil && envelope.Truncated {
-		if !decodePayloadShape(data, &envelope) {
-			return nil, false
-		}
-		return envelope.Data, true
-	}
-	return data, true
 }
 
 func decodePayloadShape(data []byte, result any) bool {
@@ -246,7 +226,7 @@ func observedUsageUnits(usage Usage) []FieldUnitDeclaration {
 		{InputTokens, usage.InputTokens.Present, usage.InputTokens.Unit},
 		{OutputTokens, usage.OutputTokens.Present, usage.OutputTokens.Unit},
 		{CacheReadInputTokens, usage.CacheReadInputTokens.Present, usage.CacheReadInputTokens.Unit},
-		{CacheCreationInputTokens, usage.CacheCreationInputTokens.Present, usage.CacheCreationInputTokens.Unit},
+		{CacheWriteInputTokens, usage.CacheWriteInputTokens.Present, usage.CacheWriteInputTokens.Unit},
 		{UsageReasoningOutputTokens, usage.ReasoningOutputTokens.Present, usage.ReasoningOutputTokens.Unit},
 		{UsageCost, usage.Cost.Present, usage.Cost.Unit},
 		{AudioSeconds, usage.AudioSeconds.Present, usage.AudioSeconds.Unit},
@@ -302,7 +282,12 @@ func accountingMap(items []AccountingMeasurement) (map[string]AccountingMeasurem
 			return nil, false
 		}
 		integerInstrument := slices.Contains(
-			[]string{TokenUsageMetricName, TokenComponentUsageMetricName, VideoFramesMetricName},
+			[]string{
+				OutputTokenUsageMetricName,
+				InputTokenUsageMetricName,
+				TokenComponentUsageMetricName,
+				VideoFramesMetricName,
+			},
 			item.Instrument,
 		)
 		if (integerInstrument && item.Total != 0) || (!integerInstrument && item.IntegerTotal != 0) {
@@ -324,10 +309,10 @@ func usageAccountingMatches(usage Usage, expected map[string]AccountingMeasureme
 		value      float64
 		integer    int64
 	}{
-		{TokenUsageMetricName, usage.InputTokens.Present, 0, int64(usage.InputTokens.Value)},
-		{TokenUsageMetricName, usage.OutputTokens.Present, 0, int64(usage.OutputTokens.Value)},
+		{InputTokenUsageMetricName, usage.InputTokens.Present, 0, int64(usage.InputTokens.Value)},
+		{OutputTokenUsageMetricName, usage.OutputTokens.Present, 0, int64(usage.OutputTokens.Value)},
 		{TokenComponentUsageMetricName, usage.CacheReadInputTokens.Present, 0, int64(usage.CacheReadInputTokens.Value)},
-		{TokenComponentUsageMetricName, usage.CacheCreationInputTokens.Present, 0, int64(usage.CacheCreationInputTokens.Value)},
+		{TokenComponentUsageMetricName, usage.CacheWriteInputTokens.Present, 0, int64(usage.CacheWriteInputTokens.Value)},
 		{TokenComponentUsageMetricName, usage.ReasoningOutputTokens.Present, 0, int64(usage.ReasoningOutputTokens.Value)},
 		{CostMetricName, usage.Cost.Present, usage.Cost.Value, 0},
 		{VideoSecondsMetricName, usage.VideoSeconds.Present, usage.VideoSeconds.Value, 0},
@@ -345,7 +330,7 @@ func usageAccountingMatches(usage Usage, expected map[string]AccountingMeasureme
 			required[item.instrument] = value
 		}
 	}
-	for _, instrument := range []string{TokenUsageMetricName, TokenComponentUsageMetricName, CostMetricName,
+	for _, instrument := range []string{OutputTokenUsageMetricName, InputTokenUsageMetricName, TokenComponentUsageMetricName, CostMetricName,
 		VideoSecondsMetricName, VideoFramesMetricName} {
 		wanted := required[instrument]
 		got := expected[instrument]
@@ -447,4 +432,120 @@ func validObservedEvent(contract Contract, observed ObservedEvent) bool {
 		return validObservedEnums(profile, raw, observed.Fields, observed.Enums)
 	}
 	return false
+}
+
+// Reference values are opaque; validation never interprets or emits their contents.
+func validRetrievalDocumentsEvidence(data []byte) bool {
+	var documents []map[string]json.RawMessage
+	if !decodePayloadShape(data, &documents) {
+		return false
+	}
+	for _, document := range documents {
+		if document == nil {
+			return false
+		}
+		for key, raw := range document {
+			switch key {
+			case "id", "metry.document.version", "metry.document.digest":
+				var value string
+				if json.Unmarshal(raw, &value) != nil {
+					return false
+				}
+			case "score":
+				var value float64
+				if json.Unmarshal(raw, &value) != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validContentWire(data []byte, messages bool) bool {
+	var parts []json.RawMessage
+	if messages {
+		var items []struct {
+			Role  *string         `json:"role"`
+			Parts json.RawMessage `json:"parts"`
+		}
+		if json.Unmarshal(data, &items) != nil {
+			return false
+		}
+		for _, item := range items {
+			if item.Role == nil || len(item.Parts) == 0 || item.Parts[0] != '[' ||
+				!validContentWire(item.Parts, false) {
+				return false
+			}
+		}
+		return true
+	}
+	if json.Unmarshal(data, &parts) != nil {
+		return false
+	}
+	for _, raw := range parts {
+		if !validContentPartWire(raw) {
+			return false
+		}
+	}
+	return true
+}
+
+func validContentPartWire(raw json.RawMessage) bool {
+	var item map[string]json.RawMessage
+	if json.Unmarshal(raw, &item) != nil || item == nil {
+		return false
+	}
+	var kind string
+	if value, exists := item["type"]; !exists || json.Unmarshal(value, &kind) != nil {
+		return false
+	}
+	key := ""
+	switch kind {
+	case payloadTextType:
+		key = "content"
+	case payloadToolCallType:
+		key = "name"
+	case payloadToolCallResponseType:
+		_, exists := item["response"]
+		return exists
+	}
+	if key == "" {
+		return true
+	}
+	var value string
+	field, exists := item[key]
+	return exists && json.Unmarshal(field, &value) == nil
+}
+
+func validMessageEvidence(data []byte, profile Profile, raw bool) bool {
+	if !validContentWire(data, true) {
+		return false
+	}
+	var messages []Message
+	if !decodePayloadShape(data, &messages) {
+		return false
+	}
+	for _, message := range messages {
+		if !optionalPayloadEnum(profile, raw, "message.role", message.Role) ||
+			!validPartEnums(profile, raw, message.Parts) {
+			return false
+		}
+	}
+	return true
+}
+
+func validTruncationField(field ProfileField, channels map[string]bool) bool {
+	for _, channel := range []string{SystemInstructions, InputMessages, OutputMessages, RetrievalDocuments} {
+		marker := payloadTruncationKey(channel)
+		if channel == RetrievalDocuments {
+			marker = RetrievalDocumentsTruncated
+		}
+		if field.Name == marker {
+			return channels[channel] && field.Encoding == EncodingBoolean
+		}
+	}
+	return true
 }

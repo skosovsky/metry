@@ -9,21 +9,21 @@ import (
 )
 
 const (
-	redactedPayloadText  = "[redacted]"
-	redactedPayloadJSON  = `{"redacted":true}`
-	maxPayloadSchemaKeys = 128
-	maxPayloadJSONDepth  = 32
-	payloadTextType      = "text"
-	payloadImageType     = "image"
-	payloadImageURLType  = "image_url"
-	payloadAudioType     = "audio"
-	payloadVideoType     = "video"
-	payloadFileType      = "file"
-	payloadToolCallType  = "tool_call"
-	payloadStopFinish    = "stop"
-	payloadAssistantRole = "assistant"
-	payloadUserRole      = "user"
-	reasoningLabel       = "reasoning"
+	redactedPayloadText         = "[redacted]"
+	redactedPayloadJSON         = `{"redacted":true}`
+	maxPayloadSchemaKeys        = 128
+	maxPayloadJSONDepth         = 32
+	payloadTextType             = "text"
+	payloadToolCallResponseType = "tool_call_response"
+	payloadImageType            = "image"
+	payloadImageURLType         = "image_url"
+	payloadAudioType            = "audio"
+	payloadVideoType            = "video"
+	payloadFileType             = "file"
+	payloadToolCallType         = "tool_call"
+	payloadAssistantRole        = "assistant"
+	payloadUserRole             = "user"
+	reasoningLabel              = "reasoning"
 )
 
 // PayloadPolicy sanitizes GenAI payload before it is exported as span attributes.
@@ -63,8 +63,10 @@ func (policy redactPayloadPolicy) SanitizePayload(payload Payload) Payload {
 				sanitizeJSONStringWithKeys(string(part.Arguments), redactJSONLeaf, policy.keys),
 			)
 		}
-		if len(part.Result) > 0 {
-			part.Result = json.RawMessage(sanitizeJSONStringWithKeys(string(part.Result), redactJSONLeaf, policy.keys))
+		if len(part.Response) > 0 {
+			part.Response = json.RawMessage(
+				sanitizeJSONStringWithKeys(string(part.Response), redactJSONLeaf, policy.keys),
+			)
 		}
 		return part
 	})
@@ -128,15 +130,10 @@ func sanitizeMessages(messages []Message, sanitizePart func(ContentPart) Content
 		out[i] = Message{
 			Role: sanitizeMessageEnum(
 				msg.Role,
-				[]string{"system", payloadUserRole, payloadAssistantRole, ToolMetricLabelTool, "developer", "function"},
+				[]string{"system", payloadUserRole, payloadAssistantRole, payloadToolRole, "developer", "function"},
 				sanitizePart,
 			),
 			Parts: sanitizeContentParts(msg.Parts, sanitizePart),
-			FinishReason: sanitizeMessageEnum(
-				msg.FinishReason,
-				[]string{payloadStopFinish, "length", "tool_calls", "content_filter", OperationStatusError},
-				sanitizePart,
-			),
 		}
 	}
 	return out
@@ -147,7 +144,7 @@ func sanitizeMessageEnum(value string, vocabulary []string, sanitizePart func(Co
 		return value
 	}
 	return sanitizePart(
-		ContentPart{Type: payloadTextType, Content: value, ID: "", Name: "", Arguments: nil, Result: nil},
+		ContentPart{Type: payloadTextType, Content: value, ID: "", Name: "", Arguments: nil, Response: nil},
 	).Content
 }
 
@@ -162,7 +159,7 @@ func safeContentType(value string, protect func(string) string) string {
 				payloadVideoType,
 				payloadFileType,
 				payloadToolCallType,
-				"tool_result",
+				payloadToolCallResponseType,
 				reasoningLabel,
 			},
 			value,
@@ -218,8 +215,8 @@ func hashContentPart(part ContentPart) ContentPart {
 	if len(part.Arguments) > 0 {
 		part.Arguments = fingerprintPayloadJSON(part.Arguments)
 	}
-	if len(part.Result) > 0 {
-		part.Result = fingerprintPayloadJSON(part.Result)
+	if len(part.Response) > 0 {
+		part.Response = fingerprintPayloadJSON(part.Response)
 	}
 	return part
 }
@@ -366,9 +363,8 @@ func sanitizeTextWithConfig(value string, cfg runtimeConfig) string {
 				ID:        "",
 				Name:      "",
 				Arguments: nil,
-				Result:    nil,
+				Response:  nil,
 			}},
-			FinishReason: "",
 		}},
 		OutputMessages: nil,
 	}

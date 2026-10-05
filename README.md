@@ -138,6 +138,12 @@ Raw payload export requires `genai.WithRawPayloads()`. Use it only when the appl
 
 Extra `attrs ...metry.Attribute` on `RecordOperation` are for bounded metadata and outcome fields. Do not put prompts, completions, tool arguments, or raw user data there; payload policy applies to `genai.Payload` and tool result types.
 
+## Supported GenAI semantics
+
+The supported subset is pinned to GenAI Development commit `e07f4eb`; profile identity is `metry.genai.semconv.e07f4eb.v1`. GenAI instrumentation scopes declare version `semconv-genai-e07f4eb+metry-v1` and schema `https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev`. See [SEMANTICS.md](genai/SEMANTICS.md) for every controlled field/instrument, upstream mappings and deliberate extensions; [MIGRATION.md](genai/MIGRATION.md) lists the clear break.
+
+`StartAgent` and `StartWorkflow` are optional observations of host execution. Agent locality is required; workflow is local. Names are machine labels, IDs are existing stable resource identities, and conversation IDs are existing host references. Handles accept only outcome evidence and measure their own elapsed interval. They do not run agents, aggregate child usage, schedule retries, execute handoffs or store checkpoints. Names and references remain protected span metadata; invocation duration uses only fixed kind/locality/status labels.
+
 ## GenAI API
 
 Use `genai.Runtime` as the application boundary:
@@ -150,6 +156,7 @@ Use `genai.Runtime` as the application boundary:
 - `StartTool(ctx, ToolCall, opts...) (context.Context, *ToolHandle, error)`
 - `ToolHandle.Finish(ToolResult) error` / `Close() error`
 - `StartRetrieval(ctx, name, RetrievalRequest, opts...)` followed by `RetrievalHandle.Finish(RetrievalResult)` / `Close()`
+- `StartAgent(ctx, AgentInvocation, RecordingOptions)` / `StartWorkflow(ctx, WorkflowInvocation, RecordingOptions)` followed by `InvocationHandle.Finish(InvocationResult)` / `Close()`
 - `StartAsync(ctx, name, opts...)`
 - `RecordAsyncResult(ctx, AsyncHandle, AsyncResult)`
 - `RecordAsyncTokenResult(ctx, token, AsyncResult)`
@@ -174,7 +181,7 @@ runtime = runtime.ForProvider("provider")
 - `HashPayloadPolicy()` fingerprints arbitrary JSON objects as a whole and protects content IDs/names. Fingerprints do not guarantee anonymity.
 - `WithRawPayloads()` is the explicit opt-in for raw payloads.
 
-Message roles, finish reasons and content types retain known schema enums; unknown values are sanitized too. Content IDs/names and arbitrary JSON keys are not exempt from policy. Causal IDs, prompt identities and tool call IDs use stable fingerprints by default even with content recording disabled; raw mode preserves bounded caller values. Non-raw tool names must be declared in the profile's finite tool allowlist or become `unknown`, including in the span name. Allowlisted machine names are explicitly trusted non-sensitive configuration, not a mechanism for exporting arbitrary user names.
+Message roles and content types retain known schema enums; unknown values are sanitized too. Content IDs/names and arbitrary JSON keys are not exempt from policy. Causal IDs, prompt identities and tool call IDs use stable fingerprints by default even with content recording disabled; raw mode preserves bounded caller values. Non-raw tool names must be declared in the profile's finite tool allowlist or become `unknown`, including in the span name. Allowlisted machine names are explicitly trusted non-sensitive configuration, not a mechanism for exporting arbitrary user names.
 
 Declared image/audio/video/file content accepts only bounded `http:`, `https:` or `urn:` references, not inline media bodies/data URIs, including in raw mode. Metry does not fetch these references. Signed media references pass payload sanitation and never leak their raw credentials in redact/hash modes. Text sanitizer input is capped before custom sanitizer work. Passing tests for these routes does not certify arbitrary host attributes or external exporter code.
 
@@ -225,7 +232,7 @@ Caller adapters must normalize exhaustive, disjoint exclusive buckets to inclusi
 
 ## Execution intervals, causal identity and streaming
 
-Call `Runtime.StartOperation` before I/O and `handle.Finish` after I/O. It records a real execution interval and uses a local monotonic clock for duration. `Finish` rejects a supplied `OperationResult.Duration`: the handle measures its own interval. `RecordOperation` and `RecordInteraction` are completed-observation spans, marked `metry.observation.kind=completed`; their span timestamps describe recording, not the earlier execution. Their caller-supplied durations must not be inferred by subtracting wall clocks on different workers.
+Call `Runtime.StartOperation` before I/O and `handle.Finish` after I/O. It records a real execution interval and uses a local monotonic clock for duration. Set `Operation.Locality` to `ExecutionRemote` or `ExecutionLocal`; zero is invalid for interval starts. Remote model intervals are CLIENT and record `gen_ai.client.operation.duration`. Local intervals and completed model observations are INTERNAL and record `metry.gen_ai.operation.duration`. Identity controls accounting independently of locality: a remote logical observation remains CLIENT but adds no resource metrics. `Finish` rejects a supplied `OperationResult.Duration`: the handle measures its own interval. `RecordOperation` and `RecordInteraction` are completed-observation spans, marked `metry.observation.kind=completed`; their span timestamps describe recording, not the earlier execution. Their caller-supplied durations must not be inferred by subtracting wall clocks on different workers.
 
 An effective operation name is required. Completed recording resolves an omitted
 name from caller-declared `Scope.Operation`; if neither is present, or the name
@@ -238,7 +245,7 @@ the same effective-name contract before committing any measurements.
 
 An active context can supply the parent. With `Detached: true`, recording creates a new root linked to the context's trace reference, including a restored snapshot after the predecessor has ended. Additional `Links` use existing opaque `AsyncHandle` references for fan-in; duplicates are removed. Business identity remains separate from trace tokens. `Predecessor` is caller-owned evidence (or unknown), not an inference from the sampling flag. A carried `PolicyID` is resolved locally before recording; an unknown identity is rejected, never replaced with raw mode.
 
-`Outcome` is a closed enum shared by model, tool and retrieval results. Explicit success is `OperationStatusOK`, failure is `OperationStatusError`, and empty or `OperationStatusUnset` denotes unknown. Model error classes are bounded; invalid raw classes are rejected before usage/outcome writes. Known stream abort uses `stream_aborted`. Error evidence conflicts with explicit success or unset and must be corrected before finishing.
+`Outcome` is a closed enum shared by model, tool, retrieval and invocation results. Explicit success is `OperationStatusOK`, failure is `OperationStatusError`, and empty or `OperationStatusUnset` denotes unknown. Model error classes are bounded; invalid raw classes are rejected before usage/outcome writes. Known stream abort uses `stream_aborted`. Error evidence conflicts with explicit success or unset and must be corrected before finishing.
 
 Request and observed response models are separate. `Operation.Model` and request scope supply the request model. Supply `OperationResult.Response: ResponseMetadata{Model: actualModel}` only when a response was observed. Completed `Meta.ResponseModel` has the same caller-evidence requirement. Missing response metadata is omitted, including errors before response. Stateless `ProviderAdapter.ParseResponse(any) (ResponseObservation, error)` returns payload, usage, response metadata, status and bounded error class; it never needs to retain request state.
 
@@ -270,7 +277,7 @@ if tool != nil {
 return result, businessErr
 ```
 
-Tool duration labels `tool`, `status`, and `error_type` use the same outcome as the span. Only explicit `OperationStatusOK` means success; empty status and `OperationStatusUnset` mean unknown. Error evidence without an explicit status means error. Contradictory outcomes and invalid enums return a bounded diagnostic before final writes and can be corrected. `Close` ends an unfinished observation with unknown outcome and no fabricated result; successful `Finish` or `Close` commits once. Subsequent calls return `ErrFinalized`.
+Tool duration labels `gen_ai.tool.name`, `metry.gen_ai.operation.status`, and `error.type` use the same outcome as the span. Only explicit `OperationStatusOK` means success; empty status and `OperationStatusUnset` mean unknown. Error evidence without an explicit status means error. Contradictory outcomes and invalid enums return a bounded diagnostic before final writes and can be corrected. `Close` ends an unfinished observation with unknown outcome and no fabricated result; successful `Finish` or `Close` commits once. Subsequent calls return `ErrFinalized`.
 
 Explicit error classes must belong to the declared bounded taxonomy. Classifiers may map provider errors into configured classes through `WithToolErrorClassifier` and `WithAllowedToolErrorClasses`. Raw business errors never become exported messages. Metry observes host I/O; it does not run or cancel it.
 
@@ -400,7 +407,7 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 **Footgun (payload policy):** payload recording is off until you pass `WithPayloadPolicy(...)` or `WithRawPayloads()`. Use raw export only after application-level privacy handling.
 
-**Footgun (GenAI errors):** `Meta.ErrorType` sets span status to Error in addition to the `error.type` attribute. `ToolHandle.Finish(ToolResult{Err: err, ErrorClass: kind})` uses bounded `error_type` for tool metrics. Pass explicit `Status: OperationStatusOK` on known success, and register custom classes with `WithAllowedToolErrorClasses(...)`.
+**Footgun (GenAI errors):** `Meta.ErrorType` sets span status to Error in addition to the `error.type` attribute. `ToolHandle.Finish(ToolResult{Err: err, ErrorClass: kind})` uses bounded `error.type` for tool metrics. Pass explicit `Status: OperationStatusOK` on known success, and register custom classes with `WithAllowedToolErrorClasses(...)`.
 
 **Footgun (propagation):** `Provider.InjectToMap` / `ExtractFromMap` are for protocol-level carriers. For queue payloads, checkpoints, and durable resume, use `TraceSnapshot`.
 
@@ -430,35 +437,38 @@ defer func() { _ = tool.Close() }()
 The keep hint is evaluated at span start in the SDK sampler.
 It does not depend on post-hoc status, token usage, or tail sampling.
 Without keep hint, sampled parent context is inherited; the base sampler is consulted for new root spans.
-Adapter helpers that create spans internally also accept typed options. Application code normally uses `Runtime.StartTool(...)`; adapter code can pass the same hint through retrieval, feedback, or evaluation helpers via `genai.WithSpanSamplingKeep()` or `genai.WithSamplingKeep()`.
+Tool and retrieval helpers accept `genai.WithSpanSamplingKeep()`. Feedback helpers accept `genai.WithSamplingKeep()`. Evaluation recording has no keep option and obeys the installed sampler. A hint has effect only when the host installs a sampler that understands it, such as `genai.NewHintSampler`.
 When caller options contain duplicate attribute keys, helper built-in keys win.
 
-## Adapter helper: retrieval spans
+## Retrieval observations
 
-Use a typed handle to observe retrieval I/O without importing OTel status APIs. `Tracker` and `Runtime` expose the same `StartRetrieval` contract:
+`Tracker` and `Runtime` observe the host's retrieval interval. Declare locality explicitly:
 
 ```go
-retrievalCtx, retrieval, telemetryErr := adapterTracker.StartRetrieval(ctx, "vector.search", genai.RetrievalRequest{
+retrievalCtx, retrieval, telemetryErr := runtime.StartRetrieval(ctx, "vector.search", genai.RetrievalRequest{
     Provider: "qdrant", Source: "knowledge_base", Query: query, TopK: 5,
-}, genai.WithSpanSamplingKeep())
+    Locality: genai.ExecutionRemote,
+})
 if telemetryErr != nil {
     reportTelemetryError(telemetryErr)
     retrievalCtx = ctx
 }
 if retrieval != nil { defer func() { _ = retrieval.Close() }() }
-chunks, distances, businessErr := retriever.Search(retrievalCtx, query)
+documents, businessErr := retriever.Search(retrievalCtx, query)
 status := genai.Outcome(genai.OperationStatusOK)
 if businessErr != nil { status = genai.OperationStatusError }
 if retrieval != nil {
     if telemetryErr := retrieval.Finish(genai.RetrievalResult{
-        Status: status, Err: businessErr,
-        ReturnedChunks: len(chunks), Distances: distances,
+        Status: status, Err: businessErr, ReturnedDocuments: len(documents),
+        Documents: []genai.RetrievalDocument{{ID: "doc-42", Version: "v3", Digest: "sha256:host-owned"}},
     }); telemetryErr != nil { reportTelemetryError(telemetryErr) }
 }
-return chunks, businessErr
+return documents, businessErr
 ```
 
-`Finish` rejects negative chunk counts, more than 4,096 distances, non-finite distances and invalid or conflicting outcomes before result writes. It copies caller slices. Finite distances may be negative; their scale belongs to the caller. Cancellation and deadline errors derive their bounded classes from `errors.Is`; explicit error classes use the declared taxonomy. `Close` without a result remains unknown. Telemetry failure never replaces the retrieval business error.
+Provenance is optional and may describe a subset of returned documents. `ReturnedDocuments` is the host's count; metry does not equate it with the provenance list. `Relevance *float64` distinguishes absent from known zero; any finite signed score is accepted without inferring a universal scale. References are bounded to 256 bytes and protected even with content capture disabled. Metry never fetches documents or records document bodies. Document arrays preserve whole objects when truncated and emit `metry.gen_ai.retrieval.documents.truncated` separately; count remains unchanged.
+
+`Finish` rejects negative counts, more than 4,096 documents, excessive serialized input, non-finite relevance and invalid/conflicting outcomes before result writes. It snapshots score pointers and references. Invalid finish may be corrected; `Close` remains unknown. Cancellation/deadline classes follow `errors.Is`. Telemetry failure never replaces the retrieval business result/error.
 
 ## Completed evaluation observations
 
@@ -498,7 +508,7 @@ The wire representation of IDs, outcomes and opaque references is a stable finge
 
 ## Payload truncation
 
-Structured payload/tool attributes are JSON strings. Sanitization precedes encoding. Values that fit retain their shape; oversized values become a valid envelope with `truncated: true` and a retained prefix of top-level elements/fields when it fits. If no data fits, the envelope is just `{"truncated":true}`. Serialized JSON is never sliced. Plain-text tool inputs are encoded as JSON strings, not emitted as malformed JSON fragments.
+Controlled structured attributes are JSON strings; sanitation precedes encoding. System instructions, input/output messages and retrieval documents remain JSON arrays after truncation: metry retains the longest complete-element prefix that fits and emits a separate boolean truncation attribute. No JSON bytes are sliced. Arbitrary tool arguments/results use `metry.gen_ai.tool.call.arguments` / `result`, accept any JSON value, and may use an envelope with `truncated: true`; plain text is encoded as a JSON string. These tool channels are extensions because the pinned upstream schemas accept objects only.
 
 - Default max length: `65536` bytes.
 - Configure via `genai.WithMaxContextLength(bytes)`.
@@ -569,6 +579,7 @@ Primary examples (run via `make test-examples`):
 | `examples/executor`         | Root `metry.ExecutorWrap` for generic executors                           |
 | `examples/genai_recorder`   | `genai.Runtime` + payload policy + trace snapshot + tool lifecycle        |
 | `examples/genai_standalone` | Model/tool/retrieval without causal IDs, experiments or execution store |
+| `examples/agent_workflow` | Standalone, local/hosted agents, two-agent workflow, fan-in, detached resume, retrieval references and late evaluation |
 
 Adapter-level examples, kept to exercise low-level APIs:
 

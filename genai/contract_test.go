@@ -44,7 +44,7 @@ func TestContractSnapshotIsDetachedAndResolved(t *testing.T) {
 	require.NotEqual(t, "changed", contract.Profile().Dimensions[1].Values[0])
 	for _, channel := range contract.PayloadChannels() {
 		expected := 100000
-		if channel.Attribute == EvaluationReasoning {
+		if channel.Attribute == EvaluationExplanation {
 			expected = 17
 		}
 		require.Equal(t, expected, channel.OutputByteLimit)

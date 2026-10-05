@@ -3,9 +3,11 @@
 `NewContract(options...)` validates the same runtime configuration as
 `NewTrackerFromProvider` without registering SDK instruments. `Tracker.Contract()`
 returns the settings actually installed in that tracker. The zero contract is
-invalid. The schema identity is `metry.genai.effective`.
+invalid. The schema identity is `metry.genai.semconv.e07f4eb.v1`.
 
-The contract exposes detached profile and channel declarations. It contains no
+`RawEnabled()` reports permitted raw content capture. `ReferenceRawEnabled()`
+reports raw reference permission independently, including when content capture is
+disabled. The contract exposes detached profile and channel declarations. It contains no
 payloads, sanitizer callbacks or credentials. `PayloadChannels()` resolves each
 channel's output byte limit and declares fixed input byte, depth and entry bounds.
 JSON channels use the context budget; evaluation reasoning uses the event budget,
@@ -34,9 +36,9 @@ JSON-only payload evidence or `metry.genai.presence` profile identity.
 
 JSON numbers are decoded with `UseNumber` and retain their numeric spelling,
 including integers beyond float64 precision and decimal/exponent notation.
-Structured truncation removes whole members; retained values are never rounded.
-The envelope itself counts toward the supported depth and node bounds, so a deep
-member may be omitted when wrapping it would exceed those bounds. Custom policies
+Upstream array channels retain a complete-element prefix with separate truncation
+metadata. Tool extensions may use an envelope, which counts toward depth/node
+bounds; retained numeric values are never rounded. Custom policies
 receive the original `RawMessage` bytes after bounded input validation; their own
 transformations remain host responsibility, while metry bounds their output before
 encoding.
@@ -48,7 +50,7 @@ have different fingerprints; fingerprints are not a proof against hash collision
 or anonymity. Redaction intentionally replaces values rather than retaining them.
 
 Metric assertions now take `metrytest.MetricSelector` in place of a bare name.
-Use `Scope: &instrumentation.Scope{Name: "metry/genai"}` to select a known scope;
+Use the complete exported instrumentation scope to select a known scope;
 version, schema URL and attributes also participate in exact scope matching. A nil
 scope requires one unique name across all scopes. Typed helpers verify aggregation;
 duplicate candidates fail before conversion. Attribute helpers likewise require

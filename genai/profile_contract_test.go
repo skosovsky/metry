@@ -88,8 +88,9 @@ func TestProfileSchemaDeclarationsAreDetachedAndCoverOwnedChannels(t *testing.T)
 	require.NoError(t, profile.Validate())
 	require.LessOrEqual(t, len(profile.Fields), maxProfileEntries)
 	require.NotEmpty(t, enums)
+	original := enums[0].Values[0]
 	enums[0].Values[0] = "changed"
-	assert.Equal(t, string(IdentityLogical), profile.Enumerations()[0].Values[0])
+	assert.Equal(t, original, profile.Enumerations()[0].Values[0])
 	for _, channel := range channels {
 		assert.Equal(t, maxPayloadInputBytes, channel.InputByteLimit)
 		assert.NotEmpty(t, channel.BudgetSetting)
@@ -115,8 +116,9 @@ func TestProfileSchemaDeclarationsAreDetachedAndCoverOwnedChannels(t *testing.T)
 			assert.True(t, found, "undeclared event field: %s", name)
 		}
 	}
+	originalEventField := events[0].Fields[0]
 	events[0].Fields[0] = "changed"
-	assert.Equal(t, AgentName, profile.Events()[0].Fields[0])
+	assert.Equal(t, originalEventField, profile.Events()[0].Fields[0])
 }
 
 func TestConformanceRejectsObservedBoundaryWithoutDeclaredOwner(t *testing.T) {
@@ -125,7 +127,7 @@ func TestConformanceRejectsObservedBoundaryWithoutDeclaredOwner(t *testing.T) {
 	declaration := AdapterDeclaration{
 		ProfileID:  profile.ID,
 		Mapping:    profile.Mapping,
-		Boundaries: []string{ToolMetricLabelTool},
+		Boundaries: []string{"tool"},
 	}
 	// Act.
 	report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
@@ -154,7 +156,9 @@ func TestConformanceReportsSafeMismatches(t *testing.T) {
 					Operation: "fixture-secret",
 					Fields:    profile.Fields,
 					Payloads:  []PayloadEvidence{{Attribute: InputMessages, Value: "fixture-secret"}},
-					Series:    []InstrumentSeries{{Instrument: TokenUsageMetricName, Count: profile.SeriesBudget + 1}},
+					Series: []InstrumentSeries{
+						{Instrument: InputTokenUsageMetricName, Count: profile.SeriesBudget + 1},
+					},
 				},
 			}, nil
 		},
@@ -230,7 +234,7 @@ func TestCardinalityBudgetBoundsConcurrentModelToolSeries(t *testing.T) {
 	profile := DefaultProfile()
 	profile.SeriesBudget = minSeriesBudget
 	for index := range profile.Dimensions {
-		if profile.Dimensions[index].Key == RequestModel || profile.Dimensions[index].Key == ToolMetricLabelTool {
+		if profile.Dimensions[index].Key == RequestModel || profile.Dimensions[index].Key == ToolName {
 			for value := range maxProfileEntries {
 				profile.Dimensions[index].Values = append(
 					profile.Dimensions[index].Values,
@@ -263,18 +267,12 @@ func TestCardinalityBudgetBoundsConcurrentModelToolSeries(t *testing.T) {
 	workers.Wait()
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: data point count, not label string length, proves the budget.
-	hist := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	hist := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
 	assert.LessOrEqual(t, len(hist.DataPoints), profile.SeriesBudget)
 	assert.InDelta(
 		t,
 		float64(10000),
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeInput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName}),
 		1e-9,
 	)
 	tool := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: ToolDurationMetricName})

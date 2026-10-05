@@ -25,9 +25,10 @@ const (
 
 // Operation describes one generic GenAI operation.
 type Operation struct {
-	Name    string
-	Model   string
-	Purpose string
+	Name     string
+	Model    string
+	Purpose  string
+	Locality ExecutionLocality
 }
 
 // OperationResult describes the final outcome of one GenAI operation.
@@ -100,6 +101,8 @@ func WithAsyncAttributes(attrs ...metry.Attribute) AsyncOption {
 
 // Runtime is the app-scoped GenAI instrumentation boundary.
 type Runtime interface {
+	StartAgent(context.Context, AgentInvocation, RecordingOptions) (context.Context, *InvocationHandle, error)
+	StartWorkflow(context.Context, WorkflowInvocation, RecordingOptions) (context.Context, *InvocationHandle, error)
 	StartOperation(
 		ctx context.Context,
 		op Operation,
@@ -170,10 +173,18 @@ func (noopRuntime) RecordOperation(
 	result OperationResult,
 	_ ...metry.Attribute,
 ) error {
+	if err := validateModelMetadata(operation.Model, operation.Purpose); err != nil {
+		return err
+	}
 	meta := emptyMeta()
 	meta.Operation = operation.Name
+	meta.RequestModel = operation.Model
+	meta.Purpose = operation.Purpose
 	meta = mergeMetaFromScope(ctx, meta)
 	if err := validateOperationName(meta.Operation); err != nil {
+		return err
+	}
+	if err := validateModelMetadata(meta.RequestModel, meta.Purpose); err != nil {
 		return err
 	}
 	return validateCompletedResult(result)
@@ -196,6 +207,12 @@ func (noopRuntime) RecordStreamingCompletion(ctx context.Context, event Streamin
 	}
 	meta := mergeMetaFromScope(ctx, event.Meta)
 	if err := validateOperationName(meta.Operation); err != nil {
+		return err
+	}
+	if err := validateModelMetadata(meta.RequestModel, meta.Purpose); err != nil {
+		return err
+	}
+	if err := validateModelMetadata(meta.ResponseModel, ""); err != nil {
 		return err
 	}
 	if err := event.Usage.Validate(); err != nil {
@@ -261,6 +278,9 @@ func (r trackerRuntime) RecordOperation(
 	if r.tracker == nil {
 		return NoopRuntime().RecordOperation(ctx, op, result)
 	}
+	if err := validateModelMetadata(op.Model, op.Purpose); err != nil {
+		return err
+	}
 	if err := validateCompletedResult(result); err != nil {
 		return err
 	}
@@ -285,18 +305,22 @@ func (r trackerRuntime) RecordOperation(
 		result.Usage.Purpose = op.Purpose
 	}
 
-	scope, hasScope := ScopeFromContext(ctx)
-	meta = mergeMetaFromScopeWithScope(meta, scope, hasScope)
+	meta = mergeMetaFromScope(ctx, meta)
 	if err := validateOperationName(meta.Operation); err != nil {
+		return err
+	}
+	if err := validateModelMetadata(meta.RequestModel, meta.Purpose); err != nil {
 		return err
 	}
 	payloadAttrs, err := buildPayloadAttributes(result.Payload, r.tracker.cfg)
 	if err != nil {
 		return err
 	}
-	spanName := interactionSpanNameFromMeta(meta, scope, hasScope)
-	spanName = metadataWithConfig(OperationName, spanName, r.tracker.cfg)
-	ctx, span := r.tracker.tracer.Start(ctx, spanName)
+	ctx, span := r.tracker.tracer.Start(
+		ctx,
+		modelSpanName(meta, r.tracker.cfg),
+		trace.WithSpanKind(trace.SpanKindInternal),
+	)
 	defer span.End()
 
 	if extraAttrs := metryAttributesToOTel(attrs); len(extraAttrs) > 0 {
@@ -312,6 +336,9 @@ func (r trackerRuntime) RecordOperation(
 }
 
 func validateCompletedResult(result OperationResult) error {
+	if err := validateModelMetadata(result.Response.Model, ""); err != nil {
+		return err
+	}
 	if _, _, err := resolveModelOutcome(result.Status, result.ErrorType); err != nil {
 		return err
 	}
@@ -517,6 +544,8 @@ func emptyMeta() Meta {
 		Duration:      0,
 		ErrorType:     "",
 		Status:        "",
+		interval:      false,
+		locality:      "",
 	}
 }
 

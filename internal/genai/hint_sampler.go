@@ -51,7 +51,7 @@ func (s hintSampler) Description() string {
 
 func hasSamplingKeepHint(attrs []attribute.KeyValue) bool {
 	for _, attrKV := range slices.Backward(attrs) {
-		if attrKV.Key != attribute.Key("gen_ai.sampling.keep") {
+		if attrKV.Key != attribute.Key("metry.gen_ai.sampling.keep") {
 			continue
 		}
 		return attrKV.Value.Type() == attribute.BOOL && attrKV.Value.AsBool()

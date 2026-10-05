@@ -37,7 +37,7 @@ func TestNewHintSamplerSDK_KeepHintForcesSampling(t *testing.T) {
 
 	result := sampler.ShouldSample(sdktrace.SamplingParameters{
 		Attributes: []attribute.KeyValue{
-			attribute.Key("gen_ai.sampling.keep").Bool(true),
+			attribute.Key("metry.gen_ai.sampling.keep").Bool(true),
 		},
 	})
 
@@ -90,7 +90,7 @@ func TestNewHintSamplerSDK_KeepHint_OverridesUnsampledParent(t *testing.T) {
 	result := sampler.ShouldSample(sdktrace.SamplingParameters{
 		ParentContext: trace.ContextWithRemoteSpanContext(context.Background(), parent),
 		Attributes: []attribute.KeyValue{
-			attribute.Key("gen_ai.sampling.keep").Bool(true),
+			attribute.Key("metry.gen_ai.sampling.keep").Bool(true),
 		},
 	})
 

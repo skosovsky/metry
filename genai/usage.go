@@ -44,20 +44,20 @@ func Observe[T int | float64](value T, unit Unit, source Source) Measurement[T] 
 // components. Missing totals are never reconstructed from partial components.
 // Cost and currency are supplied by the caller; metry never looks up prices.
 type Usage struct {
-	InputTokens              Measurement[int]
-	OutputTokens             Measurement[int]
-	CacheCreationInputTokens Measurement[int]
-	CacheReadInputTokens     Measurement[int]
-	ReasoningOutputTokens    Measurement[int]
-	Cost                     Measurement[float64]
-	Currency                 string
-	AudioSeconds             Measurement[float64]
-	ImageCount               Measurement[int]
-	VideoSeconds             Measurement[float64]
-	VideoFrames              Measurement[int]
-	Purpose                  string
-	Mapping                  string
-	PriceReference           string
+	InputTokens           Measurement[int]
+	OutputTokens          Measurement[int]
+	CacheWriteInputTokens Measurement[int]
+	CacheReadInputTokens  Measurement[int]
+	ReasoningOutputTokens Measurement[int]
+	Cost                  Measurement[float64]
+	Currency              string
+	AudioSeconds          Measurement[float64]
+	ImageCount            Measurement[int]
+	VideoSeconds          Measurement[float64]
+	VideoFrames           Measurement[int]
+	Purpose               string
+	Mapping               string
+	PriceReference        string
 }
 
 // ErrInvalidObservation is a validation error that never contains raw values.
@@ -85,7 +85,7 @@ func (u Usage) Validate() error {
 	}{
 		{"input_tokens", u.InputTokens, UnitTokens},
 		{"output_tokens", u.OutputTokens, UnitTokens},
-		{"cache_creation", u.CacheCreationInputTokens, UnitTokens},
+		{"cache_write", u.CacheWriteInputTokens, UnitTokens},
 		{"cache_read", u.CacheReadInputTokens, UnitTokens},
 		{reasoningLabel, u.ReasoningOutputTokens, UnitTokens},
 		{"images", u.ImageCount, UnitImages},
@@ -112,7 +112,7 @@ func (u Usage) Validate() error {
 		field            string
 		component, total Measurement[int]
 	}{
-		{"cache_creation", u.CacheCreationInputTokens, u.InputTokens},
+		{"cache_write", u.CacheWriteInputTokens, u.InputTokens},
 		{"cache_read", u.CacheReadInputTokens, u.InputTokens},
 		{reasoningLabel, u.ReasoningOutputTokens, u.OutputTokens},
 	} {

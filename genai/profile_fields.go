@@ -9,23 +9,23 @@ func completeProfileFields(fields []ProfileField) []ProfileField {
 		names     []string
 	}{
 		{EncodingString, StabilityStable, []string{"exception.type", "exception.message", "exception.stacktrace"}},
-		{EncodingString, StabilityDevelopment, []string{ToolName, ToolCallID, EvaluationMetricName, EvaluationText, EvaluationReasoning}},
-		{EncodingJSON, StabilityDevelopment, []string{ToolCallArguments, ToolCallResult}},
+		{EncodingString, StabilityDevelopment, []string{ToolName, ToolCallID, EvaluationMetricName, EvaluationExplanation, EvaluationLabel, RetrievalSource, RetrievalQuery, AgentName, AgentID, AgentVersion, ConversationID, WorkflowName}},
+		{EncodingJSON, StabilityDevelopment, []string{RetrievalDocuments}},
+		{EncodingJSON, StabilityExtension, []string{ToolCallArguments, ToolCallResult}},
 		{EncodingString, StabilityExtension, []string{
-			CostCurrency, OperationPurpose, OperationStatus, RetrievalSource, RetrievalProvider, RetrievalQuery,
-			EmbeddingModel, AgentName, AgentRole, WorkflowStep,
+			CostCurrency, OperationPurpose, OperationStatus, EmbeddingModel,
+			RetrievalName, LocalAgentID, WorkflowID, WorkflowVersion, InvocationKindKey, ExecutionLocalityKey, DerivedCalculationKey,
 			causalRunKey, causalParentRunKey, causalOperationKey, causalStepKey, causalAttemptKey, causalKindKey, causalPromptKey,
-			"metry.causal.predecessor", "metry.observation.kind", "metry.usage.price_reference", "metry.usage.source",
-			evaluationStatusKey, evaluationObservationKey, evaluationOutcomeKey,
-			evaluationExperimentKey, evaluationDatasetKey, evaluationCaseKey,
-			evaluationTrialKey, evaluationTargetKey, evaluationGraderKey,
-			evaluationArtifactKey, "metry.diagnostic.field", "metry.diagnostic.rule",
-			TokenType, ToolMetricLabelTool, ToolMetricLabelStatus, ToolMetricLabelErrorType,
+			"metry.causal.predecessor", "metry.observation.kind", "metry.usage.price_reference", "metry.usage.source", "metry.usage.mapping",
+			evaluationStatusKey, evaluationObservationKey,
+			evaluationExperimentKey, evaluationDatasetKey, evaluationCaseKey, evaluationTrialKey, evaluationTargetKey, evaluationGraderKey, evaluationArtifactKey,
+			"metry.diagnostic.field", "metry.diagnostic.rule", TokenType,
 		}},
-		{EncodingBoolean, StabilityExtension, []string{ToolError, CacheHit, SamplingKeep, overflowKey}},
-		{EncodingInteger, StabilityExtension, []string{RetrievalTopK, RetrievalReturnedChunks}},
+		{EncodingBoolean, StabilityExtension, []string{ToolError, CacheHit, SamplingKeep, overflowKey, RetrievalDocumentsTruncated,
+			"metry.gen_ai.payload.system_instructions.truncated", "metry.gen_ai.payload.input_messages.truncated", "metry.gen_ai.payload.output_messages.truncated"}},
+		{EncodingInteger, StabilityDevelopment, []string{RetrievalTopK}},
+		{EncodingInteger, StabilityExtension, []string{RetrievalReturnedDocuments}},
 		{EncodingFloat, StabilityDevelopment, []string{EvaluationScore}},
-		{EncodingFloatArray, StabilityExtension, []string{RetrievalDistances}},
 	} {
 		for _, name := range group.names {
 			fields = append(
@@ -61,13 +61,13 @@ func completeProfileFields(fields []ProfileField) []ProfileField {
 			},
 		)
 	}
-	for _, name := range []string{InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens,
+	for _, name := range []string{InputTokens, OutputTokens, CacheReadInputTokens, CacheWriteInputTokens,
 		UsageReasoningOutputTokens, UsageCost, AudioSeconds, ImageCount, UsageVideoSeconds, UsageVideoFrames} {
 		for _, suffix := range []string{".source", ".unit"} {
 			fields = append(
 				fields,
 				ProfileField{
-					Name:      name + suffix,
+					Name:      measurementProvenanceKey(name) + suffix,
 					Unit:      "",
 					Stability: StabilityExtension,
 					Required:  false,

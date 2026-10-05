@@ -16,7 +16,7 @@ func TestStreamUpdatesCommitOnlyFinalUsage(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: profileChatOperation}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act: cumulative updates do not add counters or infer final usage.
 	for _, count := range []int{2, 5, 10, 10} {
@@ -47,17 +47,11 @@ func TestStreamUpdatesCommitOnlyFinalUsage(t *testing.T) {
 	assert.InDelta(
 		t,
 		10.0,
-		metrytest.Int64HistogramSumByAttr(
-			t,
-			metrics,
-			metrytest.MetricSelector{Name: TokenUsageMetricName},
-			TokenType,
-			TokenTypeOutput,
-		),
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
 		1e-9,
 	)
 	assert.InDelta(t, 0.5, metrytest.Float64SumValue(t, metrics, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
-	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	require.Len(t, histogram.DataPoints, 1)
 	assert.Equal(t, uint64(1), histogram.DataPoints[0].Count)
 	ttft := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName})
@@ -70,7 +64,7 @@ func TestAbortedStreamDoesNotInferMissingTotal(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: profileChatOperation}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act.
 	require.NoError(t, handle.RecordStreamingUpdate(Usage{OutputTokens: Observe(100, UnitTokens, SourceProvider)}))
@@ -83,7 +77,8 @@ func TestAbortedStreamDoesNotInferMissingTotal(t *testing.T) {
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert.
-	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: CostMetricName})
 	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName})
 	span := traceExporter.GetSpans()[0]
@@ -106,8 +101,10 @@ func TestInvalidStreamIntervalsRejectBeforeRecording(t *testing.T) {
 		metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 		// Assert.
 		require.ErrorIs(t, err, ErrInvalidObservation)
-		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OperationDurationMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: ObservedOperationDurationMetricName})
 	}
 }
 
@@ -115,7 +112,7 @@ func TestInvalidFinalTimingCanBeCorrected(t *testing.T) {
 	// Arrange.
 	tracker, _, _ := newTestTracker(t)
 	_, handle, err := tracker.Runtime().
-		StartOperation(context.Background(), Operation{Name: profileChatOperation}, RecordingOptions{})
+		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act.
 	err = handle.Finish(OperationResult{Streaming: &StreamTimings{TTFT: time.Hour, FirstTokenPresent: true}})
@@ -135,9 +132,13 @@ func TestCompletedOperationValidatesTimingsIncludingNoop(t *testing.T) {
 	// Act.
 	for _, result := range invalid {
 		require.ErrorIs(t, tracker.Runtime().RecordOperation(
-			context.Background(), Operation{Name: profileChatOperation}, result), ErrInvalidObservation)
+			context.Background(),
+			Operation{Locality: ExecutionRemote, Name: profileChatOperation}, result),
+			ErrInvalidObservation)
 		require.ErrorIs(t, NoopRuntime().RecordOperation(
-			context.Background(), Operation{Name: profileChatOperation}, result), ErrInvalidObservation)
+			context.Background(),
+			Operation{Locality: ExecutionRemote, Name: profileChatOperation}, result),
+			ErrInvalidObservation)
 	}
 	require.ErrorIs(t, tracker.RecordInteraction(context.Background(),
 		Meta{Duration: -time.Second}, Payload{}, Usage{}), ErrInvalidObservation)
@@ -145,8 +146,10 @@ func TestCompletedOperationValidatesTimingsIncludingNoop(t *testing.T) {
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: invalid completed observations don't create even partial writes.
 	require.Empty(t, traceExporter.GetSpans())
-	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: InputTokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName})
 	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OperationDurationMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: ObservedOperationDurationMetricName})
 }
 
 func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
@@ -159,7 +162,7 @@ func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
 	}
 	// Act.
 	require.NoError(t, tracker.Runtime().RecordOperation(
-		context.Background(), Operation{Name: profileChatOperation}, result))
+		context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, result))
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: the completed DTO path doesn't silently ignore streaming metadata.
 	assert.InDelta(
@@ -171,9 +174,17 @@ func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
 	assert.InDelta(
 		t,
 		5,
-		metrytest.Float64HistogramSum(t, metrics, metrytest.MetricSelector{Name: StreamingTPSMetricName}),
+		metrytest.Float64HistogramSum(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: DerivedOutputTokensPerSecondMetricName},
+		),
 		1e-9,
 	)
-	assert.InDelta(t, 10, metrytest.Int64HistogramSumByAttr(
-		t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName}, TokenType, TokenTypeOutput), 1e-9)
+	assert.InDelta(
+		t,
+		10,
+		testInt64HistogramSum(t, metrics, metrytest.MetricSelector{Name: OutputTokenUsageMetricName}),
+		1e-9,
+	)
 }

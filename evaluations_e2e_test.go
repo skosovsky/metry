@@ -66,7 +66,7 @@ func TestEvaluations_TraceSnapshotWorkerFlow(t *testing.T) {
 	testutil.AssertSpanStubOkStatus(t, evalSpan)
 	assert.False(t, testutil.SpanStubHasAttr(evalSpan, "tenant_id"))
 	require.Len(t, evalSpan.Events, 1)
-	assert.Equal(t, "evaluation", evalSpan.Events[0].Name)
+	assert.Equal(t, "gen_ai.evaluation.result", evalSpan.Events[0].Name)
 	assert.InDelta(
 		t,
 		0.88,

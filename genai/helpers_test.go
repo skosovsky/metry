@@ -296,17 +296,17 @@ func TestRecordInteraction_TruncatedPayloadRemainsValidJSON(t *testing.T) {
 	value := testutil.SpanStubStringAttr(t, spans[0], InputMessages)
 	assert.LessOrEqual(t, len(value), 80)
 	assert.True(t, utf8.ValidString(value))
-	assert.Contains(t, value, `"truncated":true`)
+	assert.Equal(t, "[]", value)
+	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], "metry.gen_ai.payload.input_messages.truncated"))
 	assert.True(t, json.Valid([]byte(value)))
 }
 
-func TestRecordCacheHit_AndRecordAgentStep(t *testing.T) {
+func TestRecordCacheHit(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
 
 	ctx, end, err := provider.StartSpan(context.Background(), "genai-test", "span")
 	require.NoError(t, err)
 	tracker.RecordCacheHit(ctx, true, "pgvector_cache")
-	tracker.RecordAgentStep(ctx, "cardiologist", "specialist", "step-2")
 	end()
 
 	flushTestProvider(t, provider)
@@ -318,8 +318,7 @@ func TestRecordCacheHit_AndRecordAgentStep(t *testing.T) {
 		fingerprintPayloadLabel("pgvector_cache"),
 		testutil.SpanStubStringAttr(t, spans[0], RetrievalSource),
 	)
-	require.Len(t, spans[0].Events, 1)
-	assert.Equal(t, AgentStepEvent, spans[0].Events[0].Name)
+	require.Empty(t, spans[0].Events)
 }
 
 func testMeta() Meta {
@@ -352,7 +351,6 @@ func testPayload() Payload {
 				Type:    "text",
 				Content: "4",
 			}},
-			FinishReason: "stop",
 		}},
 	}
 }
