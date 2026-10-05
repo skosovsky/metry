@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/internal/enrichment"
 )
 
 const (
@@ -28,24 +29,24 @@ func (t *Tracker) WithScope(ctx context.Context, scope Scope) context.Context {
 	return WithScope(ctx, scope)
 }
 
-// ScopeFromContext returns the GenAI scope stored in baggage, if any.
+// ScopeFromContext returns only locally trusted or explicitly admitted scope values.
 func ScopeFromContext(ctx context.Context) (Scope, bool) {
 	var scope Scope
 	var found bool
 
-	if v := metry.BaggageMember(ctx, scopeBaggageProvider); v != "" {
+	if v := enrichment.String(ctx, scopeBaggageProvider); v != "" {
 		scope.Provider = v
 		found = true
 	}
-	if v := metry.BaggageMember(ctx, scopeBaggageModel); v != "" {
+	if v := enrichment.String(ctx, scopeBaggageModel); v != "" {
 		scope.Model = v
 		found = true
 	}
-	if v := metry.BaggageMember(ctx, scopeBaggageOperation); v != "" {
+	if v := enrichment.String(ctx, scopeBaggageOperation); v != "" {
 		scope.Operation = v
 		found = true
 	}
-	if v := metry.BaggageMember(ctx, scopeBaggagePurpose); v != "" {
+	if v := enrichment.String(ctx, scopeBaggagePurpose); v != "" {
 		scope.Purpose = v
 		found = true
 	}

@@ -150,6 +150,13 @@ func (h AsyncHandle) RecordLinkedSpan(
 		return err
 	}
 	defer span.End()
+	defer func() {
+		if value := recover(); value != nil {
+			traceutil.RecordDiagnostic(span, provider.DiagnosticPolicy().Panic(value))
+			span.End()
+			panic(value)
+		}
+	}()
 
 	var statusErr error
 	writer := LinkedSpanWriter{
@@ -172,11 +179,11 @@ func (h AsyncHandle) RecordLinkedSpan(
 		},
 	}
 	if err := fn(writer); err != nil {
-		traceutil.SpanError(span, err)
+		traceutil.SpanErrorWithPolicy(span, err, provider.DiagnosticPolicy())
 		return err
 	}
 	if statusErr != nil {
-		traceutil.SpanError(span, statusErr)
+		traceutil.SpanErrorWithPolicy(span, statusErr, provider.DiagnosticPolicy())
 		return nil
 	}
 	traceutil.SpanOK(span)

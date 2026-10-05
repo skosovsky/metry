@@ -6,48 +6,41 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 )
 
-// W3C propagation field names extracted from map carriers.
-const (
-	w3cTraceParent = "traceparent"
-	w3cTraceState  = "tracestate"
-	w3cBaggage     = "baggage"
-)
-
-func isW3CPropagationKey(key string) bool {
-	switch key {
-	case w3cTraceParent, w3cTraceState, w3cBaggage:
-		return true
-	default:
-		return false
-	}
-}
-
-// InjectToMap writes W3C propagation fields into carrier. Existing non-telemetry keys are preserved.
+// InjectToMap replaces only fields declared by the propagator, including custom fields.
+// It clears stale declared fields, preserves all host keys, and ignores undeclared writes.
+// A nil carrier or nil (including typed nil) propagator is a no-op.
 func InjectToMap(ctx context.Context, propagator propagation.TextMapPropagator, carrier map[string]any) {
-	if carrier == nil || propagator == nil {
+	if carrier == nil || nilInterface(propagator) {
 		return
+	}
+	for _, field := range propagator.Fields() {
+		delete(carrier, field)
 	}
 	stringCarrier := make(stringMapCarrier)
 	propagator.Inject(ctx, stringCarrier)
-	for k, v := range stringCarrier {
+	for _, k := range propagator.Fields() {
+		v := stringCarrier[k]
+		if v == "" {
+			continue
+		}
 		carrier[k] = v
 	}
 }
 
-// ExtractFromMap restores trace context from carrier W3C fields only.
+// ExtractFromMap supplies nonempty string values from declared propagator fields only.
+// The propagator defines trace and baggage acceptance (use Wrap to apply Policy).
+// Nil propagators, nil/empty carriers, and carriers without usable fields return ctx.
 func ExtractFromMap(
 	ctx context.Context,
 	propagator propagation.TextMapPropagator,
 	carrier map[string]any,
 ) context.Context {
-	if propagator == nil || len(carrier) == 0 {
+	if nilInterface(propagator) || len(carrier) == 0 {
 		return ctx
 	}
 	stringCarrier := make(stringMapCarrier)
-	for k, v := range carrier {
-		if !isW3CPropagationKey(k) {
-			continue
-		}
+	for _, k := range propagator.Fields() {
+		v := carrier[k]
 		s, ok := v.(string)
 		if !ok || s == "" {
 			continue

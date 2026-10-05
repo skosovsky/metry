@@ -106,3 +106,27 @@ Provide an exact instrumentation scope when names overlap; otherwise a unique
 name across all scopes is required. Typed helpers reject wrong aggregations and
 attribute accessors reject wrong OTel types rather than yielding zero values.
 See [BENCHMARKS.md](BENCHMARKS.md) for the measured baseline and fuzz command.
+
+## Propagation and diagnostic privacy clear break
+
+A remote `metry.attr.type` marker no longer makes baggage trusted log enrichment
+or inherited GenAI scope. Configure `propagation.NewPolicy` ingress and egress key
+allowlists separately, then install it through Provider options. Local Enrich
+continues to write trusted typed span/log fields; network propagation requires a
+separate egress permission. Manual OTel baggage does not establish provenance.
+
+Generic root/security diagnostic content uses neutral `diagnostic.Policy`, not
+GenAI payload/reference policy. The default suppresses arbitrary error/panic and
+security reason text before trace/log fanout. Explicit raw or custom sanitation is
+installed with `WithDiagnosticPolicy`/`WithSDKDiagnosticPolicy`. These defaults do
+not redefine GenAI payload channels, known outcome classes or reference policy.
+Replace `security.RecordSecurityEventWithProvider` scalar calls with
+`security.Record(ctx, provider, security.Observation{...})`; metadata is bounded,
+block is a host decision and sampling can omit the event. See root `PRIVACY.md`
+for host SDK/custom attribute/formatter/exporter escape hatches.
+
+HTTP panic spans and gRPC completion status descriptions follow the Provider's
+shared diagnostic policy. Queries expecting arbitrary error/panic descriptions
+must use bounded machine status/code fields or explicitly configure sanitized
+content. RPC outcomes and original errors are unchanged; the SDK receives a copy
+of completion evidence with a processed description.

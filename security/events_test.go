@@ -2,133 +2,177 @@ package security
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric/noop"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/diagnostic"
 	"github.com/skosovsky/metry/metrytest"
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRecordSecurityEventWithProvider_ActiveSpan_AddsEvent(t *testing.T) {
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
-	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
-	require.NoError(t, err)
-	err = RecordSecurityEventWithProvider(
-		ctx,
-		provider,
-		ActionBlock,
-		"pii_masking",
-		"PII detected in prompt",
-		"POLICY_VIOLATION",
-		"HIGH",
-		false,
-	)
-	require.NoError(t, err)
-	end()
-	flushSpans(t, provider)
-
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	require.Len(t, spans[0].Events, 1, "span should have one Security Intervention event")
-	evt := spans[0].Events[0]
-	assert.Equal(t, "Security Intervention", evt.Name)
-	require.Len(t, evt.Attributes, 6)
-
-	assert.Equal(t, ActionBlock, testutil.SpanEventStringAttr(t, evt.Attributes, Action))
-	assert.Equal(t, "pii_masking", testutil.SpanEventStringAttr(t, evt.Attributes, Validator))
-	assert.Equal(t, "PII detected in prompt", testutil.SpanEventStringAttr(t, evt.Attributes, Reason))
-	assert.False(t, testutil.SpanStubBoolAttr(t, testutil.AttrsStub(evt.Attributes), ShadowMode))
-	assert.Equal(t, "POLICY_VIOLATION", testutil.SpanEventStringAttr(t, evt.Attributes, Code))
-	assert.Equal(t, "HIGH", testutil.SpanEventStringAttr(t, evt.Attributes, Severity))
-	testutil.AssertSpanStubOkStatus(t, spans[0])
+func TestRecordPrivacyBeforeTwoExporters(t *testing.T) {
+	for _, mode := range []string{"default", "sanitized", "raw", "failure", "panic", "output_bound", "tiny_output"} {
+		t.Run(mode, func(t *testing.T) {
+			// Arrange.
+			const secret = "secret-security-sentinel"
+			config := diagnostic.Config{}
+			switch mode {
+			case "raw":
+				config.Raw = true
+			case "sanitized":
+				config.Sanitizer = func(_ diagnostic.Channel, _ string) (string, error) { return "safe_reason", nil }
+			case "failure":
+				config.Sanitizer = func(_ diagnostic.Channel, _ string) (string, error) { return secret, assert.AnError }
+			case "panic":
+				config.Sanitizer = func(_ diagnostic.Channel, _ string) (string, error) { panic(secret) }
+			case "tiny_output":
+				config.MaxOutputBytes = 1
+				config.Sanitizer = func(_ diagnostic.Channel, _ string) (string, error) { return "too_long", nil }
+			case "output_bound":
+				config.Sanitizer = func(_ diagnostic.Channel, _ string) (string, error) { return strings.Repeat(secret, 300), nil }
+			}
+			policy, err := diagnostic.NewPolicy(config)
+			require.NoError(t, err)
+			first, second := testutil.NewInMemoryTraceExporter(), testutil.NewInMemoryTraceExporter()
+			tp := sdktrace.NewTracerProvider(
+				sdktrace.WithSyncer(first.SDKSpanExporter()),
+				sdktrace.WithSyncer(second.SDKSpanExporter()),
+			)
+			t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+			provider := metrytest.NewProviderWithDeps(tp, noop.NewMeterProvider())
+			// Use borrowed composition to install the same explicit policy as owned providers.
+			provider, err = metry.FromSDK(
+				metry.SDKDependencies{
+					TracerProvider: tp,
+					MeterProvider:  provider.SDK().MeterProvider,
+					Propagator:     provider.SDK().Propagator,
+				},
+				metry.WithSDKDiagnosticPolicy(policy),
+			)
+			require.NoError(t, err)
+			ctx, end, err := provider.StartSpan(context.Background(), "security-test", "host")
+			require.NoError(t, err)
+			// Act.
+			err = Record(
+				ctx,
+				provider,
+				Observation{
+					Action:    ActionBlock,
+					Validator: "validator",
+					Reason:    secret,
+					Code:      "POLICY_VIOLATION",
+					Severity:  "HIGH",
+					Shadow:    true,
+				},
+			)
+			end()
+			// Assert.
+			require.NoError(t, err)
+			assertPrivacySinks(t, mode, secret, first, second)
+		})
+	}
 }
 
-func TestRecordSecurityEventWithProvider_EmptyCodeAndSeverity_AreNotAdded(t *testing.T) {
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
-	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
-	require.NoError(t, err)
-	err = RecordSecurityEventWithProvider(
-		ctx,
-		provider,
-		ActionBlock,
-		"pii_masking",
-		"PII detected in prompt",
-		"",
-		"",
-		false,
-	)
-	require.NoError(t, err)
-	end()
-	flushSpans(t, provider)
-
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	require.Len(t, spans[0].Events, 1, "span should have one Security Intervention event")
-	evt := spans[0].Events[0]
-	require.Len(t, evt.Attributes, 4)
-
-	eventStub := testutil.AttrsStub(evt.Attributes)
-	assert.False(t, testutil.SpanStubHasAttr(eventStub, Code))
-	assert.False(t, testutil.SpanStubHasAttr(eventStub, Severity))
+func TestRecordMetadataRejectedBeforeWrites(t *testing.T) {
+	cases := []Observation{
+		{
+			Action:    "unknown",
+			Validator: "validator",
+		},
+		{Action: ActionPass},
+		{Action: ActionPass, Validator: "contains space"},
+		{
+			Action:    ActionPass,
+			Validator: strings.Repeat("v", 129),
+		},
+		{Action: ActionPass, Validator: "v", Code: "secret\nvalue"},
+		{Action: ActionPass, Validator: "v", Severity: "é"},
+	}
+	for i, observation := range cases {
+		// Arrange.
+		provider, exporter := metrytest.NewTestProvider(t)
+		// Act.
+		err := Record(context.Background(), provider, observation)
+		flushSpans(t, provider)
+		// Assert.
+		require.ErrorIs(t, err, ErrMetadata, "case %d", i)
+		assert.Empty(t, exporter.GetSpans())
+	}
 }
 
-func TestRecordSecurityEventWithProvider_OnlyCode_IsAdded(t *testing.T) {
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
-	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
-	require.NoError(t, err)
-	err = RecordSecurityEventWithProvider(
-		ctx,
-		provider,
-		ActionBlock,
-		"pii_masking",
-		"PII detected in prompt",
-		"POLICY_VIOLATION",
-		"",
-		false,
-	)
-	require.NoError(t, err)
-	end()
-	flushSpans(t, provider)
-
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	require.Len(t, spans[0].Events, 1, "span should have one Security Intervention event")
-	evt := spans[0].Events[0]
-	require.Len(t, evt.Attributes, 5)
-
-	assert.Equal(t, "POLICY_VIOLATION", testutil.SpanEventStringAttr(t, evt.Attributes, Code))
-	assert.False(t, testutil.SpanStubHasAttr(testutil.AttrsStub(evt.Attributes), Severity))
+func TestRecordReasonRejectedBeforeCallbackAndWrites(t *testing.T) {
+	for _, reason := range []string{strings.Repeat("x", 65537), string([]byte{0xff})} {
+		// Arrange.
+		calls := 0
+		policy, err := diagnostic.NewPolicy(
+			diagnostic.Config{
+				Sanitizer: func(_ diagnostic.Channel, _ string) (string, error) { calls++; return "safe", nil },
+			},
+		)
+		require.NoError(t, err)
+		provider, exporter := metrytest.NewTestProvider(t, metry.WithDiagnosticPolicy(policy))
+		ctx, end, err := provider.StartSpan(context.Background(), "test", "host")
+		require.NoError(t, err)
+		// Act.
+		err = Record(ctx, provider, Observation{Action: ActionPass, Validator: "v", Reason: reason})
+		end()
+		flushSpans(t, provider)
+		// Assert.
+		require.ErrorIs(t, err, diagnostic.ErrInput)
+		assert.Zero(t, calls)
+		require.Len(t, exporter.GetSpans(), 1)
+		assert.Empty(t, exporter.GetSpans()[0].Events)
+	}
 }
 
-func TestRecordSecurityEventWithProvider_OnlySeverity_IsAdded(t *testing.T) {
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-test"))
-	ctx, end, err := provider.StartSpan(context.Background(), "metry", "test-op")
-	require.NoError(t, err)
-	err = RecordSecurityEventWithProvider(
-		ctx,
-		provider,
-		ActionBlock,
-		"pii_masking",
-		"PII detected in prompt",
-		"",
-		"HIGH",
-		false,
-	)
-	require.NoError(t, err)
-	end()
+func TestRecordCreatesSpanAndOptionalAttributes(t *testing.T) {
+	// Arrange.
+	provider, exporter := metrytest.NewTestProvider(t)
+	// Act.
+	err := Record(context.Background(), provider, Observation{Action: ActionBlock, Validator: "validator"})
 	flushSpans(t, provider)
-
-	spans := mem.GetSpans()
+	// Assert.
+	require.NoError(t, err)
+	spans := exporter.GetSpans()
 	require.Len(t, spans, 1)
-	require.Len(t, spans[0].Events, 1, "span should have one Security Intervention event")
-	evt := spans[0].Events[0]
-	require.Len(t, evt.Attributes, 5)
+	assert.Equal(t, "security.intervention", spans[0].Name)
+	require.Len(t, spans[0].Events, 1)
+	assert.Len(t, spans[0].Events[0].Attributes, 3)
+	assert.NotEqual(t, codes.Error, spans[0].Status.Code)
+}
 
-	assert.Equal(t, "HIGH", testutil.SpanEventStringAttr(t, evt.Attributes, Severity))
-	assert.False(t, testutil.SpanStubHasAttr(testutil.AttrsStub(evt.Attributes), Code))
+func TestRecordNilDependencies(t *testing.T) {
+	// Arrange.
+	observation := Observation{Action: ActionPass, Validator: "validator"}
+	// Act and Assert.
+	require.ErrorIs(t, Record(context.Background(), nil, observation), metry.ErrNilProvider)
+	require.ErrorIs(
+		t,
+		Record(context.Background(), metrytest.NewProviderWithDeps(nil, nil), observation),
+		metry.ErrNilTracerProvider,
+	)
+}
+
+func TestRecordUnsampledParentMayDropEvent(t *testing.T) {
+	// Arrange.
+	provider, exporter := metrytest.NewTestProvider(t)
+	ctx := provider.ExtractFromMap(
+		context.Background(),
+		map[string]any{"traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-00"},
+	)
+	// Act.
+	err := Record(ctx, provider, Observation{Action: ActionBlock, Validator: "validator"})
+	flushSpans(t, provider)
+	// Assert.
+	require.NoError(t, err)
+	assert.Empty(t, exporter.GetSpans())
 }
 
 func flushSpans(t *testing.T, provider *metry.Provider) {
@@ -136,54 +180,35 @@ func flushSpans(t *testing.T, provider *metry.Provider) {
 	require.NoError(t, provider.ForceFlush(context.Background()))
 }
 
-func TestRecordSecurityEventWithProvider_NilProvider_ReturnsErrNilProvider(t *testing.T) {
-	err := RecordSecurityEventWithProvider(
-		context.Background(),
-		nil,
-		ActionPass,
-		"test",
-		"no provider",
-		"",
-		"",
-		false,
-	)
-	require.ErrorIs(t, err, metry.ErrNilProvider)
-}
-
-func TestRecordSecurityEventWithProvider_NoSpan_CreatesSpan(t *testing.T) {
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("security-withprovider"))
-	err := RecordSecurityEventWithProvider(
-		context.Background(),
-		provider,
-		ActionBlock,
-		"pii_masking",
-		"PII detected",
-		"POLICY_VIOLATION",
-		"HIGH",
-		false,
-	)
-	require.NoError(t, err)
-	flushSpans(t, provider)
-
-	spans := mem.GetSpans()
-	require.Len(t, spans, 1)
-	assert.Equal(t, "security.intervention", spans[0].Name)
-	require.Len(t, spans[0].Events, 1)
-	assert.Equal(t, "Security Intervention", spans[0].Events[0].Name)
-	testutil.AssertSpanStubOkStatus(t, spans[0])
-}
-
-func TestRecordSecurityEventWithProvider_NilTracer_ReturnsErrNilTracerProvider(t *testing.T) {
-	provider := metrytest.NewProviderWithDeps(nil, nil)
-	err := RecordSecurityEventWithProvider(
-		context.Background(),
-		provider,
-		ActionPass,
-		"test",
-		"no tracer",
-		"",
-		"",
-		false,
-	)
-	require.ErrorIs(t, err, metry.ErrNilTracerProvider)
+func assertPrivacySinks(t *testing.T, mode, secret string, sinks ...*testutil.InMemoryTraceExporter) {
+	t.Helper()
+	for _, sink := range sinks {
+		spans := sink.GetSpans()
+		require.Len(t, spans, 1)
+		require.Len(t, spans[0].Events, 1)
+		assert.NotEqual(t, codes.Error, spans[0].Status.Code)
+		event := spans[0].Events[0]
+		assert.Equal(t, string(ActionBlock), testutil.SpanEventStringAttr(t, event.Attributes, Action))
+		assert.True(t, testutil.SpanStubBoolAttr(t, testutil.AttrsStub(event.Attributes), ShadowMode))
+		reason := ""
+		for _, attr := range event.Attributes {
+			if string(attr.Key) == Reason {
+				reason = attr.Value.AsString()
+			}
+			if mode != "raw" {
+				assert.NotContains(t, attr.Value.String(), secret)
+			}
+		}
+		switch mode {
+		case "default":
+			assert.Empty(t, reason)
+		case "raw":
+			assert.Equal(t, secret, reason)
+		case "sanitized":
+			assert.Equal(t, "safe_reason", reason)
+		default:
+			assert.Empty(t, reason)
+		}
+		assert.NotContains(t, spans[0].Status.Description, secret)
+	}
 }

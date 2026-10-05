@@ -4,6 +4,9 @@ package metry
 import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	"github.com/skosovsky/metry/diagnostic"
+	metryprop "github.com/skosovsky/metry/propagation"
 )
 
 // Option configures New. Use WithServiceName, WithTraceRatio, etc.
@@ -11,14 +14,16 @@ type Option func(*config)
 
 // config holds New options with defaults applied.
 type config struct {
-	ServiceName    string
-	ServiceVersion string
-	Environment    string
-	TraceRatio     float64
-	Sampler        sdktrace.Sampler
-	Exporter       sdktrace.SpanExporter
-	MetricExporter sdkmetric.Exporter
-	invalid        bool
+	ServiceName       string
+	ServiceVersion    string
+	Environment       string
+	TraceRatio        float64
+	Sampler           sdktrace.Sampler
+	Exporter          sdktrace.SpanExporter
+	MetricExporter    sdkmetric.Exporter
+	PropagationPolicy metryprop.Policy
+	DiagnosticPolicy  diagnostic.Policy
+	invalid           bool
 }
 
 // newConfig returns config with defaults (e.g. TraceRatio = 1.0).
@@ -67,4 +72,14 @@ func WithExporter(exp sdktrace.SpanExporter) Option {
 // WithMetricExporter sets the metric exporter. If not set, metrics are not exported.
 func WithMetricExporter(exp sdkmetric.Exporter) Option {
 	return func(c *config) { c.invalid = c.invalid || nilDependency(exp); c.MetricExporter = exp }
+}
+
+// WithPropagationPolicy configures this provider's ingress and egress trust boundary.
+func WithPropagationPolicy(policy metryprop.Policy) Option {
+	return func(c *config) { c.PropagationPolicy = policy }
+}
+
+// WithDiagnosticPolicy configures library-owned error, panic and security text.
+func WithDiagnosticPolicy(policy diagnostic.Policy) Option {
+	return func(c *config) { c.DiagnosticPolicy = policy }
 }

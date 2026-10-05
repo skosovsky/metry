@@ -8,7 +8,7 @@ pipeline and are shut down with it. Invalid configuration does not transfer
 ownership. Caller-created exporters must be cleaned up by the caller if creation
 fails. Omitted exporters select a documented noop pipeline.
 
-`metry.FromSDK(SDKDependencies{TracerProvider, MeterProvider, Propagator})`
+`metry.FromSDK(SDKDependencies{TracerProvider, MeterProvider, Propagator}, opts...)`
 borrows dependencies. All three dependencies are required and must be non-nil,
 including interfaces containing typed nils. It does not install globals, change
 sampling, own resource attributes, close providers or start workers. The host
@@ -19,9 +19,14 @@ borrowed resources, call `FlushDependencies(ctx)`; providers implementing
 implicit ownership transfer for injected providers.
 
 `Provider.SDK()` returns a detached `SDKDependencies` value for transport
-instrumentation. The dependencies are references, not copies of SDK providers.
-Calling their methods directly is a host-owned integration boundary. A nil or
-zero Provider exposes noop providers and the default W3C propagator for optional
+instrumentation. Tracer/meter dependencies are references, not copies of SDK providers.
+The propagator is wrapped by the provider-local trust policy: default trace-only,
+no inbound business trust or outbound business baggage. Configure New through
+`WithPropagationPolicy`; borrowed providers through `WithSDKPropagationPolicy`.
+`WithDiagnosticPolicy` / `WithSDKDiagnosticPolicy` configure library-owned text.
+See [privacy boundaries](PRIVACY.md). Direct tracer/meter writes and the original
+host propagator remain host-owned integration boundaries. A nil or
+zero Provider exposes noop providers and a secure W3C propagation wrapper for optional
 instrumentation; this is not a constructor for an owned pipeline.
 
 New validates service name, finite trace ratio in [0,1], nil options, and explicitly

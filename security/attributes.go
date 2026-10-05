@@ -16,7 +16,7 @@ const (
 
 // Standard values for Action.
 const (
-	ActionPass   = "pass"
-	ActionBlock  = "block"
-	ActionRedact = "redact"
+	ActionPass   Decision = "pass"
+	ActionBlock  Decision = "block"
+	ActionRedact Decision = "redact"
 )

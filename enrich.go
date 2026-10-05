@@ -7,13 +7,14 @@ import (
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/skosovsky/metry/internal/enrichment"
 	"github.com/skosovsky/metry/internal/traceutil"
 )
 
 // Enrich updates unified observability context: OTel baggage and active span attributes.
 // Reassign ctx = metry.Enrich(...) on each call when accumulating attributes across multiple steps.
 // Invalid baggage members for individual attributes are skipped without failing the whole call.
-// ContextHandler reads enrich attributes from baggage for slog correlation.
+// ContextHandler reads the private provenance ledger for slog correlation.
 func Enrich(ctx context.Context, attrs ...Attribute) context.Context {
 	if len(attrs) == 0 {
 		return ctx
@@ -24,6 +25,14 @@ func Enrich(ctx context.Context, attrs ...Attribute) context.Context {
 		return ctx
 	}
 
+	values := make([]enrichment.Value, 0, len(valid))
+	for _, attr := range valid {
+		values = append(
+			values,
+			enrichment.Value{Key: attr.key, Text: attributeStringValue(attr), Type: attr.attrType(), Local: true},
+		)
+	}
+	ctx = enrichment.Put(ctx, values...)
 	ctx = enrichBaggage(ctx, valid)
 	enrichSpan(ctx, valid)
 	return ctx
@@ -96,33 +105,14 @@ func enrichSpan(ctx context.Context, attrs []Attribute) {
 }
 
 func slogAttrsFromBaggage(ctx context.Context) []attributeFromBaggage {
-	bag := baggage.FromContext(ctx)
-	members := bag.Members()
-	if len(members) == 0 {
-		return nil
-	}
-	out := make([]attributeFromBaggage, 0, len(members))
-	for _, m := range members {
-		if m.Key() == "" {
-			continue
-		}
-		attrType := ""
-		for _, prop := range m.Properties() {
-			if prop.Key() == baggageAttrTypeKey {
-				if v, ok := prop.Value(); ok {
-					attrType = v
-				}
-				break
-			}
-		}
-		if attrType == "" {
-			continue
-		}
-		out = append(out, attributeFromBaggage{key: m.Key(), value: m.Value(), attrType: attrType})
+	out := make([]attributeFromBaggage, 0)
+	for _, v := range enrichment.Values(ctx) {
+		out = append(out, attributeFromBaggage{key: v.Key, value: v.Text, attrType: v.Type, local: v.Local})
 	}
 	return out
 }
 
 type attributeFromBaggage struct {
 	key, value, attrType string
+	local                bool
 }

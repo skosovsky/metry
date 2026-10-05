@@ -23,7 +23,7 @@ func TestSecurityEventRemoteContextCreatesLocalChild(t *testing.T) {
 	require.False(t, trace.SpanFromContext(ctx).IsRecording())
 
 	// Act.
-	err := RecordSecurityEventWithProvider(ctx, provider, ActionBlock, "validator", "reason", "", "", false)
+	err := Record(ctx, provider, Observation{Action: ActionBlock, Validator: "validator", Reason: "reason"})
 	flushSpans(t, provider)
 
 	// Assert: context validity must not silently swallow the event.
@@ -45,7 +45,7 @@ func TestSecurityEventEndedSpanCreatesChild(t *testing.T) {
 	end()
 
 	// Act.
-	err = RecordSecurityEventWithProvider(ctx, provider, ActionBlock, "validator", "reason", "", "", false)
+	err = Record(ctx, provider, Observation{Action: ActionBlock, Validator: "validator", Reason: "reason"})
 	flushSpans(t, provider)
 
 	// Assert.
@@ -65,7 +65,7 @@ func TestSecurityEventRemoteContextRespectsSampler(t *testing.T) {
 	})
 
 	// Act.
-	err := RecordSecurityEventWithProvider(ctx, provider, ActionBlock, "validator", "reason", "", "", false)
+	err := Record(ctx, provider, Observation{Action: ActionBlock, Validator: "validator", Reason: "reason"})
 	flushSpans(t, provider)
 
 	// Assert.

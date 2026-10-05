@@ -16,7 +16,11 @@ import (
 
 func TestProviderInjectExtractMap_WithEnrich_RoundTripBaggage(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-blackbox"))
+	provider, mem := metrytest.NewTestProvider(
+		t,
+		metry.WithPropagationPolicy(trustPolicy(t, "subject_id", "score", "active", "passed", "retrieval_top_k")),
+		metry.WithServiceName("propagation-blackbox"),
+	)
 
 	ctx, end, err := provider.StartSpan(ctx, "client", "send")
 	require.NoError(t, err)
@@ -41,7 +45,11 @@ func TestProviderInjectExtractMap_WithEnrich_RoundTripBaggage(t *testing.T) {
 
 func TestProviderInjectExtractMap_PreservesTypedBaggage(t *testing.T) {
 	ctx := context.Background()
-	provider, _ := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-typed"))
+	provider, _ := metrytest.NewTestProvider(
+		t,
+		metry.WithPropagationPolicy(trustPolicy(t, "subject_id", "score", "active", "passed", "retrieval_top_k")),
+		metry.WithServiceName("propagation-typed"),
+	)
 
 	ctx, end, err := provider.StartSpan(ctx, "test", "producer")
 	require.NoError(t, err)
@@ -58,7 +66,11 @@ func TestProviderInjectExtractMap_PreservesTypedBaggage(t *testing.T) {
 
 func TestProviderInjectExtractMap_PreservesIntBaggage(t *testing.T) {
 	ctx := context.Background()
-	provider, _ := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-int"))
+	provider, _ := metrytest.NewTestProvider(
+		t,
+		metry.WithPropagationPolicy(trustPolicy(t, "subject_id", "score", "active", "passed", "retrieval_top_k")),
+		metry.WithServiceName("propagation-int"),
+	)
 
 	ctx, end, err := provider.StartSpan(ctx, "test", "producer")
 	require.NoError(t, err)
@@ -74,7 +86,11 @@ func TestProviderInjectExtractMap_PreservesIntBaggage(t *testing.T) {
 
 func TestProviderInjectExtractMap_ContextHandlerTypedFieldsAfterRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	provider, _ := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-contexthandler"))
+	provider, _ := metrytest.NewTestProvider(
+		t,
+		metry.WithPropagationPolicy(trustPolicy(t, "subject_id", "score", "active", "passed", "retrieval_top_k")),
+		metry.WithServiceName("propagation-contexthandler"),
+	)
 
 	ctx, end, err := provider.StartSpan(ctx, "test", "producer")
 	require.NoError(t, err)
@@ -102,7 +118,11 @@ func TestProviderInjectExtractMap_ContextHandlerTypedFieldsAfterRoundTrip(t *tes
 
 func TestProviderInjectExtractMap_TraceContextViaServerSpan(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-trace"))
+	provider, mem := metrytest.NewTestProvider(
+		t,
+		metry.WithPropagationPolicy(trustPolicy(t, "subject_id", "score", "active", "passed", "retrieval_top_k")),
+		metry.WithServiceName("propagation-trace"),
+	)
 
 	ctx, end, err := provider.StartSpan(ctx, "client", "send")
 	require.NoError(t, err)

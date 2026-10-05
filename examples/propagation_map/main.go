@@ -8,13 +8,22 @@ import (
 	"os"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/propagation"
 	"github.com/skosovsky/metry/testutil"
 )
 
 func run() int {
 	ctx := context.Background()
 	mem := testutil.NewInMemoryTraceExporter()
+	policy, err := propagation.NewPolicy(
+		propagation.PolicyConfig{IngressBaggageKeys: []string{"subject_id"}, EgressBaggageKeys: []string{"subject_id"}},
+	)
+	if err != nil {
+		log.Println(err)
+		return 1
+	}
 	provider, err := metry.New(ctx,
+		metry.WithPropagationPolicy(policy),
 		metry.WithServiceName("propagation-map-example"),
 		metry.WithExporter(mem.SDKSpanExporter()),
 	)

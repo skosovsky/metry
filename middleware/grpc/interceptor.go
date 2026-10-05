@@ -15,11 +15,11 @@ func ServerStatsHandler(provider *metry.Provider) stats.Handler {
 		panic("metry: provider is required")
 	}
 	deps := provider.SDK()
-	return otelgrpc.NewServerHandler(
+	return diagnosticStats{Handler: otelgrpc.NewServerHandler(
 		otelgrpc.WithTracerProvider(deps.TracerProvider),
 		otelgrpc.WithMeterProvider(deps.MeterProvider),
 		otelgrpc.WithPropagators(deps.Propagator),
-	)
+	), policy: provider.DiagnosticPolicy()}
 }
 
 // ClientStatsHandler returns client-side instrumentation.
@@ -28,11 +28,11 @@ func ClientStatsHandler(provider *metry.Provider) stats.Handler {
 		panic("metry: provider is required")
 	}
 	deps := provider.SDK()
-	return otelgrpc.NewClientHandler(
+	return diagnosticStats{Handler: otelgrpc.NewClientHandler(
 		otelgrpc.WithTracerProvider(deps.TracerProvider),
 		otelgrpc.WithMeterProvider(deps.MeterProvider),
 		otelgrpc.WithPropagators(deps.Propagator),
-	)
+	), policy: provider.DiagnosticPolicy()}
 }
 
 // ServerOptions installs the OTel stats handler.

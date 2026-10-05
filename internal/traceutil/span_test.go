@@ -79,9 +79,9 @@ func TestSpanError_NonNilError_SetsErrorStatusAndRecordsError(t *testing.T) {
 	m := &mockSpan{}
 	err := errors.New("something failed")
 	SpanError(m, err)
-	require.Equal(t, err, m.errRecorded, "RecordError must receive the same error")
+	require.False(t, m.recordErrorCalled, "original error must never reach RecordError")
 	require.Equal(t, codes.Error, m.statusCode, "span status must be Error")
-	require.Equal(t, err.Error(), m.statusDesc, "status description must be error message")
+	require.Equal(t, "error", m.statusDesc, "safe categorical description")
 }
 
 func TestSpanOKIfUnset_Unset_SetsOk(t *testing.T) {

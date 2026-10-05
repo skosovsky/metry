@@ -57,3 +57,24 @@ func TestRunLinkedSpan_Success_SetsOkStatus(t *testing.T) {
 	require.Len(t, spans, 1)
 	require.Equal(t, codes.Ok, spans[0].Status.Code)
 }
+
+type unformattedPanic struct{ calls *int }
+
+func (p *unformattedPanic) String() string { *p.calls++; return "SENTINEL_SECRET" }
+
+func TestRunLinkedSpan_PanicSafeDefault(t *testing.T) {
+	mem := testutil.NewInMemoryTraceExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(mem.SDKSpanExporter()))
+	t.Cleanup(func() { require.NoError(t, tp.Shutdown(context.Background())) })
+	calls := 0
+	original := &unformattedPanic{&calls}
+	func() {
+		defer func() { require.Same(t, original, recover()) }()
+		_ = NewNoopHandle().RunLinkedSpan(context.Background(), tp.Tracer("test"), "linked", func(trace.Span) error { panic(original) })
+	}()
+	require.Zero(t, calls)
+	spans := mem.GetSpans()
+	require.Len(t, spans, 1)
+	require.Equal(t, "panic", spans[0].Status.Description)
+	require.Len(t, spans[0].Events, 1)
+}

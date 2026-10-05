@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/skosovsky/metry/diagnostic"
+	metryprop "github.com/skosovsky/metry/propagation"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	noopmetric "go.opentelemetry.io/otel/metric/noop"
@@ -30,9 +33,10 @@ var (
 
 // Provider is the stateless runtime object created by New.
 type Provider struct {
-	otelTracer trace.TracerProvider
-	otelMeter  metric.MeterProvider
-	propagator propagation.TextMapPropagator
+	otelTracer       trace.TracerProvider
+	otelMeter        metric.MeterProvider
+	propagator       propagation.TextMapPropagator
+	diagnosticPolicy diagnostic.Policy
 
 	tp *sdktrace.TracerProvider
 	mp *sdkmetric.MeterProvider
@@ -66,10 +70,10 @@ func (p *Provider) meterProvider() metric.MeterProvider {
 
 func (p *Provider) textMapPropagator() propagation.TextMapPropagator {
 	if p == nil || p.propagator == nil {
-		return propagation.NewCompositeTextMapPropagator(
+		return metryprop.Wrap(propagation.NewCompositeTextMapPropagator(
 			propagation.TraceContext{},
 			propagation.Baggage{},
-		)
+		), metryprop.Policy{})
 	}
 	return p.propagator
 }
@@ -142,13 +146,14 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 	)
 
 	return &Provider{ //nolint:exhaustruct_v5 // executor instruments are initialized lazily.
-		otelTracer:   tp,
-		otelMeter:    activeMeter,
-		propagator:   propagator,
-		tp:           tp,
-		mp:           mp,
-		shutdownOnce: sync.Once{},
-		shutdownErr:  nil,
+		otelTracer:       tp,
+		otelMeter:        activeMeter,
+		propagator:       metryprop.Wrap(propagator, cfg.PropagationPolicy),
+		diagnosticPolicy: cfg.DiagnosticPolicy,
+		tp:               tp,
+		mp:               mp,
+		shutdownOnce:     sync.Once{},
+		shutdownErr:      nil,
 	}, nil
 }
 
@@ -205,3 +210,12 @@ type noopSpanExporter struct{}
 
 func (noopSpanExporter) ExportSpans(context.Context, []sdktrace.ReadOnlySpan) error { return nil }
 func (noopSpanExporter) Shutdown(context.Context) error                             { return nil }
+
+// DiagnosticPolicy returns the immutable policy used for library-owned diagnostic text.
+// Nil and zero providers use the safe default; custom span attrs are host-owned.
+func (p *Provider) DiagnosticPolicy() diagnostic.Policy {
+	if p == nil {
+		return diagnostic.Policy{}
+	}
+	return p.diagnosticPolicy
+}

@@ -3,6 +3,10 @@ package metry
 import (
 	"net/http"
 
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/skosovsky/metry/internal/traceutil"
+
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -44,5 +48,17 @@ func HTTPHandler(provider *Provider, next http.Handler, operationName string, op
 	}
 	all := base
 	all = append(all, httpHandlerOptionsToOTel(opts)...)
-	return otelhttp.NewHandler(next, operationName, all...)
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		defer func() {
+			if value := recover(); value != nil {
+				span := trace.SpanFromContext(request.Context())
+				traceutil.RecordDiagnostic(span, provider.DiagnosticPolicy().Panic(value))
+				// End before rethrow: SDK deferred End would otherwise format the original panic.
+				span.End()
+				panic(value)
+			}
+		}()
+		next.ServeHTTP(w, request)
+	})
+	return otelhttp.NewHandler(guarded, operationName, all...)
 }

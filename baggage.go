@@ -6,7 +6,8 @@ import (
 	"go.opentelemetry.io/otel/baggage"
 )
 
-// BaggageMember returns the string value of a baggage member key from ctx.
+// BaggageMember reads untrusted raw transport baggage for host inspection.
+// Presence and typed markers do not establish provenance for logs or GenAI scope.
 func BaggageMember(ctx context.Context, key string) string {
 	return baggage.FromContext(ctx).Member(key).Value()
 }

@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/skosovsky/metry/diagnostic"
 	"github.com/skosovsky/metry/internal/traceutil"
 )
 
@@ -28,11 +29,13 @@ type executorWrapConfig struct {
 	logger   *slog.Logger
 	logStart bool
 	logError bool
+	policy   diagnostic.Policy
 }
 
 func defaultExecutorWrapConfig() executorWrapConfig {
 	return executorWrapConfig{
 		logger:   nil,
+		policy:   diagnostic.Policy{},
 		logStart: false,
 		logError: true,
 	}
@@ -78,6 +81,7 @@ func ExecutorWrap[Req, Res any](
 		o(&cfg)
 	}
 
+	cfg.policy = provider.DiagnosticPolicy()
 	instr, err := provider.executorInstruments()
 	if err != nil {
 		panic(err)
@@ -102,6 +106,7 @@ func ExecutorWrap[Req, Res any](
 			dur := time.Since(start).Seconds()
 			if r := recover(); r != nil {
 				recordExecutorPanicOutcome(ctx, span, instr, operationName, dur, r, cfg)
+				span.End()
 				panic(r)
 			}
 			recordExecutorReturnOutcome(ctx, span, instr, operationName, dur, runErr, cfg)
@@ -121,13 +126,13 @@ func recordExecutorPanicOutcome(
 	r any,
 	cfg executorWrapConfig,
 ) {
-	panicErr := fmt.Errorf("panic: %v", r)
-	traceutil.SpanError(span, panicErr)
+	result := cfg.policy.Panic(r)
+	traceutil.RecordDiagnostic(span, result)
 	instr.record(ctx, operationName, "panic", dur)
 	if cfg.logError && cfg.logger != nil {
 		args := []any{
 			slog.String("operation", operationName),
-			slog.Any("panic", r),
+			slog.String("panic", result.Message),
 		}
 		args = append(args, executorTraceSlogFields(span)...)
 		cfg.logger.ErrorContext(ctx, "executor panic", args...)
@@ -146,11 +151,12 @@ func recordExecutorReturnOutcome(
 	status := "success"
 	if err != nil {
 		status = "error"
-		traceutil.SpanError(span, err)
+		result := cfg.policy.Error(err)
+		traceutil.RecordDiagnostic(span, result)
 		if cfg.logError && cfg.logger != nil {
 			args := []any{
 				slog.String("operation", operationName),
-				slog.Any("err", err),
+				slog.String("err", result.Message),
 			}
 			args = append(args, executorTraceSlogFields(span)...)
 			cfg.logger.ErrorContext(ctx, "executor error", args...)

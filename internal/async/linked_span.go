@@ -5,6 +5,7 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/skosovsky/metry/diagnostic"
 	"github.com/skosovsky/metry/internal/traceutil"
 )
 
@@ -45,6 +46,13 @@ func (h Handle) RunLinkedSpan(
 		return err
 	}
 	defer span.End()
+	defer func() {
+		if value := recover(); value != nil {
+			traceutil.RecordDiagnostic(span, (diagnostic.Policy{}).Panic(value))
+			span.End()
+			panic(value)
+		}
+	}()
 	if err := fn(span); err != nil {
 		traceutil.SpanError(span, err)
 		return err

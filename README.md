@@ -276,7 +276,7 @@ Explicit error classes must belong to the declared bounded taxonomy. Classifiers
 
 ## Unified observability context (Enrich)
 
-Use typed attributes once; metry mirrors them to baggage, the active span, and slog context:
+Use typed attributes once for trusted local span and slog context. Network propagation is separately allowlisted:
 
 ```go
 logger := slog.New(metry.ContextHandler{Handler: slog.NewJSONHandler(os.Stdout, nil)})
@@ -284,14 +284,14 @@ ctx = metry.Enrich(ctx, metry.TenantID("t-1"), metry.PatientID("p-9"))
 logger.InfoContext(ctx, "request started")
 ```
 
-Each `Enrich` call returns an updated context. **Always reassign** `ctx` when adding attributes across multiple calls — baggage accumulates only on the returned context:
+Each `Enrich` call returns an updated context. **Always reassign** `ctx` when adding attributes across multiple calls — trusted enrichment accumulates only on the returned context:
 
 ```go
 ctx = metry.Enrich(ctx, metry.TenantID("t-1"))
-ctx = metry.Enrich(ctx, metry.PatientID("p-9")) // required for baggage
+ctx = metry.Enrich(ctx, metry.PatientID("p-9")) // retain the returned enrichment context
 ```
 
-`ContextHandler` logs only metry enrich attributes (members with `metry.attr.type` metadata), not foreign baggage keys.
+`ContextHandler` uses provenance stored in the local context. A wire `metry.attr.type` marker describes a type and never proves trust. Remote and manually inserted OTel baggage do not enrich logs or GenAI scope by default. Explicit ingress keys can be trusted at the transport boundary; trusted local values win and reserved log keys cannot be imported.
 
 `SetBaggageValue` / raw string baggage keys are removed (clear break). Use `metry.Enrich` and semantic constructors (`TenantID`, `PatientID`, `DoctorID`, `SubjectID`).
 
@@ -344,7 +344,7 @@ if err != nil {
 defer end()
 ```
 
-Host business keys in the map are preserved; W3C trace context and OTel baggage fields are read on extract (per the provider propagator). This is a low-level adapter API, not the application durable-continuation path.
+Host business keys in the map are preserved. Injection clears the configured propagator’s declared fields before writing; reused carriers do not retain stale trace or baggage fields. Extraction uses those same declared fields. Provider-local `propagation.Policy` accepts trace context independently of baggage and restricts ingress and egress keys; the default accepts trace context and propagates no business baggage. This is a low-level adapter API, not the application durable-continuation path.
 
 ## Deferred outcomes (AsyncHandle)
 
@@ -408,7 +408,7 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 **BaggageMember** is a read/debug helper. Prefer typed constructors (`TenantID`, `GenAIProvider`, etc.) when writing context via `Enrich`.
 
-**Typed baggage:** use `metry.IntAttribute`, `FloatAttribute`, and `BoolAttribute` for non-string enrich keys; `ContextHandler` restores typed slog fields when baggage carries `metry.attr.type` metadata across protocol propagation.
+**Typed enrichment:** use `metry.IntAttribute`, `FloatAttribute`, and `BoolAttribute` for local fields. Explicitly allowed remote scalar fields retain their types; wire type markers alone never grant trust.
 
 ## Adapter-only GenAI APIs
 
@@ -605,3 +605,34 @@ Export-derived fixtures provide `PayloadEvidence.Value` for controlled span attr
 `ObservedEvent.Payloads` for controlled event text, rather than copying recording inputs.
 The schema identity is `metry.genai.effective`; previous profile/raw-flag checker arguments
 and JSON-only evidence are removed.
+
+
+## Diagnostic privacy and security observations
+
+Generic executor errors, panic messages, exception stacktraces and security reasons
+share the neutral `diagnostic.Policy`. Default mode suppresses arbitrary text and
+never formats an error or panic object to classify it. Explicit
+`metry.WithDiagnosticPolicy(policy)` or borrowed SDK
+`metry.WithSDKDiagnosticPolicy(policy)` installs raw opt-in or a bounded sanitizer.
+Sanitation runs before library-owned trace/log fanout; business results, error
+identity and re-raised panic values remain unchanged. See [PRIVACY.md](PRIVACY.md)
+for channel limits, propagation boundaries and host-owned escape hatches.
+
+```go
+err := security.Record(ctx, provider, security.Observation{
+    Action: security.ActionBlock,
+    Validator: "content_guard",
+    Code: "RULE_MATCH",
+    Severity: "HIGH",
+    Reason: hostReason,
+    Shadow: false,
+})
+// Handle this telemetry diagnostic separately from the host's decision/result.
+```
+
+`security.Record` observes a decision already taken by the host. It neither runs a
+validator nor executes block/redact. Machine identifiers have a 128-byte ASCII
+bound; arbitrary reason text uses the provider diagnostic policy. A block action
+does not set the span to error. Recording obeys sampling: an unsampled event may
+be absent. It is not guaranteed audit storage or delivery. The old scalar
+`RecordSecurityEventWithProvider` signature is removed without wrappers.

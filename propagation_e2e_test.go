@@ -9,12 +9,24 @@ import (
 
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/metrytest"
+	"github.com/skosovsky/metry/propagation"
 	"github.com/skosovsky/metry/testutil"
 )
 
 func TestPropagation_ProtocolCarrierBoundary(t *testing.T) {
 	ctx := context.Background()
-	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("propagation-e2e"))
+	policy, policyErr := propagation.NewPolicy(
+		propagation.PolicyConfig{
+			IngressBaggageKeys: []string{"tenant_id", "score", "passed", "retrieval_top_k"},
+			EgressBaggageKeys:  []string{"tenant_id", "score", "passed", "retrieval_top_k"},
+		},
+	)
+	require.NoError(t, policyErr)
+	provider, mem := metrytest.NewTestProvider(
+		t,
+		metry.WithPropagationPolicy(policy),
+		metry.WithServiceName("propagation-e2e"),
+	)
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "send")
 	require.NoError(t, err)
