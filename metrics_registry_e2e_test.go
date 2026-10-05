@@ -59,9 +59,18 @@ func TestMetricsRegistry_TraceSnapshotWorkerFlow(t *testing.T) {
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
 
-	assert.InDelta(t, 1.25, metrytest.Float64HistogramSum(t, rm, "agent_loop_duration"), 1e-9)
-	assert.Equal(t, int64(1), metrytest.Int64SumValue(t, rm, "agent_loop_steps_total"))
-	assert.Equal(t, "ok", metrytest.FirstInt64SumAttr(t, rm, "agent_loop_steps_total", "status"))
-	assert.InDelta(t, 3, metrytest.GaugeFloat64Value(t, rm, "queue_depth"), 1e-9)
-	assert.Equal(t, "jobs", metrytest.FirstGaugeAttr(t, rm, "queue_depth", "queue"))
+	assert.InDelta(
+		t,
+		1.25,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: "agent_loop_duration"}),
+		1e-9,
+	)
+	assert.Equal(t, int64(1), metrytest.Int64SumValue(t, rm, metrytest.MetricSelector{Name: "agent_loop_steps_total"}))
+	assert.Equal(
+		t,
+		"ok",
+		metrytest.FirstInt64SumAttr(t, rm, metrytest.MetricSelector{Name: "agent_loop_steps_total"}, "status"),
+	)
+	assert.InDelta(t, 3, metrytest.GaugeFloat64Value(t, rm, metrytest.MetricSelector{Name: "queue_depth"}), 1e-9)
+	assert.Equal(t, "jobs", metrytest.FirstGaugeAttr(t, rm, metrytest.MetricSelector{Name: "queue_depth"}, "queue"))
 }

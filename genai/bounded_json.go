@@ -33,27 +33,29 @@ func boundedJSON(value any, limit int) (string, error) {
 	if len(buf) > maxPayloadInputBytes || !boundedJSONDepth(string(buf)) {
 		return "", invalidObservation("payload_json", "input_bounds")
 	}
+	decoded, err := decodePayloadJSON(string(buf))
+	if err != nil {
+		return "", err
+	}
 	if len(buf) <= limit {
 		return string(buf), nil
-	}
-	var decoded any
-	if err := json.Unmarshal(buf, &decoded); err != nil {
-		return "", invalidObservation("payload_json", "invalid_encoding")
 	}
 	count, prefix := jsonPrefix(decoded)
 	best := truncatedJSONMarker
 	low, high := 0, count
 	for low <= high {
 		middle := low + (high-low)/2
-		envelope := struct {
-			Data      any  `json:"data"`
-			Truncated bool `json:"truncated"`
-		}{Data: prefix(middle), Truncated: true}
+		envelope := map[string]any{"data": prefix(middle), "truncated": true}
+		remaining := maxPayloadEntries
+		if !jsonNodesWithinBudget(envelope, &remaining) {
+			high = middle - 1
+			continue
+		}
 		candidate, marshalErr := json.Marshal(envelope)
 		if marshalErr != nil {
 			return "", invalidObservation("payload_json", "invalid_encoding")
 		}
-		if len(candidate) <= limit {
+		if len(candidate) <= limit && boundedJSONDepth(string(candidate)) {
 			best = string(candidate)
 			low = middle + 1
 		} else {
@@ -87,20 +89,40 @@ func jsonPrefix(value any) (int, func(int) any) {
 
 // Validate limits work before any sanitizer allocates copies or hashes content.
 func validatePayloadBounds(payload Payload) error {
+	return validatePayloadEncodingBounds(payload, true)
+}
+
+func validatePayloadEncodingBounds(payload Payload, input bool) error {
 	if len(payload.SystemInstructions) > maxPayloadEntries || len(payload.InputMessages) > maxPayloadEntries ||
 		len(payload.OutputMessages) > maxPayloadEntries {
 		return invalidObservation("payload", "input_bounds")
 	}
 	budget := payloadInputBudget{bytes: 0, parts: 0}
-	if !budget.addParts(payload.SystemInstructions) {
+	if !budget.addParts(payload.SystemInstructions, input) {
 		return invalidObservation("payload", "input_bounds")
 	}
 	for _, messages := range [][]Message{payload.InputMessages, payload.OutputMessages} {
 		for _, message := range messages {
 			budget.bytes += len(message.Role) + len(message.FinishReason)
-			if budget.bytes > maxPayloadInputBytes || !budget.addParts(message.Parts) {
+			if budget.bytes > maxPayloadInputBytes || !budget.addParts(message.Parts, input) {
 				return invalidObservation("payload", "input_bounds")
 			}
+		}
+	}
+	return validatePayloadChannels(payload)
+}
+
+// Validate the actual controlled JSON shape, including DTO wrappers and escaping.
+// The encoded bytes are only inspected; original RawMessage bytes remain intact
+// for custom policy callbacks.
+func validatePayloadChannels(payload Payload) error {
+	for _, channel := range []any{payload.SystemInstructions, payload.InputMessages, payload.OutputMessages} {
+		encoded, err := json.Marshal(channel)
+		if err != nil {
+			return invalidObservation("payload_json", "invalid_encoding")
+		}
+		if _, err := decodePayloadJSON(string(encoded)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -108,13 +130,13 @@ func validatePayloadBounds(payload Payload) error {
 
 type payloadInputBudget struct{ bytes, parts int }
 
-func (b *payloadInputBudget) addParts(items []ContentPart) bool {
+func (b *payloadInputBudget) addParts(items []ContentPart, input bool) bool {
 	b.parts += len(items)
 	if b.parts > maxPayloadEntries {
 		return false
 	}
 	for _, part := range items {
-		if mediaBodyIsInline(part) {
+		if input && mediaBodyIsInline(part) {
 			return false
 		}
 		b.bytes += len(part.Type) + len(part.Content) + len(part.ID) + len(part.Name) +
@@ -123,8 +145,10 @@ func (b *payloadInputBudget) addParts(items []ContentPart) bool {
 			return false
 		}
 		for _, raw := range []json.RawMessage{part.Arguments, part.Result} {
-			if !boundedJSONDepth(string(raw)) {
-				return false
+			if len(raw) != 0 {
+				if _, err := decodePayloadJSON(string(raw)); err != nil {
+					return false
+				}
 			}
 		}
 	}
@@ -148,6 +172,17 @@ func mediaBodyIsInline(part ContentPart) bool {
 func validateToolJSONInput(raw string) error {
 	if len(raw) > maxPayloadInputBytes || !boundedJSONDepth(raw) {
 		return invalidObservation("tool_payload", "input_bounds")
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	if json.Valid([]byte(raw)) {
+		_, err := decodePayloadJSON(raw)
+		return err
+	}
+	if strings.ContainsAny(trimmed[:1], "{[\"") {
+		return invalidObservation("tool_payload", "invalid_encoding")
 	}
 	return nil
 }

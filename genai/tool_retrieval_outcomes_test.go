@@ -63,7 +63,7 @@ func TestToolAndRetrievalOutcomeMatrix(t *testing.T) {
 			hist := metrytest.FindFloat64Histogram(
 				t,
 				metrytest.CollectResourceMetrics(t, provider, metricExporter),
-				ToolDurationMetricName,
+				metrytest.MetricSelector{Name: ToolDurationMetricName},
 			)
 			require.Len(t, hist.DataPoints, 1)
 			assert.Equal(
@@ -153,7 +153,7 @@ func TestToolAndRetrievalConcurrentFinishClose(t *testing.T) {
 	hist := metrytest.FindFloat64Histogram(
 		t,
 		metrytest.CollectResourceMetrics(t, provider, metrics),
-		ToolDurationMetricName,
+		metrytest.MetricSelector{Name: ToolDurationMetricName},
 	)
 	require.Len(t, hist.DataPoints, 1)
 	assert.Equal(t, uint64(1), hist.DataPoints[0].Count)

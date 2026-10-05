@@ -108,25 +108,49 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	assert.InDelta(
 		t,
 		12,
-		metrytest.Int64HistogramSumByAttr(t, rm1, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm1,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		6,
-		metrytest.Int64HistogramSumByAttr(t, rm1, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm1,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		3,
-		metrytest.Int64HistogramSumByAttr(t, rm1, TokenComponentUsageMetricName, TokenType, TokenTypeInputCacheRead),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm1,
+			metrytest.MetricSelector{Name: TokenComponentUsageMetricName},
+			TokenType,
+			TokenTypeInputCacheRead,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		2,
-		metrytest.Int64HistogramSumByAttr(t, rm1, TokenComponentUsageMetricName, TokenType, TokenTypeOutputReasoning),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm1,
+			metrytest.MetricSelector{Name: TokenComponentUsageMetricName},
+			TokenType,
+			TokenTypeOutputReasoning,
+		),
 		1e-9,
 	)
 
@@ -134,14 +158,26 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 	assert.InDelta(
 		t,
 		4,
-		metrytest.Int64HistogramSumByAttr(t, rm2, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm2,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		2,
-		metrytest.Int64HistogramSumByAttr(t, rm2, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm2,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
 		1e-9,
 	)
-	metrytest.AssertMetricAbsent(t, rm2, TokenComponentUsageMetricName)
+	metrytest.AssertMetricAbsent(t, rm2, metrytest.MetricSelector{Name: TokenComponentUsageMetricName})
 }

@@ -46,6 +46,10 @@ func NewTrackerFromProvider(p *metry.Provider, opts ...Option) (*Tracker, error)
 	if p == nil {
 		return nil, ErrProviderRequired
 	}
+	cfg := buildRuntimeConfig(opts...)
+	if configErr := validateRuntimeConfig(cfg); configErr != nil {
+		return nil, configErr
+	}
 	meter, tracer, err := genaiwire.MeterTracer(p)
 	if err != nil {
 		if errors.Is(err, metry.ErrNilMeterProvider) {
@@ -57,19 +61,6 @@ func NewTrackerFromProvider(p *metry.Provider, opts ...Option) (*Tracker, error)
 		return nil, err
 	}
 
-	cfg := buildRuntimeConfig(opts...)
-	if cfg.maxContextLength < len(truncatedJSONMarker) {
-		return nil, invalidObservation("payload_budget", "too_small")
-	}
-	if profileErr := cfg.profile.Validate(); profileErr != nil {
-		return nil, profileErr
-	}
-	if _, raw := cfg.PayloadPolicy().(rawPayloadPolicy); raw && !cfg.profile.AllowRaw {
-		return nil, invalidObservation("policy", "raw_not_allowed")
-	}
-	if policyErr := validatePolicyDeclaration(cfg); policyErr != nil {
-		return nil, policyErr
-	}
 	holder, err := newMetricsHolder(meter)
 	if err != nil {
 		return nil, err

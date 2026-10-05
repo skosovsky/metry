@@ -47,14 +47,20 @@ func TestStreamUpdatesCommitOnlyFinalUsage(t *testing.T) {
 	assert.InDelta(
 		t,
 		10.0,
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
 		1e-9,
 	)
-	assert.InDelta(t, 0.5, metrytest.Float64SumValue(t, metrics, CostMetricName), 1e-9)
-	histogram := metrytest.FindInt64Histogram(t, metrics, TokenUsageMetricName)
+	assert.InDelta(t, 0.5, metrytest.Float64SumValue(t, metrics, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
+	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	require.Len(t, histogram.DataPoints, 1)
 	assert.Equal(t, uint64(1), histogram.DataPoints[0].Count)
-	ttft := metrytest.FindFloat64Histogram(t, metrics, TTFTMetricName)
+	ttft := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName})
 	require.Len(t, ttft.DataPoints, 1)
 	assert.Equal(t, uint64(1), ttft.DataPoints[0].Count)
 	assert.InDelta(t, 0.0, ttft.DataPoints[0].Sum, 1e-9)
@@ -77,9 +83,9 @@ func TestAbortedStreamDoesNotInferMissingTotal(t *testing.T) {
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert.
-	metrytest.AssertMetricAbsent(t, metrics, TokenUsageMetricName)
-	metrytest.AssertMetricAbsent(t, metrics, CostMetricName)
-	metrytest.AssertMetricAbsent(t, metrics, TTFTMetricName)
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: CostMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName})
 	span := traceExporter.GetSpans()[0]
 	assert.False(t, testutil.SpanStubHasAttr(span, OutputTokens))
 }
@@ -100,8 +106,8 @@ func TestInvalidStreamIntervalsRejectBeforeRecording(t *testing.T) {
 		metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 		// Assert.
 		require.ErrorIs(t, err, ErrInvalidObservation)
-		metrytest.AssertMetricAbsent(t, metrics, TokenUsageMetricName)
-		metrytest.AssertMetricAbsent(t, metrics, OperationDurationMetricName)
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OperationDurationMetricName})
 	}
 }
 
@@ -139,8 +145,8 @@ func TestCompletedOperationValidatesTimingsIncludingNoop(t *testing.T) {
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: invalid completed observations don't create even partial writes.
 	require.Empty(t, traceExporter.GetSpans())
-	metrytest.AssertMetricAbsent(t, metrics, TokenUsageMetricName)
-	metrytest.AssertMetricAbsent(t, metrics, OperationDurationMetricName)
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
+	metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: OperationDurationMetricName})
 }
 
 func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
@@ -156,8 +162,18 @@ func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
 		context.Background(), Operation{Name: profileChatOperation}, result))
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: the completed DTO path doesn't silently ignore streaming metadata.
-	assert.InDelta(t, 1, metrytest.Float64HistogramSum(t, metrics, TTFTMetricName), 1e-9)
-	assert.InDelta(t, 5, metrytest.Float64HistogramSum(t, metrics, StreamingTPSMetricName), 1e-9)
+	assert.InDelta(
+		t,
+		1,
+		metrytest.Float64HistogramSum(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName}),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		5,
+		metrytest.Float64HistogramSum(t, metrics, metrytest.MetricSelector{Name: StreamingTPSMetricName}),
+		1e-9,
+	)
 	assert.InDelta(t, 10, metrytest.Int64HistogramSumByAttr(
-		t, metrics, TokenUsageMetricName, TokenType, TokenTypeOutput), 1e-9)
+		t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName}, TokenType, TokenTypeOutput), 1e-9)
 }

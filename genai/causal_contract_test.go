@@ -106,10 +106,16 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 	assert.InDelta(
 		t,
 		40.0,
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
-	assert.InDelta(t, 0.4, metrytest.Float64SumValue(t, metrics, CostMetricName), 1e-9)
+	assert.InDelta(t, 0.4, metrytest.Float64SumValue(t, metrics, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
 	for _, scope := range metrics.ScopeMetrics {
 		for _, metric := range scope.Metrics {
 			assert.NotContains(t, metric.Name, "parent")
@@ -154,7 +160,13 @@ func TestOperationHandleConcurrentFinalizationAndValidationRetry(t *testing.T) {
 	assert.InDelta(
 		t,
 		5.0,
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
 	assert.Greater(t, traceExporter.GetSpans()[0].EndTime.Sub(traceExporter.GetSpans()[0].StartTime), time.Duration(0))

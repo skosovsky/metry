@@ -109,7 +109,13 @@ func TestModelActualMetadataAndConcurrentFinish(t *testing.T) {
 	assert.InDelta(
 		t,
 		float64(7),
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, RequestModel, "router-default"),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			RequestModel,
+			"router-default",
+		),
 		1e-9,
 	)
 }
@@ -132,7 +138,7 @@ func TestCloseDoesNotInventUsage(t *testing.T) {
 	require.Len(t, spans.GetSpans(), 1)
 	assert.Equal(t, codes.Unset, spans.GetSpans()[0].Status.Code)
 	rm := metrytest.CollectResourceMetrics(t, provider, metrics)
-	metrytest.AssertMetricAbsent(t, rm, TokenUsageMetricName)
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	var zero OperationHandle
 	require.ErrorIs(t, zero.Close(), ErrInvalidObservation)
 	require.ErrorIs(t, zero.Finish(OperationResult{}), ErrInvalidObservation)
@@ -188,12 +194,18 @@ func TestModelFinishVersusClose(t *testing.T) {
 	require.Len(t, spans.GetSpans(), 1)
 	rm := metrytest.CollectResourceMetrics(t, provider, metrics)
 	if spans.GetSpans()[0].Status.Code == codes.Unset {
-		metrytest.AssertMetricAbsent(t, rm, TokenUsageMetricName)
+		metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	} else {
 		assert.InDelta(
 			t,
 			float64(5),
-			metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeInput),
+			metrytest.Int64HistogramSumByAttr(
+				t,
+				rm,
+				metrytest.MetricSelector{Name: TokenUsageMetricName},
+				TokenType,
+				TokenTypeInput,
+			),
 			1e-9,
 		)
 	}
@@ -247,7 +259,7 @@ func TestModelMetadataAcrossCompletedRoutes(t *testing.T) {
 					assert.False(t, testutil.SpanStubHasAttr(exported[0], ResponseModel))
 				}
 				rm := metrytest.CollectResourceMetrics(t, provider, metrics)
-				histogram := metrytest.FindInt64Histogram(t, rm, TokenUsageMetricName)
+				histogram := metrytest.FindInt64Histogram(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
 				require.Len(t, histogram.DataPoints, 1)
 				requestValue, ok := histogram.DataPoints[0].Attributes.Value(RequestModel)
 				require.True(t, ok)

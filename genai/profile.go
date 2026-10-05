@@ -4,7 +4,7 @@ import "slices"
 
 const (
 	// InstrumentationProfileID identifies the supported metry observation schema.
-	InstrumentationProfileID  = "metry.genai.presence"
+	InstrumentationProfileID  = "metry.genai.effective"
 	defaultSeriesBudget       = 256
 	maxSeriesBudget           = 4096
 	minSeriesBudget           = 16

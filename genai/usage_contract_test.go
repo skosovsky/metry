@@ -71,7 +71,7 @@ func TestUsageZeroMissingEstimated(t *testing.T) {
 	assert.True(t, testutil.SpanStubHasAttr(spans[1], InputTokens))
 	assert.Equal(t, "measured", testutil.SpanStubStringAttr(t, spans[1], InputTokens+".source"))
 	assert.Equal(t, "estimated", testutil.SpanStubStringAttr(t, spans[2], InputTokens+".source"))
-	histogram := metrytest.FindInt64Histogram(t, metrics, TokenUsageMetricName)
+	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	require.Len(t, histogram.DataPoints, 2)
 	for _, point := range histogram.DataPoints {
 		assert.Equal(t, uint64(1), point.Count)
@@ -116,5 +116,5 @@ func TestNonFiniteUsageRejectedBeforeInstrumentation(t *testing.T) {
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: rejected inputs cannot poison later cumulative metrics.
 	require.Len(t, traceExporter.GetSpans(), 1)
-	assert.InDelta(t, 0.25, metrytest.Float64SumValue(t, metrics, CostMetricName), 1e-9)
+	assert.InDelta(t, 0.25, metrytest.Float64SumValue(t, metrics, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
 }

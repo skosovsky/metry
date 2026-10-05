@@ -66,9 +66,7 @@ func TestProfileRejectsUnsafeDeclarationsBeforeFixtures(t *testing.T) {
 				)
 			}
 			// Act.
-			_, err := CheckConformance(
-				profile,
-				raw,
+			_, err := CheckConformance(testContract(profile, raw),
 				declarations,
 				func() ([]ObservedBoundary, error) { called = true; return nil, nil },
 			)
@@ -130,7 +128,7 @@ func TestConformanceRejectsObservedBoundaryWithoutDeclaredOwner(t *testing.T) {
 		Boundaries: []string{ToolMetricLabelTool},
 	}
 	// Act.
-	report, err := CheckConformance(profile, false, []AdapterDeclaration{declaration},
+	report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 		func() ([]ObservedBoundary, error) {
 			return []ObservedBoundary{{Boundary: profileModelBoundary, Operation: profileChatOperation,
 				Fields: []ProfileField{profile.Fields[1]}}}, nil
@@ -147,7 +145,7 @@ func TestConformanceReportsSafeMismatches(t *testing.T) {
 	profile := DefaultProfile()
 	declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{"model"}}
 	// Act.
-	report, err := CheckConformance(profile, false, []AdapterDeclaration{declaration},
+	report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 		func() ([]ObservedBoundary, error) { return nil, errors.New("fixture-secret") },
 		func() ([]ObservedBoundary, error) {
 			return []ObservedBoundary{
@@ -155,7 +153,7 @@ func TestConformanceReportsSafeMismatches(t *testing.T) {
 					Boundary:  "model",
 					Operation: "fixture-secret",
 					Fields:    profile.Fields,
-					Payloads:  []PayloadEvidence{{Attribute: InputMessages, JSON: "fixture-secret"}},
+					Payloads:  []PayloadEvidence{{Attribute: InputMessages, Value: "fixture-secret"}},
 					Series:    []InstrumentSeries{{Instrument: TokenUsageMetricName, Count: profile.SeriesBudget + 1}},
 				},
 			}, nil
@@ -265,15 +263,21 @@ func TestCardinalityBudgetBoundsConcurrentModelToolSeries(t *testing.T) {
 	workers.Wait()
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: data point count, not label string length, proves the budget.
-	hist := metrytest.FindInt64Histogram(t, metrics, TokenUsageMetricName)
+	hist := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	assert.LessOrEqual(t, len(hist.DataPoints), profile.SeriesBudget)
 	assert.InDelta(
 		t,
 		float64(10000),
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
-	tool := metrytest.FindFloat64Histogram(t, metrics, ToolDurationMetricName)
+	tool := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	assert.LessOrEqual(t, len(tool.DataPoints), profile.SeriesBudget)
 	hasOverflow := false
 	for _, point := range hist.DataPoints {
@@ -315,9 +319,7 @@ func TestConformanceReadsExportedOperation(t *testing.T) {
 		Boundaries: []string{profileModelBoundary},
 	}
 	// Act.
-	report, err := CheckConformance(
-		profile,
-		false,
+	report, err := CheckConformance(testContract(profile, false),
 		[]AdapterDeclaration{declaration},
 		func() ([]ObservedBoundary, error) {
 			recordErr := tracker.RecordInteraction(
@@ -380,7 +382,7 @@ func TestCostOverflowPreservesCurrency(t *testing.T) {
 	}
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: an overflow bucket must not add different currency units together.
-	sum := metrytest.FindFloat64Sum(t, metrics, CostMetricName)
+	sum := metrytest.FindFloat64Sum(t, metrics, metrytest.MetricSelector{Name: CostMetricName})
 	assert.LessOrEqual(t, len(sum.DataPoints), profile.SeriesBudget)
 	totals := map[string]float64{}
 	for _, point := range sum.DataPoints {
@@ -400,5 +402,15 @@ func closeTestTool(t *testing.T, runtime Runtime, name string) {
 	}
 	if err := handle.Close(); err != nil {
 		t.Errorf("unexpected tool close diagnostic: %v", err)
+	}
+}
+
+// testContract permits intentionally invalid snapshots for rejection tests.
+func testContract(profile Profile, raw bool) Contract {
+	return Contract{
+		profile:      cloneProfile(profile),
+		contextBytes: defaultMaxContextLength,
+		eventBytes:   defaultMaxEventLength,
+		raw:          raw,
 	}
 }

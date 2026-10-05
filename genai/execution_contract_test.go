@@ -50,11 +50,15 @@ func TestStandaloneExecutionBoundariesEncloseModelToolRetrievalIO(t *testing.T) 
 			assert.NotEqual(t, causalRunKey, string(attr.Key))
 		}
 	}
-	modelDuration := metrytest.FindFloat64Histogram(t, metrics, OperationDurationMetricName)
+	modelDuration := metrytest.FindFloat64Histogram(
+		t,
+		metrics,
+		metrytest.MetricSelector{Name: OperationDurationMetricName},
+	)
 	require.Len(t, modelDuration.DataPoints, 1)
 	assert.Equal(t, uint64(1), modelDuration.DataPoints[0].Count)
 	assert.InDelta(t, spans[0].EndTime.Sub(spans[0].StartTime).Seconds(), modelDuration.DataPoints[0].Sum, 1e-9)
-	toolDuration := metrytest.FindFloat64Histogram(t, metrics, ToolDurationMetricName)
+	toolDuration := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, toolDuration.DataPoints, 1)
 	assert.Equal(t, uint64(1), toolDuration.DataPoints[0].Count)
 	assert.GreaterOrEqual(t, spans[1].EndTime.Sub(spans[1].StartTime).Seconds(), toolDuration.DataPoints[0].Sum)

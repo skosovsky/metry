@@ -52,17 +52,34 @@ func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	assert.Contains(t, testutil.SpanStubStringAttr(t, span, InputMessages), "extract fields")
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	assert.InDelta(t, 2, metrytest.Float64HistogramSum(t, rm, OperationDurationMetricName), 1e-9)
+	assert.InDelta(
+		t,
+		2,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: OperationDurationMetricName}),
+		1e-9,
+	)
 	assert.InDelta(
 		t,
 		5,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		3,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
 		1e-9,
 	)
 }

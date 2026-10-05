@@ -78,7 +78,7 @@ func TestRuntimeTool_SetToolAttributes(t *testing.T) {
 	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
 		CallID:    "call-1",
-		Arguments: `{"q":`,
+		Arguments: "search query",
 	})
 	require.NoError(t, startErr)
 	require.NoError(t, end.Finish(ToolResult{
@@ -96,7 +96,7 @@ func TestRuntimeTool_SetToolAttributes(t *testing.T) {
 	assert.NotEmpty(t, arguments)
 	var plainArguments string
 	require.NoError(t, json.Unmarshal([]byte(arguments), &plainArguments))
-	assert.Equal(t, `{"q":`, plainArguments)
+	assert.Equal(t, "search query", plainArguments)
 	assert.True(t, json.Valid([]byte(arguments)))
 	assert.NotEmpty(t, testutil.SpanStubStringAttr(t, spans[0], ToolCallResult))
 	assert.True(t, testutil.SpanStubBoolAttr(t, spans[0], ToolError))

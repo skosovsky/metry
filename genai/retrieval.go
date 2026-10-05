@@ -56,7 +56,7 @@ func startRetrieval(
 	startOpts ...ChildSpanOption,
 ) (context.Context, *RetrievalHandle, error) {
 	if len(name) > maxIdentityBytes || len(req.Provider) > maxIdentityBytes || len(req.Source) > maxIdentityBytes ||
-		req.TopK < 0 {
+		len(req.Query) > maxPayloadInputBytes || req.TopK < 0 {
 		return ctx, nil, invalidObservation("retrieval", "input_bounds")
 	}
 	handle := &RetrievalHandle{mu: sync.Mutex{}, finished: false, tracker: t, startedAt: time.Now(), span: nil}

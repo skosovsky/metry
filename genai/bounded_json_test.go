@@ -68,7 +68,7 @@ func TestPayloadInputBoundsRejectBeforeSanitizerAndInstrumentation(t *testing.T)
 		require.ErrorIs(t, err, ErrInvalidObservation)
 		assert.Zero(t, policy.calls)
 		assert.Empty(t, exporter.GetSpans())
-		metrytest.AssertMetricAbsent(t, metrics, TokenUsageMetricName)
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	}
 }
 

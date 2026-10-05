@@ -42,7 +42,7 @@ func TestOperationOutcomeSurvivesSeriesOverflow(t *testing.T) {
 	histogram := metrytest.FindFloat64Histogram(
 		t,
 		metrytest.CollectResourceMetrics(t, provider, metrics),
-		OperationDurationMetricName,
+		metrytest.MetricSelector{Name: OperationDurationMetricName},
 	)
 	require.LessOrEqual(t, len(histogram.DataPoints), minSeriesBudget)
 	counts := map[string]uint64{}

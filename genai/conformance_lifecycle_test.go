@@ -41,7 +41,7 @@ func TestConformanceTwoAdaptersSyncStreamCancelResume(t *testing.T) {
 		})
 	}
 	// Act.
-	report, err := CheckConformance(profile, false, declarations, fixtures...)
+	report, err := CheckConformance(testContract(profile, false), declarations, fixtures...)
 	// Assert.
 	require.NoError(t, err)
 	assert.True(t, report.Passed(), "%+v", report.Checks)
@@ -91,7 +91,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: all scenarios account a final measurement once, including cancel.
-	tokens := metrytest.FindInt64Histogram(t, metrics, TokenUsageMetricName)
+	tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	require.Len(t, tokens.DataPoints, 1)
 	assert.Equal(t, uint64(1), tokens.DataPoints[0].Count)
 	assert.Equal(t, int64(2), tokens.DataPoints[0].Sum)
@@ -109,7 +109,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	}
 	observed := projectLifecycleWire(t, profile, spans)
 	modelExpected, modelActual := projectModelAccounting(t, metrics, spans, scenario)
-	toolDuration := metrytest.FindFloat64Histogram(t, metrics, ToolDurationMetricName)
+	toolDuration := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, toolDuration.DataPoints, 1)
 	toolPoint := toolDuration.DataPoints[0]
 	// The scenario determines count; a separate enclosing host interval bounds
@@ -187,7 +187,7 @@ func projectModelAccounting(
 		}
 	} else {
 		for _, instrument := range []string{TTFTMetricName, StreamingTPSMetricName, StreamingTBTMetricName} {
-			metrytest.AssertMetricAbsent(t, metrics, instrument)
+			metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: instrument})
 		}
 	}
 	return expected, actual
@@ -195,7 +195,7 @@ func projectModelAccounting(
 
 func projectFloatAccounting(t *testing.T, metrics metricdata.ResourceMetrics, instrument string) AccountingMeasurement {
 	t.Helper()
-	histogram := metrytest.FindFloat64Histogram(t, metrics, instrument)
+	histogram := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: instrument})
 	result := AccountingMeasurement{Instrument: instrument}
 	for _, point := range histogram.DataPoints {
 		result.Count += point.Count
@@ -248,6 +248,12 @@ func projectLifecycleWire(t *testing.T, profile Profile, spans tracetest.SpanStu
 			projection := ObservedEvent{Name: event.Name, Owner: "metry.genai"}
 			for _, attr := range event.Attributes {
 				projection.Fields = append(projection.Fields, fields[string(attr.Key)])
+				if _, controlled := testContract(profile, false).payloadChannel(string(attr.Key)); controlled {
+					projection.Payloads = append(
+						projection.Payloads,
+						PayloadEvidence{Attribute: string(attr.Key), Value: attr.Value.AsString()},
+					)
+				}
 			}
 			item.Events = append(item.Events, projection)
 		}
@@ -271,8 +277,8 @@ func projectLifecycleAttribute(
 		field.Unit = Unit(testutil.SpanStubStringAttr(t, span, field.Name+".unit"))
 	}
 	item.Fields = append(item.Fields, field)
-	if field.Encoding == EncodingJSON {
-		item.Payloads = append(item.Payloads, PayloadEvidence{Attribute: field.Name, JSON: attr.Value.AsString()})
+	if _, controlled := testContract(profile, false).payloadChannel(field.Name); controlled {
+		item.Payloads = append(item.Payloads, PayloadEvidence{Attribute: field.Name, Value: attr.Value.AsString()})
 	}
 	if string(attr.Key) == OutputTokens {
 		require.Equal(t, attribute.INT64, attr.Value.Type())

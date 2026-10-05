@@ -234,6 +234,9 @@ func buildPayloadAttributes(payload Payload, cfg runtimeConfig) ([]attribute.Key
 		return nil, err
 	}
 	payload = cfg.PayloadPolicy().SanitizePayload(payload)
+	if err := validatePayloadEncodingBounds(payload, false); err != nil {
+		return nil, err
+	}
 	attrs := make([]attribute.KeyValue, 0, attrCapPayloadAttrs)
 	for _, item := range []struct {
 		key   string

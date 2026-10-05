@@ -17,6 +17,7 @@ func SpanStringAttr(t *testing.T, attrs attribute.Set, key string) string {
 	if !ok {
 		t.Fatalf("missing string attr %q", key)
 	}
+	require.Equal(t, attribute.STRING, v.Type(), "attr %q has wrong type", key)
 	return v.AsString()
 }
 
@@ -27,6 +28,7 @@ func SpanInt64Attr(t *testing.T, attrs attribute.Set, key string) int64 {
 	if !ok {
 		t.Fatalf("missing int attr %q", key)
 	}
+	require.Equal(t, attribute.INT64, v.Type(), "attr %q has wrong type", key)
 	return v.AsInt64()
 }
 
@@ -37,6 +39,7 @@ func SpanFloat64Attr(t *testing.T, attrs attribute.Set, key string) float64 {
 	if !ok {
 		t.Fatalf("missing float attr %q", key)
 	}
+	require.Equal(t, attribute.FLOAT64, v.Type(), "attr %q has wrong type", key)
 	return v.AsFloat64()
 }
 
@@ -47,6 +50,7 @@ func SpanBoolAttr(t *testing.T, attrs attribute.Set, key string) bool {
 	if !ok {
 		t.Fatalf("missing bool attr %q", key)
 	}
+	require.Equal(t, attribute.BOOL, v.Type(), "attr %q has wrong type", key)
 	return v.AsBool()
 }
 
@@ -106,6 +110,7 @@ func SpanStubFloat64SliceAttr(t *testing.T, span tracetest.SpanStub, key string)
 	if !ok {
 		t.Fatalf("missing float slice attr %q", key)
 	}
+	require.Equal(t, attribute.FLOAT64SLICE, v.Type(), "attr %q has wrong type", key)
 	return v.AsFloat64Slice()
 }
 

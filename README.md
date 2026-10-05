@@ -192,7 +192,7 @@ Provider adapter parse failures return a bounded `ObservationError` with request
 
 Constructors snapshot the profile. `tracker.Profile()` returns a detached copy. The default budget is 256 series per instrument; supported budgets are 16–4096. `WithRawPayloads()` is an explicit local raw-mode permission; configuring `RawPayloadPolicy()` alone requires `profile.AllowRaw`. `tracker.CheckPolicy(identity)` resolves carried policy identity locally and cannot enable raw fallback.
 
-`genai.CheckConformance` checks adapter declarations before running exporter-derived fixtures. It rejects ownership conflicts, unsupported profile/mapping, incompatible units and unpermitted raw mode. Its report uses bounded categorical mismatches and never includes fixture error messages or rejected payload values. Fixtures cover their controlled composition only; passing them does not certify arbitrary host/exporter code.
+`genai.CheckConformance(tracker.Contract(), declarations, fixtures...)` checks adapter declarations before running exporter-derived fixtures. It rejects ownership conflicts, unsupported profile/mapping, incompatible units and unpermitted raw mode. Its report uses bounded categorical mismatches and never includes fixture error messages or rejected payload values. Fixtures cover their controlled composition only; passing them does not certify arbitrary host/exporter code.
 
 Adapter units bind a specific field to its canonical unit through
 `FieldUnitDeclaration`; an empty declaration inherits the profile catalogue.
@@ -597,3 +597,11 @@ conn, err := grpc.NewClient(addr, metrygrpc.ClientDialOption(
 ## License
 
 MIT
+
+Effective GenAI settings are available through `Tracker.Contract()` or validated without
+SDK registration by `genai.NewContract(options...)`. `Contract.PayloadChannels()` resolves
+output budgets alongside input byte, depth and entry bounds; getters return detached copies.
+Export-derived fixtures provide `PayloadEvidence.Value` for controlled span attributes and
+`ObservedEvent.Payloads` for controlled event text, rather than copying recording inputs.
+The schema identity is `metry.genai.effective`; previous profile/raw-flag checker arguments
+and JSON-only evidence are removed.

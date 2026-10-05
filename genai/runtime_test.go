@@ -35,11 +35,22 @@ func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, spans[0], ProviderName))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	assert.InDelta(t, 2, metrytest.Float64HistogramSum(t, rm, OperationDurationMetricName), 1e-9)
+	assert.InDelta(
+		t,
+		2,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: OperationDurationMetricName}),
+		1e-9,
+	)
 	assert.InDelta(
 		t,
 		3,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, ProviderName, "gemini"),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			ProviderName,
+			"gemini",
+		),
 		1e-9,
 	)
 }
@@ -68,7 +79,13 @@ func TestRuntime_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
 	assert.InDelta(
 		t,
 		2,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, ProviderName, unknownProviderName),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			ProviderName,
+			unknownProviderName,
+		),
 		1e-9,
 	)
 }
@@ -122,9 +139,19 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, handler, ProviderName))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
-	assert.InDelta(t, 2.5, metrytest.Float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
-	assert.InDelta(t, 0.5, metrytest.Float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
+	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: TTFTMetricName}), 1e-9)
+	assert.InDelta(
+		t,
+		2.5,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTPSMetricName}),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		0.5,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTBTMetricName}),
+		1e-9,
+	)
 }
 
 func TestRuntime_AsyncTokenResult_SuccessFiltersReservedCallerAttributes(t *testing.T) {
@@ -261,7 +288,7 @@ func TestRuntime_ToolErrorClassifier_DefaultAndCustomClassesAreBounded(t *testin
 	require.NoError(t, end.Finish(ToolResult{Err: errors.Join(context.DeadlineExceeded)}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Equal(
 		t,
@@ -296,7 +323,7 @@ func TestRuntime_ToolErrorClassifier_StatusOnlyErrorDefaultsUnknown(t *testing.T
 	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusError}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Equal(
 		t,
@@ -322,7 +349,7 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 	require.NoError(t, end.Finish(ToolResult{Err: errors.New("429")}))
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Equal(
 		t,
@@ -340,7 +367,7 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 	require.NoError(t, end.Finish(ToolResult{Err: errors.New("429")}))
 
 	rm = metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist = metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
+	hist = metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Equal(
 		t,

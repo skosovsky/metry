@@ -45,7 +45,7 @@ func TestMigrationPreservesKnownZeroUnitsAndHostCustomNames(t *testing.T) {
 	assert.Equal(t, string(UnitTokens), testutil.SpanStubStringAttr(t, spans[0], InputTokens+".unit"))
 	assert.Equal(t, string(SourceMeasured), testutil.SpanStubStringAttr(t, spans[0], InputTokens+".source"))
 	assert.Equal(t, "completed", testutil.SpanStubStringAttr(t, spans[0], "metry.observation.kind"))
-	histogram := metrytest.FindInt64Histogram(t, metrics, TokenUsageMetricName)
+	histogram := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	require.Len(t, histogram.DataPoints, 1)
 	assert.Equal(t, uint64(1), histogram.DataPoints[0].Count)
 	assert.Equal(t, int64(0), histogram.DataPoints[0].Sum)

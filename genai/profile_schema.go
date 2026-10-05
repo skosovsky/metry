@@ -183,6 +183,8 @@ type PayloadChannel struct {
 	Encoding        string
 	InputByteLimit  int
 	InputDepthLimit int
+	InputEntryLimit int
+	OutputByteLimit int
 	BudgetSetting   string
 }
 
@@ -191,9 +193,13 @@ func (Profile) PayloadChannels() []PayloadChannel {
 	channels := make([]PayloadChannel, 0, attrCapPayloadAttrs)
 	for _, name := range []string{SystemInstructions, InputMessages, OutputMessages, ToolCallArguments, ToolCallResult} {
 		channels = append(channels, PayloadChannel{
-			Attribute: name, Encoding: EncodingJSON,
-			InputByteLimit: maxPayloadInputBytes, InputDepthLimit: maxPayloadJSONDepth,
-			BudgetSetting: "max_context_length",
+			Attribute:       name,
+			Encoding:        EncodingJSON,
+			InputByteLimit:  maxPayloadInputBytes,
+			InputDepthLimit: maxPayloadJSONDepth,
+			InputEntryLimit: maxPayloadEntries,
+			OutputByteLimit: 0,
+			BudgetSetting:   "max_context_length",
 		})
 	}
 	for _, name := range []string{RetrievalQuery, EvaluationText, EvaluationReasoning} {
@@ -202,8 +208,13 @@ func (Profile) PayloadChannels() []PayloadChannel {
 			budget = "max_event_length"
 		}
 		channels = append(channels, PayloadChannel{
-			Attribute: name, Encoding: EncodingString,
-			InputByteLimit: maxPayloadInputBytes, InputDepthLimit: 0, BudgetSetting: budget,
+			Attribute:       name,
+			Encoding:        EncodingString,
+			InputByteLimit:  maxPayloadInputBytes,
+			InputDepthLimit: 0,
+			InputEntryLimit: 0,
+			OutputByteLimit: 0,
+			BudgetSetting:   budget,
 		})
 	}
 	return channels

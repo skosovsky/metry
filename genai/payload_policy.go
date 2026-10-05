@@ -87,6 +87,8 @@ func (policy redactPayloadPolicy) SanitizeToolResult(result ToolResult) ToolResu
 type hashPayloadPolicy struct{}
 
 // HashPayloadPolicy returns a policy that replaces content with deterministic fingerprints.
+// Object keys are ordered canonically; JSON numeric spelling is preserved.
+// Numerically equivalent spellings (1, 1.0, 1e0) may have different fingerprints.
 func HashPayloadPolicy() PayloadPolicy {
 	return hashPayloadPolicy{}
 }
@@ -266,8 +268,8 @@ func sanitizeJSONStringWithKeys(raw string, sanitizeLeaf func(any) any, keys map
 	if len(raw) > maxPayloadInputBytes || !boundedJSONDepth(raw) {
 		return redactedPayloadJSON
 	}
-	var value any
-	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+	value, decodeErr := decodePayloadJSON(raw)
+	if decodeErr != nil {
 		return redactedPayloadJSON
 	}
 	sanitized := sanitizeJSONValue(value, sanitizeLeaf, keys)

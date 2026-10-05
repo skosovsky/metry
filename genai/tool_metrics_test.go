@@ -26,7 +26,7 @@ func TestRuntime_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Greater(t, hist.DataPoints[0].Sum, 0.0)
 	assert.Equal(t, "search", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelTool))
@@ -46,7 +46,7 @@ func TestRuntime_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T)
 	require.ErrorIs(t, handle.Close(), ErrFinalized)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, ToolDurationMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: ToolDurationMetricName})
 	require.Len(t, hist.DataPoints, 1)
 	assert.Equal(t, unknownToolName, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ToolMetricLabelTool))
 	assert.Equal(

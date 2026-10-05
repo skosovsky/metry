@@ -66,13 +66,13 @@ by the constructor, including a later profile option that mislabels an already
 installed policy. Custom policy implementations and their identities are owned
 and verified by the host at its composition root.
 
-Run `CheckConformance` on exporter-derived fixtures for each composition root.
+Run `CheckConformance(tracker.Contract(), declarations, fixtures...)` on exporter-derived fixtures for each composition root. The immutable effective contract replaces the separate Profile and raw flag arguments. It resolves actual context and event budgets; `ObservedEvent.Payloads` must include actual controlled text values, including evaluation reasoning. Do not copy scenario inputs into export evidence.
 Replace unbound unit lists with `FieldUnitDeclaration` entries (or inherit the
 canonical catalogue with an empty list). Supply mandatory `AccountingEvidence`
 per boundary, including actual span and measurement observation counts, not
 series counts. Use `IntegerTotal` for integer instruments and `Total` otherwise.
 Counter sums alone do not prove write counts; obtain separate write witnesses.
-Project actual enums, event owners/fields and named `PayloadEvidence` JSON from
+Project actual enums, event owners/fields and named `PayloadEvidence.Value` values from
 the controlled exports. A passing report certifies only that fixture's coverage.
 Reject duplicate boundary owners, unsupported mapping/profile, mismatched units
 and unpermitted raw mode before exercising fixtures. Update metric views,
@@ -85,3 +85,24 @@ does not prove whether a predecessor was exported. IDs/references preserve
 equality through stable fingerprints in non-raw modes; explicit raw preserves
 bounded caller values. There is no cross-process deduplication or execution
 registry.
+
+
+The schema identity is now `metry.genai.effective`; older profile identities are rejected.
+Use `NewContract(options...)` to validate an instrumentation configuration without registering instruments.
+`Tracker.Contract()`, `Contract.Profile()` and `Contract.PayloadChannels()` return detached
+values and never expose sanitizer callbacks. Explicit context budgets must fit the minimum
+JSON envelope through the input byte bound; event budgets range from 1 through that bound.
+The conformance checker verifies the fixture's exported evidence, not arbitrary exporter
+behavior or universal absence of PII.
+
+Payload decoding preserves exact JSON number lexemes; hashes of `1`, `1.0` and
+`1e0` may differ. Adjacent integers above 2^53 no longer collapse. Structural
+truncation preserves retained values and includes its envelope in depth/node
+bounds. Malformed structured tool JSON is rejected before policy callbacks;
+plain tool text remains a JSON string. See [CONTRACT.md](CONTRACT.md).
+
+Metric helper name arguments become `metrytest.MetricSelector{Name: name}`.
+Provide an exact instrumentation scope when names overlap; otherwise a unique
+name across all scopes is required. Typed helpers reject wrong aggregations and
+attribute accessors reject wrong OTel types rather than yielding zero values.
+See [BENCHMARKS.md](BENCHMARKS.md) for the measured baseline and fuzz command.

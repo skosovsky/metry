@@ -1,4 +1,6 @@
 GO      := go
+FUZZTIME ?= 30s
+FUZZPARALLEL ?= 2
 MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \;)
 # Consumer fixtures are tested and linted but are not published modules.
 RELEASE_MODULES := $(filter-out ./integration/%,$(MODULES))
@@ -42,9 +44,11 @@ fuzz:
 		echo "fuzz - $$dir"; \
 		(cd "$$dir" && \
 			for pkg in $$($(GO) list -tags=fuzz ./...); do \
-				if $(GO) test -tags=fuzz -list . "$$pkg" 2>/dev/null | grep -q '^Fuzz'; then \
-					$(GO) test -tags=fuzz -fuzz=. -fuzztime=30s "$$pkg" || exit 1; \
-				fi; \
+				targets=$$($(GO) test -tags=fuzz -list '^Fuzz' "$$pkg") || exit 1; \
+				for target in $$(printf '%s\n' "$$targets" | sed -n '/^Fuzz[A-Za-z0-9_]*$$/p'); do \
+					echo "fuzz - $$pkg/$$target"; \
+					$(GO) test -tags=fuzz -run='^$$' -fuzz="^$$target$$" -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL) "$$pkg" || exit 1; \
+				done; \
 			done \
 		) || exit 1; \
 	done

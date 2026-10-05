@@ -1,7 +1,6 @@
 package genai
 
 import (
-	"encoding/json"
 	"slices"
 	"strconv"
 )
@@ -79,12 +78,11 @@ func (r *ConformanceReport) Passed() bool {
 // Configuration failures return typed errors; fixture failures become safe report
 // entries so their original error messages cannot disclose payloads.
 func CheckConformance(
-	profile Profile,
-	rawEnabled bool,
+	contract Contract,
 	declarations []AdapterDeclaration,
 	fixtures ...ConformanceFixture,
 ) (ConformanceReport, error) {
-	if err := validateComposition(profile, rawEnabled, declarations); err != nil {
+	if err := validateComposition(contract, declarations); err != nil {
 		return ConformanceReport{Checks: nil}, err
 	}
 	if len(fixtures) == 0 || len(fixtures) > maxProfileEntries {
@@ -107,8 +105,8 @@ func CheckConformance(
 		for _, observation := range observations {
 			owned := ownsBoundary(declarations, observation.Boundary)
 			report.add(index, "", "ownership", "declared_owner", categorical(owned), owned)
-			report.checkObservation(index, profile, observation)
-			report.checkEvidence(index, profile, rawEnabled, declarations, observation)
+			report.checkObservation(index, contract, observation)
+			report.checkEvidence(index, contract, declarations, observation)
 		}
 	}
 	return report, nil
@@ -123,14 +121,11 @@ func ownsBoundary(declarations []AdapterDeclaration, boundary string) bool {
 	return false
 }
 
-//nolint:gocognit // Bounded configuration checks reject every ownership/unit conflict before any fixture runs.
-func validateComposition(profile Profile, rawEnabled bool, declarations []AdapterDeclaration) error {
-	if err := profile.Validate(); err != nil {
+func validateComposition(contract Contract, declarations []AdapterDeclaration) error {
+	if err := contract.Validate(); err != nil {
 		return err
 	}
-	if rawEnabled && (!profile.AllowRaw || profile.PayloadPolicyID != profileRawPolicy) {
-		return invalidObservation("policy", "raw_not_allowed")
-	}
+	profile := contract.Profile()
 	if len(declarations) > maxProfileEntries {
 		return invalidObservation("adapters", "too_large")
 	}
@@ -184,7 +179,8 @@ func (r *ConformanceReport) add(index int, instrument, rule, expected, actual st
 	)
 }
 
-func (r *ConformanceReport) checkObservation(index int, profile Profile, observed ObservedBoundary) {
+func (r *ConformanceReport) checkObservation(index int, contract Contract, observed ObservedBoundary) {
+	profile := contract.Profile()
 	boundary, known := findBoundary(profile, observed.Boundary)
 	r.add(index, "", "boundary", "declared", categorical(known), known)
 	if !known {
@@ -202,7 +198,7 @@ func (r *ConformanceReport) checkObservation(index int, profile Profile, observe
 	usageValid := observed.Usage.Validate() == nil
 	r.add(index, "", "usage", "valid", categorical(usageValid), usageValid)
 	for _, payload := range observed.Payloads {
-		valid := len(payload.JSON) <= defaultMaxContextLength && json.Valid([]byte(payload.JSON))
+		valid := validPayloadEvidence(contract, payload)
 		r.add(index, "", "content_encoding", "bounded_json", categorical(valid), valid)
 	}
 	for _, series := range observed.Series {

@@ -55,20 +55,20 @@ func TestConformanceAccountingAndWireEvidenceRejectSafeMismatches(t *testing.T) 
 				observation.Events = []ObservedEvent{event}
 			case "payload_enum":
 				observation.Payloads = []PayloadEvidence{{Attribute: InputMessages,
-					JSON: `[{"role":"private_fixture_secret","parts":[]}]`}}
+					Value: `[{"role":"private_fixture_secret","parts":[]}]`}}
 			case "missing_payload":
 				field, _ := declaredField(profile, InputMessages)
 				observation.Fields = append(observation.Fields, field)
 			case "duplicate_payload":
 				observation.Payloads = []PayloadEvidence{
-					{Attribute: InputMessages, JSON: `[]`}, {Attribute: InputMessages, JSON: `[]`},
+					{Attribute: InputMessages, Value: `[]`}, {Attribute: InputMessages, Value: `[]`},
 				}
 			case "envelope_fields":
 				observation.Payloads = []PayloadEvidence{{Attribute: InputMessages,
-					JSON: `{"truncated":true,"private_fixture_secret":"secret"}`}}
+					Value: `{"truncated":true,"private_fixture_secret":"secret"}`}}
 			}
 			// Act.
-			report, err := CheckConformance(profile, false, []AdapterDeclaration{declaration},
+			report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 				func() ([]ObservedBoundary, error) { return []ObservedBoundary{observation}, nil })
 			// Assert: secret names/values never enter diagnostics or report fields.
 			require.NoError(t, err)
@@ -87,12 +87,12 @@ func TestConformanceToolPayloadKeepsHostOwnedEnvelopeLikeKeys(t *testing.T) {
 		observation := ObservedBoundary{Boundary: ToolMetricLabelTool, Operation: profileToolOperation,
 			Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1},
 			Payloads: []PayloadEvidence{{Attribute: channel,
-				JSON: `{"truncated":true,"reason":"private_fixture_secret"}`}}}
+				Value: `{"truncated":true,"reason":"private_fixture_secret"}`}}}
 		operationField, _ := declaredField(profile, OperationName)
 		payloadField, _ := declaredField(profile, channel)
 		observation.Fields = []ProfileField{operationField, payloadField}
 		// Act.
-		report, err := CheckConformance(profile, false, []AdapterDeclaration{declaration},
+		report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 			func() ([]ObservedBoundary, error) { return []ObservedBoundary{observation}, nil })
 		// Assert: BYOT structure is accepted without echoing its content.
 		require.NoError(t, err)
@@ -116,7 +116,7 @@ func TestConformanceIntegerAccountingPreservesPrecision(t *testing.T) {
 			observation.Accounting.Actual[0].IntegerTotal--
 		}
 		// Act.
-		report, err := CheckConformance(profile, false, []AdapterDeclaration{declaration},
+		report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 			func() ([]ObservedBoundary, error) { return []ObservedBoundary{observation}, nil })
 		// Assert: float conversion must not hide a one-token discrepancy.
 		require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestConformanceRejectsDuplicateModelTimingMeasurements(t *testing.T) {
 			observation.Accounting.Actual = append(observation.Accounting.Actual,
 				AccountingMeasurement{Instrument: instrument, Count: 2, Total: 1})
 			// Act.
-			report, err := CheckConformance(profile, false, []AdapterDeclaration{declaration},
+			report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 				func() ([]ObservedBoundary, error) { return []ObservedBoundary{observation}, nil })
 			// Assert: timing/quality counts are not mistaken for series counts.
 			require.NoError(t, err)
@@ -183,9 +183,11 @@ func TestConformanceKnownZeroAndPolicyEncodedPayloadEnums(t *testing.T) {
 			role = "private_fixture_secret"
 		}
 		observation.Payloads = []PayloadEvidence{{Attribute: InputMessages,
-			JSON: fmt.Sprintf(`[{"role":%q,"parts":[{"type":"tool_call"}]}]`, role)}}
+			Value: fmt.Sprintf(`[{"role":%q,"parts":[{"type":"tool_call"}]}]`, role)}}
+		field, _ := declaredField(profile, InputMessages)
+		observation.Fields = append(observation.Fields, field)
 		// Act.
-		report, err := CheckConformance(profile, profile.AllowRaw, []AdapterDeclaration{declaration},
+		report, err := CheckConformance(testContract(profile, profile.AllowRaw), []AdapterDeclaration{declaration},
 			func() ([]ObservedBoundary, error) { return []ObservedBoundary{observation}, nil })
 		// Assert.
 		require.NoError(t, err)

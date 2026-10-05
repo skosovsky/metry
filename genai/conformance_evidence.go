@@ -10,10 +10,10 @@ import (
 	"unicode/utf8"
 )
 
-// PayloadEvidence identifies the controlled attribute carrying actual wire JSON.
+// PayloadEvidence identifies the controlled attribute carrying actual exported wire value.
 type PayloadEvidence struct {
 	Attribute string
-	JSON      string
+	Value     string
 }
 
 // AccountingMeasurement is an isolated instrument witness. Count is observation
@@ -48,10 +48,11 @@ type ObservedEnum struct {
 // ObservedEvent carries the fixture's observed instrumentation owner and fields.
 // Ownership identifies the emitter, not necessarily the parent span's tracer.
 type ObservedEvent struct {
-	Name   string
-	Owner  string
-	Fields []ProfileField
-	Enums  []ObservedEnum
+	Name     string
+	Owner    string
+	Fields   []ProfileField
+	Enums    []ObservedEnum
+	Payloads []PayloadEvidence
 }
 
 func validateFieldUnits(profile Profile, units []FieldUnitDeclaration) error {
@@ -76,7 +77,7 @@ func declaredField(profile Profile, name string) (ProfileField, bool) {
 }
 
 func (r *ConformanceReport) checkEvidence(
-	index int, profile Profile, raw bool, declarations []AdapterDeclaration, observation ObservedBoundary,
+	index int, contract Contract, declarations []AdapterDeclaration, observation ObservedBoundary,
 ) {
 	if len(observation.Enums) > maxProfileEntries || len(observation.Events) > maxProfileEntries ||
 		len(observation.Fields) > maxProfileEntries || len(observation.Payloads) > maxProfileEntries ||
@@ -84,6 +85,7 @@ func (r *ConformanceReport) checkEvidence(
 		r.add(index, "", "evidence_size", "bounded", conformanceInvalid, false)
 		return
 	}
+	profile, raw := contract.Profile(), contract.RawEnabled()
 	unitValid := observedOwnerUnits(declarations, observation)
 	r.add(index, "", "owner_units", "declared", categorical(unitValid), unitValid)
 	boundary, known := findBoundary(profile, observation.Boundary)
@@ -91,56 +93,65 @@ func (r *ConformanceReport) checkEvidence(
 	r.add(index, "", "accounting", "single_boundary", categorical(accounting), accounting)
 	enums := validObservedEnums(profile, raw, observation.Fields, observation.Enums)
 	r.add(index, "", "enum_values", "declared_or_policy_encoded", categorical(enums), enums)
-	payloads := completePayloadEvidence(observation)
+	payloads := completePayloadEvidence(contract, observation.Fields, observation.Payloads)
 	r.add(index, "", "payload_evidence", "complete_named_channels", categorical(payloads), payloads)
 	for _, event := range observation.Events {
-		valid := validObservedEvent(profile, raw, event)
+		valid := validObservedEvent(contract, event)
 		r.add(index, "", "event_schema", "declared_owner_and_fields", categorical(valid), valid)
 	}
 	for _, payload := range observation.Payloads {
-		valid := validPayloadEvidence(profile, raw, payload)
+		valid := validPayloadEvidence(contract, payload)
 		r.add(index, "", "payload_schema", "declared_channel_and_enums", categorical(valid), valid)
 	}
 }
 
-func completePayloadEvidence(observation ObservedBoundary) bool {
-	seen := make(map[string]bool, len(observation.Payloads))
-	for _, payload := range observation.Payloads {
+func completePayloadEvidence(contract Contract, fields []ProfileField, payloads []PayloadEvidence) bool {
+	seen := make(map[string]bool, len(payloads))
+	for _, payload := range payloads {
 		if seen[payload.Attribute] {
+			return false
+		}
+		present := false
+		for _, field := range fields {
+			if field.Name == payload.Attribute {
+				present = true
+				break
+			}
+		}
+		if !present {
 			return false
 		}
 		seen[payload.Attribute] = true
 	}
-	for _, field := range observation.Fields {
-		if field.Encoding == EncodingJSON && !seen[field.Name] {
+	for _, field := range fields {
+		if _, controlled := contract.payloadChannel(field.Name); controlled && !seen[field.Name] {
 			return false
 		}
 	}
 	return true
 }
 
-func validPayloadEvidence(profile Profile, raw bool, payload PayloadEvidence) bool {
-	field, found := declaredField(profile, payload.Attribute)
-	if !found || field.Encoding != EncodingJSON || len(payload.JSON) > defaultMaxContextLength ||
-		!utf8.ValidString(payload.JSON) || !json.Valid([]byte(payload.JSON)) || !boundedJSONDepth(payload.JSON) {
+func validPayloadEvidence(contract Contract, payload PayloadEvidence) bool {
+	profile, raw := contract.Profile(), contract.RawEnabled()
+	channel, found := contract.payloadChannel(payload.Attribute)
+	if !found || len(payload.Value) > channel.OutputByteLimit || !utf8.ValidString(payload.Value) {
+		return false
+	}
+	if channel.Encoding == EncodingString {
+		return true
+	}
+	if _, err := decodePayloadJSON(payload.Value); err != nil {
 		return false
 	}
 	if payload.Attribute == ToolCallArguments || payload.Attribute == ToolCallResult {
 		return true // Host-owned keys must never be interpreted as library metadata.
 	}
-	data := json.RawMessage(payload.JSON)
-	var envelope struct {
-		Data      json.RawMessage `json:"data"`
-		Truncated bool            `json:"truncated"`
+	data, valid := payloadEnvelope(json.RawMessage(payload.Value))
+	if !valid {
+		return false
 	}
-	if len(data) > 0 && data[0] == '{' && json.Unmarshal(data, &envelope) == nil && envelope.Truncated {
-		if !decodePayloadShape(data, &envelope) {
-			return false
-		}
-		if len(envelope.Data) == 0 {
-			return true
-		}
-		data = envelope.Data
+	if len(data) == 0 {
+		return true
 	}
 	switch payload.Attribute {
 	case InputMessages, OutputMessages:
@@ -162,6 +173,20 @@ func validPayloadEvidence(profile Profile, raw bool, payload PayloadEvidence) bo
 	default:
 		return false
 	}
+}
+
+func payloadEnvelope(data json.RawMessage) (json.RawMessage, bool) {
+	var envelope struct {
+		Data      json.RawMessage `json:"data"`
+		Truncated bool            `json:"truncated"`
+	}
+	if len(data) > 0 && data[0] == '{' && json.Unmarshal(data, &envelope) == nil && envelope.Truncated {
+		if !decodePayloadShape(data, &envelope) {
+			return nil, false
+		}
+		return envelope.Data, true
+	}
+	return data, true
 }
 
 func decodePayloadShape(data []byte, result any) bool {
@@ -390,8 +415,10 @@ func validFingerprint(value string) bool {
 	return true
 }
 
-func validObservedEvent(profile Profile, raw bool, observed ObservedEvent) bool {
-	if len(observed.Fields) > maxProfileEntries || len(observed.Enums) > maxProfileEntries {
+func validObservedEvent(contract Contract, observed ObservedEvent) bool {
+	profile, raw := contract.Profile(), contract.RawEnabled()
+	if len(observed.Fields) > maxProfileEntries || len(observed.Enums) > maxProfileEntries ||
+		len(observed.Payloads) > maxProfileEntries {
 		return false
 	}
 	for _, event := range profile.Events() {
@@ -408,6 +435,14 @@ func validObservedEvent(profile Profile, raw bool, observed ObservedEvent) bool 
 				return false
 			}
 			seen[field.Name] = true
+		}
+		if !completePayloadEvidence(contract, observed.Fields, observed.Payloads) {
+			return false
+		}
+		for _, payload := range observed.Payloads {
+			if !validPayloadEvidence(contract, payload) {
+				return false
+			}
 		}
 		return validObservedEnums(profile, raw, observed.Fields, observed.Enums)
 	}

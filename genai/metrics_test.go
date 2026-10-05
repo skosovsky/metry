@@ -28,17 +28,33 @@ func TestRecordInteraction_RecordsTokenHistogramAndCost(t *testing.T) {
 	assert.InDelta(
 		t,
 		10,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		20,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
 		1e-9,
 	)
-	assert.InDelta(t, 0.001, metrytest.Float64SumValue(t, rm, CostMetricName), 1e-9)
-	assert.Equal(t, "USD", metrytest.FirstFloat64SumAttr(t, rm, CostMetricName, CostCurrency))
+	assert.InDelta(t, 0.001, metrytest.Float64SumValue(t, rm, metrytest.MetricSelector{Name: CostMetricName}), 1e-9)
+	assert.Equal(
+		t,
+		"USD",
+		metrytest.FirstFloat64SumAttr(t, rm, metrytest.MetricSelector{Name: CostMetricName}, CostCurrency),
+	)
 }
 
 func TestRecordInteraction_NegativeCost_IsRejectedAtomically(t *testing.T) {
@@ -59,7 +75,7 @@ func TestRecordInteraction_NegativeCost_IsRejectedAtomically(t *testing.T) {
 	require.Empty(t, spans)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	metrytest.AssertMetricAbsent(t, rm, CostMetricName)
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: CostMetricName})
 }
 
 func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
@@ -80,9 +96,19 @@ func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
 	)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, TTFTMetricName), 1e-9)
-	assert.InDelta(t, 2.2, metrytest.Float64HistogramSum(t, rm, StreamingTPSMetricName), 1e-9)
-	assert.InDelta(t, 0.5, metrytest.Float64HistogramSum(t, rm, StreamingTBTMetricName), 1e-9)
+	assert.InDelta(t, 1.0, metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: TTFTMetricName}), 1e-9)
+	assert.InDelta(
+		t,
+		2.2,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTPSMetricName}),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		0.5,
+		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: StreamingTBTMetricName}),
+		1e-9,
+	)
 }
 
 func TestRecordTTFT_WithScope_UsesScopeProviderInMetrics(t *testing.T) {
@@ -92,7 +118,7 @@ func TestRecordTTFT_WithScope_UsesScopeProviderInMetrics(t *testing.T) {
 	tracker.RecordTTFT(ctx, Meta{}, 100*time.Millisecond)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, TTFTMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: TTFTMetricName})
 	require.NotEmpty(t, hist.DataPoints)
 	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
@@ -115,7 +141,7 @@ func TestRecordStreamingCompletion_WithScope_UsesScopeProviderInMetrics(t *testi
 	)
 
 	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, StreamingTPSMetricName)
+	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: StreamingTPSMetricName})
 	require.NotEmpty(t, hist.DataPoints)
 	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
@@ -137,5 +163,5 @@ func TestRecordInteraction_WithScopeModelOnly_RejectsMissingOperation(t *testing
 	// Assert: no silent usage loss or malformed span under the new contract.
 	require.ErrorIs(t, err, ErrInvalidObservation)
 	assert.Empty(t, exporter.GetSpans())
-	metrytest.AssertMetricAbsent(t, rm, TokenUsageMetricName)
+	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: TokenUsageMetricName})
 }

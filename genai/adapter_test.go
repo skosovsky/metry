@@ -70,13 +70,25 @@ func TestRecordModelInteraction_HappyPath_MatchesDirectRecordInteraction(t *test
 	assert.InDelta(
 		t,
 		10,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeInput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
 		1e-9,
 	)
 	assert.InDelta(
 		t,
 		20,
-		metrytest.Int64HistogramSumByAttr(t, rm, TokenUsageMetricName, TokenType, TokenTypeOutput),
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			rm,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
 		1e-9,
 	)
 }

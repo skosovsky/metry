@@ -28,10 +28,30 @@ func TestInclusiveTotalsDoNotSumOverlappingAxes(t *testing.T) {
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: inclusive input remains 120, output remains 50, not 280/90.
-	assert.InDelta(t, 120,
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeInput), 1e-9)
-	assert.InDelta(t, 50,
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeOutput), 1e-9)
+	assert.InDelta(
+		t,
+		120,
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
+		1e-9,
+	)
+	assert.InDelta(
+		t,
+		50,
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeOutput,
+		),
+		1e-9,
+	)
 	require.Len(t, traceExporter.GetSpans(), 1)
 	assert.True(t, testutil.SpanStubHasAttr(traceExporter.GetSpans()[0], CacheReadInputTokens))
 	assert.True(t, testutil.SpanStubHasAttr(traceExporter.GetSpans()[0], CacheCreationInputTokens))
@@ -97,8 +117,18 @@ func TestExclusiveCallerMappingRunsOnceAndPartialTotalStaysAbsent(t *testing.T) 
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: components aren't added again; partial buckets don't manufacture total.
 	require.ErrorIs(t, remapErr, ErrInvalidObservation)
-	assert.InDelta(t, 120,
-		metrytest.Int64HistogramSumByAttr(t, metrics, TokenUsageMetricName, TokenType, TokenTypeInput), 1e-9)
+	assert.InDelta(
+		t,
+		120,
+		metrytest.Int64HistogramSumByAttr(
+			t,
+			metrics,
+			metrytest.MetricSelector{Name: TokenUsageMetricName},
+			TokenType,
+			TokenTypeInput,
+		),
+		1e-9,
+	)
 	spans := traceExporter.GetSpans()
 	require.Len(t, spans, 2)
 	assert.True(t, testutil.SpanStubHasAttr(spans[0], InputTokens))

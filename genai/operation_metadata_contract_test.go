@@ -31,7 +31,7 @@ func TestCompletedObservationsRequireEffectiveOperationBeforeAnyWrites(t *testin
 			assert.NotContains(t, diagnostic.Error(), "secret")
 		}
 		assert.Empty(t, exporter.GetSpans())
-		metrytest.AssertMetricAbsent(t, metrics, TokenUsageMetricName)
+		metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	}
 }
 
@@ -59,7 +59,7 @@ func TestStreamingCompletionRequiresEffectiveOperationBeforeMetrics(t *testing.T
 		assert.Empty(t, exporter.GetSpans())
 		for _, instrument := range []string{TokenUsageMetricName, OperationDurationMetricName,
 			TTFTMetricName, StreamingTPSMetricName, StreamingTBTMetricName} {
-			metrytest.AssertMetricAbsent(t, metrics, instrument)
+			metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: instrument})
 		}
 	}
 }
@@ -76,11 +76,11 @@ func TestStreamingCompletionAcceptsCallerScopeOperation(t *testing.T) {
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: caller metadata permits a measured-zero observation once.
-	tokens := metrytest.FindInt64Histogram(t, metrics, TokenUsageMetricName)
+	tokens := metrytest.FindInt64Histogram(t, metrics, metrytest.MetricSelector{Name: TokenUsageMetricName})
 	require.Len(t, tokens.DataPoints, 1)
 	assert.Equal(t, uint64(1), tokens.DataPoints[0].Count)
 	assert.Zero(t, tokens.DataPoints[0].Sum)
-	assert.Zero(t, metrytest.Float64HistogramSum(t, metrics, TTFTMetricName))
+	assert.Zero(t, metrytest.Float64HistogramSum(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName}))
 }
 
 func TestCompletedObservationsAcceptCallerDeclaredScopeOperation(t *testing.T) {

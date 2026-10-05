@@ -38,15 +38,13 @@ func buildRuntimeConfig(opts ...Option) runtimeConfig {
 			opt(&cfg)
 		}
 	}
-	if cfg.maxEventLength <= 0 {
-		cfg.maxEventLength = defaultMaxEventLength
-	}
 	if cfg.toolErrorClassifier == nil {
 		cfg.toolErrorClassifier = defaultToolErrorClassifier{}
 	}
 	if len(cfg.allowedToolErrorClasses) == 0 {
 		cfg.allowedToolErrorClasses = defaultAllowedToolErrorClasses()
 	}
+	cfg.profile = cloneProfile(cfg.profile)
 	return cfg
 }
 
@@ -62,17 +60,11 @@ func (c runtimeConfig) PayloadPolicy() PayloadPolicy {
 }
 
 func (c runtimeConfig) MaxContextLength() int {
-	if c.maxContextLength <= 0 {
-		return defaultMaxContextLength
-	}
 	return c.maxContextLength
 }
 
 // MaxEventLength returns the max byte length for text attached to span events (e.g. evaluation reasoning).
 func (c runtimeConfig) MaxEventLength() int {
-	if c.maxEventLength <= 0 {
-		return defaultMaxEventLength
-	}
 	return c.maxEventLength
 }
 
@@ -130,7 +122,7 @@ func WithMaxContextLength(bytes int) Option {
 
 // WithMaxEventLength sets the max byte length for text stored on span events (e.g. LLM-judge reasoning on evaluation events).
 // Backends and collectors often apply tighter limits to event attributes than to span attributes (commonly on the order of 4–8KB);
-// the default is 4096 bytes. Values <= 0 are replaced with that default during config build.
+// the default is 4096 bytes. Explicit values outside [1, maximum input bytes] are rejected by the constructor.
 func WithMaxEventLength(bytes int) Option {
 	return func(c *runtimeConfig) {
 		c.maxEventLength = bytes
