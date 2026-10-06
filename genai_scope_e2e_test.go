@@ -28,7 +28,7 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 			profile.Dimensions[index].Values = append(profile.Dimensions[index].Values, "delivery.success")
 		}
 	}
-	runtime, err := genai.NewRuntimeFromProvider(provider, genai.WithProfile(profile))
+	recorder, err := genai.NewRecorderFromProvider(provider, genai.WithProfile(profile))
 	require.NoError(t, err)
 
 	scope := genai.Scope{
@@ -43,13 +43,13 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 	const tenantID = "t-scope"
 	ctx = genai.WithScope(ctx, scope)
 	ctx = metry.Enrich(ctx, metry.TenantID(tenantID))
-	runtime = runtime.ForProvider("openai")
+	recorder = recorder.ForProvider("openai")
 
 	snapshot, err := metry.TraceSnapshotFromContext(ctx)
 	require.NoError(t, err)
 	snapshotToken, err := snapshot.Marshal()
 	require.NoError(t, err)
-	handle, err := runtime.StartAsync(ctx, "delivery.enqueue")
+	handle, err := recorder.StartAsync(ctx, "delivery.enqueue")
 	require.NoError(t, err)
 	token, err := handle.Marshal()
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 
 	consumerCtx, consumerEnd, err := provider.StartSpan(consumerCtx, "consumer", "consume")
 	require.NoError(t, err)
-	require.NoError(t, runtime.RecordOperation(consumerCtx, genai.Operation{
+	require.NoError(t, recorder.RecordOperation(consumerCtx, genai.Operation{
 		Name:    scope.Operation,
 		Model:   scope.Model,
 		Purpose: scope.Purpose,
@@ -75,7 +75,7 @@ func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 		Status: genai.OperationStatusOK,
 		Usage:  genai.Usage{InputTokens: genai.Observe(1, genai.UnitTokens, genai.SourceMeasured)},
 	}))
-	require.NoError(t, runtime.RecordAsyncTokenResult(consumerCtx, token, genai.AsyncResult{
+	require.NoError(t, recorder.RecordAsyncTokenResult(consumerCtx, token, genai.AsyncResult{
 		Name:   "delivery.success",
 		Status: genai.OperationStatusOK,
 		Attributes: []metry.Attribute{

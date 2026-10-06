@@ -18,13 +18,13 @@ func TestConformanceUsesExportedEffectiveJSONBudgets(t *testing.T) {
 		for _, channel := range []string{SystemInstructions, InputMessages, OutputMessages, ToolCallArguments, ToolCallResult} {
 			t.Run(channel+"/"+stringBudget(budget), func(t *testing.T) {
 				// Arrange: input is independent of the exporter-derived evidence below.
-				tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(budget))
+				tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(budget))
 				content := strings.Repeat("x", 70000)
 				boundary, operation := profileModelBoundary, profileChatOperation
 				// Act.
 				if channel == ToolCallArguments || channel == ToolCallResult {
 					boundary, operation = "tool", profileToolOperation
-					_, h, err := tracker.Runtime().
+					_, h, err := tracker.Recorder().
 						StartTool(context.Background(), ToolCall{Name: "search", Arguments: `{"value":"` + content + `"}`})
 					require.NoError(t, err)
 					require.NoError(
@@ -45,9 +45,8 @@ func TestConformanceUsesExportedEffectiveJSONBudgets(t *testing.T) {
 				require.Len(t, spans, 1)
 				value := testutil.SpanStubStringAttr(t, spans[0], channel)
 				contract := tracker.Contract()
-				profile := contract.Profile()
-				operationField, _ := declaredField(profile, OperationName)
-				payloadField, _ := declaredField(profile, channel)
+				operationField, _ := declaredField(OperationName)
+				payloadField, _ := declaredField(channel)
 				observed := ObservedBoundary{
 					Boundary:   boundary,
 					Operation:  operation,
@@ -56,7 +55,7 @@ func TestConformanceUsesExportedEffectiveJSONBudgets(t *testing.T) {
 					Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1},
 				}
 				declarations := []AdapterDeclaration{
-					{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{boundary}},
+					{ProfileID: Schema().ID(), Mapping: Schema().Mapping(), Boundaries: []string{boundary}},
 				}
 				fixture := func() ([]ObservedBoundary, error) { return []ObservedBoundary{observed}, nil }
 				report, err := CheckConformance(contract, declarations, fixture)
@@ -67,7 +66,7 @@ func TestConformanceUsesExportedEffectiveJSONBudgets(t *testing.T) {
 				if budget == 100000 {
 					require.Greater(t, len(value), 65536)
 				}
-				smaller, err := NewContract(WithRawPayloads(), WithMaxContextLength(len(truncatedJSONMarker)))
+				smaller, err := NewContract(WithRawPayloads(), WithPayloadByteLimit(len(truncatedJSONMarker)))
 				require.NoError(t, err)
 				rejected, err := CheckConformance(smaller, declarations, fixture)
 				require.NoError(t, err)
@@ -83,11 +82,10 @@ func TestConformanceEventPayloadRequiresActualEvidenceAndLocalBudget(t *testing.
 	for _, scenario := range []string{"valid", "oversize", "missing", "duplicate", "foreign"} {
 		t.Run(scenario, func(t *testing.T) {
 			// Arrange.
-			contract, err := NewContract(WithMaxEventLength(3))
+			contract, err := NewContract(WithEventTextByteLimit(3))
 			require.NoError(t, err)
-			profile := contract.Profile()
-			observed := zeroAccountingObservation(profile)
-			field, _ := declaredField(profile, EvaluationExplanation)
+			observed := zeroAccountingObservation()
+			field, _ := declaredField(EvaluationExplanation)
 			event := ObservedEvent{
 				Name:     "gen_ai.evaluation.result",
 				Owner:    "metry.genai",
@@ -109,7 +107,7 @@ func TestConformanceEventPayloadRequiresActualEvidenceAndLocalBudget(t *testing.
 			report, err := CheckConformance(
 				contract,
 				[]AdapterDeclaration{
-					{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{profileModelBoundary}},
+					{ProfileID: Schema().ID(), Mapping: Schema().Mapping(), Boundaries: []string{profileModelBoundary}},
 				},
 				func() ([]ObservedBoundary, error) { return []ObservedBoundary{observed}, nil },
 			)
@@ -122,7 +120,7 @@ func TestConformanceEventPayloadRequiresActualEvidenceAndLocalBudget(t *testing.
 
 func TestConformanceExporterDerivedEvaluationLabelBudget(t *testing.T) {
 	// Arrange: host scenario text is not used as exported evidence.
-	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxEventLength(17))
+	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithEventTextByteLimit(17))
 	evaluation := successfulEvaluation()
 	evaluation.Reasoning = strings.Repeat("reason", 100)
 	// Act.
@@ -138,7 +136,7 @@ func TestConformanceExporterDerivedEvaluationLabelBudget(t *testing.T) {
 		Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1},
 	}
 	for _, attr := range spans[0].Attributes {
-		field, found := declaredField(profile, string(attr.Key))
+		field, found := declaredField(string(attr.Key))
 		require.True(t, found)
 		observed.Fields = append(observed.Fields, field)
 		if _, controlled := contract.payloadChannel(field.Name); controlled {
@@ -147,21 +145,21 @@ func TestConformanceExporterDerivedEvaluationLabelBudget(t *testing.T) {
 				PayloadEvidence{Attribute: field.Name, Value: attr.Value.AsString()},
 			)
 		}
-		for _, enum := range profile.Enumerations() {
+		for _, enum := range effectiveEnumerations(profile) {
 			if enum.Name == field.Name {
 				observed.Enums = append(observed.Enums, ObservedEnum{Name: field.Name, Value: attr.Value.AsString()})
 			}
 		}
 	}
 	declarations := []AdapterDeclaration{
-		{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{profileEvaluationOperation}},
+		{ProfileID: Schema().ID(), Mapping: Schema().Mapping(), Boundaries: []string{profileEvaluationOperation}},
 	}
 	fixture := func() ([]ObservedBoundary, error) { return []ObservedBoundary{observed}, nil }
 	report, err := CheckConformance(contract, declarations, fixture)
 	// Assert.
 	require.NoError(t, err)
 	require.True(t, report.Passed(), "%+v", report.Checks)
-	small, err := NewContract(WithRawPayloads(), WithMaxEventLength(1))
+	small, err := NewContract(WithRawPayloads(), WithEventTextByteLimit(1))
 	require.NoError(t, err)
 	report, err = CheckConformance(small, declarations, fixture)
 	require.NoError(t, err)
@@ -246,8 +244,8 @@ func TestConformanceNegativeEvidenceDerivedFromRealExports(t *testing.T) {
 			}
 			declarations := []AdapterDeclaration{
 				{
-					ProfileID:  profile.ID,
-					Mapping:    profile.Mapping,
+					ProfileID:  Schema().ID(),
+					Mapping:    Schema().Mapping(),
 					Boundaries: []string{profileModelBoundary},
 					Units:      []FieldUnitDeclaration{{Field: OutputTokens, Unit: UnitTokens}},
 				},
@@ -306,8 +304,8 @@ func TestConformanceDuplicateToolAccountingFromRealExports(t *testing.T) {
 	require.NoError(t, err)
 	observations := lifecycleExporterFixture(t, profile, "sync")
 	declarations := []AdapterDeclaration{
-		{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{profileModelBoundary}},
-		{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{"tool"}},
+		{ProfileID: Schema().ID(), Mapping: Schema().Mapping(), Boundaries: []string{profileModelBoundary}},
+		{ProfileID: Schema().ID(), Mapping: Schema().Mapping(), Boundaries: []string{"tool"}},
 	}
 	fixture := func() ([]ObservedBoundary, error) { return observations, nil }
 	baseline, err := CheckConformance(contract, declarations, fixture)

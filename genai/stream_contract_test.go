@@ -15,14 +15,14 @@ import (
 func TestStreamUpdatesCommitOnlyFinalUsage(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act: cumulative updates do not add counters or infer final usage.
 	for _, count := range []int{2, 5, 10, 10} {
 		require.NoError(
 			t,
-			handle.RecordStreamingUpdate(Usage{OutputTokens: Observe(count, UnitTokens, SourceProvider)}),
+			handle.ValidateStreamingUpdate(Usage{OutputTokens: Observe(count, UnitTokens, SourceProvider)}),
 		)
 	}
 	require.NoError(
@@ -39,7 +39,7 @@ func TestStreamUpdatesCommitOnlyFinalUsage(t *testing.T) {
 		),
 	)
 	require.ErrorIs(t, handle.Finish(OperationResult{}), ErrFinalized)
-	require.ErrorIs(t, handle.RecordStreamingUpdate(Usage{}), ErrFinalized)
+	require.ErrorIs(t, handle.ValidateStreamingUpdate(Usage{}), ErrFinalized)
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert.
@@ -63,11 +63,11 @@ func TestStreamUpdatesCommitOnlyFinalUsage(t *testing.T) {
 func TestAbortedStreamDoesNotInferMissingTotal(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act.
-	require.NoError(t, handle.RecordStreamingUpdate(Usage{OutputTokens: Observe(100, UnitTokens, SourceProvider)}))
+	require.NoError(t, handle.ValidateStreamingUpdate(Usage{OutputTokens: Observe(100, UnitTokens, SourceProvider)}))
 	require.NoError(
 		t,
 		handle.Finish(
@@ -97,7 +97,7 @@ func TestInvalidStreamIntervalsRejectBeforeRecording(t *testing.T) {
 		event.Meta.Operation = profileChatOperation
 		event.Usage = Usage{InputTokens: Observe(10, UnitTokens, SourceMeasured)}
 		// Act.
-		err := tracker.Runtime().RecordStreamingCompletion(context.Background(), event)
+		err := tracker.Recorder().RecordStreamingCompletion(context.Background(), event)
 		metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 		// Assert.
 		require.ErrorIs(t, err, ErrInvalidObservation)
@@ -111,7 +111,7 @@ func TestInvalidStreamIntervalsRejectBeforeRecording(t *testing.T) {
 func TestInvalidFinalTimingCanBeCorrected(t *testing.T) {
 	// Arrange.
 	tracker, _, _ := newTestTracker(t)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act.
@@ -131,11 +131,11 @@ func TestCompletedOperationValidatesTimingsIncludingNoop(t *testing.T) {
 	}
 	// Act.
 	for _, result := range invalid {
-		require.ErrorIs(t, tracker.Runtime().RecordOperation(
+		require.ErrorIs(t, tracker.Recorder().RecordOperation(
 			context.Background(),
 			Operation{Locality: ExecutionRemote, Name: profileChatOperation}, result),
 			ErrInvalidObservation)
-		require.ErrorIs(t, NoopRuntime().RecordOperation(
+		require.ErrorIs(t, NoopRecorder().RecordOperation(
 			context.Background(),
 			Operation{Locality: ExecutionRemote, Name: profileChatOperation}, result),
 			ErrInvalidObservation)
@@ -161,7 +161,7 @@ func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
 		Streaming: &StreamTimings{TTFT: time.Second, FirstTokenPresent: true},
 	}
 	// Act.
-	require.NoError(t, tracker.Runtime().RecordOperation(
+	require.NoError(t, tracker.Recorder().RecordOperation(
 		context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, result))
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: the completed DTO path doesn't silently ignore streaming metadata.

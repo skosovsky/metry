@@ -14,7 +14,7 @@ func TestRetrievalQueryRejectsOversizedInputBeforeRecording(t *testing.T) {
 	request := RetrievalRequest{Locality: ExecutionLocal, Query: strings.Repeat("x", maxPayloadInputBytes+1)}
 	// Act.
 	_, handle, err := tracker.StartRetrieval(context.Background(), "", request)
-	_, noopHandle, noopErr := NoopRuntime().StartRetrieval(context.Background(), "", request)
+	_, noopHandle, noopErr := NoopRecorder().StartRetrieval(context.Background(), "", request)
 	// Assert.
 	require.ErrorIs(t, err, ErrInvalidObservation)
 	require.ErrorIs(t, noopErr, ErrInvalidObservation)

@@ -81,7 +81,7 @@ func TestScopePrivacyAcrossEntryPointsAndPolicies(t *testing.T) {
 				if entry != "meta" {
 					operation.Model, operation.Purpose = "", ""
 				}
-				child, handle, err := tracker.Runtime().ForProvider(scope.Provider).
+				child, handle, err := tracker.Recorder().ForProvider(scope.Provider).
 					StartOperation(ctx, operation, RecordingOptions{})
 				require.NoError(t, err)
 				logger.InfoContext(child, "child observation")

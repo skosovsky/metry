@@ -22,14 +22,14 @@ func TestConformanceTwoAdaptersSyncStreamCancelResume(t *testing.T) {
 	profile := DefaultProfile()
 	declarations := []AdapterDeclaration{
 		{
-			ProfileID:  profile.ID,
-			Mapping:    profile.Mapping,
+			ProfileID:  Schema().ID(),
+			Mapping:    Schema().Mapping(),
 			Boundaries: []string{profileModelBoundary},
 			Units:      []FieldUnitDeclaration{{Field: OutputTokens, Unit: UnitTokens}},
 		},
 		{
-			ProfileID:  profile.ID,
-			Mapping:    profile.Mapping,
+			ProfileID:  Schema().ID(),
+			Mapping:    Schema().Mapping(),
 			Boundaries: []string{"tool"},
 			Units:      nil,
 		},
@@ -56,14 +56,14 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	t.Helper()
 	tracker, provider, metricExporter, exporter := newTestTrackerWithMetrics(t,
 		WithProfile(profile), WithPayloadPolicy(RedactPayloadPolicy()))
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 	ctx := context.Background()
 	options := RecordingOptions{}
 	if scenario == "resume" {
-		ctx = completedCheckpointContext(t, provider, runtime)
+		ctx = completedCheckpointContext(t, provider, recorder)
 		options.Detached = true
 	}
-	modelCtx, model, err := runtime.StartOperation(
+	modelCtx, model, err := recorder.StartOperation(
 		ctx,
 		Operation{Name: profileChatOperation, Locality: ExecutionRemote},
 		options,
@@ -75,8 +75,8 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 			Parts: []ContentPart{{Type: payloadTextType, Content: "private fixture response"}}}}},
 	}
 	if scenario == "stream" {
-		require.NoError(t, model.RecordStreamingUpdate(Usage{OutputTokens: Observe(1, UnitTokens, SourceProvider)}))
-		require.NoError(t, model.RecordStreamingUpdate(result.Usage))
+		require.NoError(t, model.ValidateStreamingUpdate(Usage{OutputTokens: Observe(1, UnitTokens, SourceProvider)}))
+		require.NoError(t, model.ValidateStreamingUpdate(result.Usage))
 		result.Streaming = &StreamTimings{TTFT: 0, FirstTokenPresent: true}
 	}
 	if scenario == "cancel" {
@@ -85,7 +85,7 @@ func lifecycleExporterFixture(t *testing.T, profile Profile, scenario string) []
 	_ = modelCtx
 	require.NoError(t, model.Finish(result))
 	toolStarted := time.Now()
-	_, endTool, startErr := runtime.StartTool(
+	_, endTool, startErr := recorder.StartTool(
 		context.Background(),
 		ToolCall{Name: "lookup", Arguments: `{"key":"private"}`},
 	)
@@ -213,9 +213,9 @@ func projectFloatAccounting(t *testing.T, metrics metricdata.ResourceMetrics, in
 	return result
 }
 
-func completedCheckpointContext(t *testing.T, provider *metry.Provider, runtime Runtime) context.Context {
+func completedCheckpointContext(t *testing.T, provider *metry.Provider, recorder Recorder) context.Context {
 	t.Helper()
-	ctx, checkpoint, err := runtime.StartOperation(
+	ctx, checkpoint, err := recorder.StartOperation(
 		context.Background(),
 		Operation{Name: profileChatOperation, Locality: ExecutionRemote},
 		RecordingOptions{},
@@ -236,7 +236,7 @@ func completedCheckpointContext(t *testing.T, provider *metry.Provider, runtime 
 func projectLifecycleWire(t *testing.T, profile Profile, spans tracetest.SpanStubs) []ObservedBoundary {
 	t.Helper()
 	fields := make(map[string]ProfileField)
-	for _, field := range profile.Fields {
+	for _, field := range Schema().Fields() {
 		fields[field.Name] = field
 	}
 	observed := make([]ObservedBoundary, 0, len(spans))
@@ -280,7 +280,7 @@ func projectLifecycleAttribute(
 	item *ObservedBoundary,
 ) {
 	t.Helper()
-	field, found := declaredField(profile, string(attr.Key))
+	field, found := declaredField(string(attr.Key))
 	require.True(t, found, "undeclared: %s", attr.Key)
 	if field.Unit != "" {
 		field.Unit = Unit(testutil.SpanStubStringAttr(t, span, measurementProvenanceKey(field.Name)+".unit"))
@@ -294,7 +294,7 @@ func projectLifecycleAttribute(
 		item.Usage.OutputTokens = Observe(int(attr.Value.AsInt64()), field.Unit,
 			Source(testutil.SpanStubStringAttr(t, span, measurementProvenanceKey(OutputTokens)+".source")))
 	}
-	for _, enum := range profile.Enumerations() {
+	for _, enum := range effectiveEnumerations(profile) {
 		if enum.Name == field.Name {
 			item.Enums = append(item.Enums, ObservedEnum{Name: field.Name, Value: attr.Value.AsString()})
 		}

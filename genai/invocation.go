@@ -68,7 +68,7 @@ func (t *Tracker) StartWorkflow(
 	return startWorkflow(ctx, t, invocation, options)
 }
 
-func (r trackerRuntime) StartAgent(
+func (r trackerRecorder) StartAgent(
 	ctx context.Context,
 	invocation AgentInvocation,
 	options RecordingOptions,
@@ -79,7 +79,7 @@ func (r trackerRuntime) StartAgent(
 	return startAgent(ctx, r.tracker, invocation, options)
 }
 
-func (r trackerRuntime) StartWorkflow(
+func (r trackerRecorder) StartWorkflow(
 	ctx context.Context,
 	invocation WorkflowInvocation,
 	options RecordingOptions,
@@ -87,7 +87,7 @@ func (r trackerRuntime) StartWorkflow(
 	return startWorkflow(ctx, r.tracker, invocation, options)
 }
 
-func (noopRuntime) StartAgent(
+func (noopRecorder) StartAgent(
 	ctx context.Context,
 	invocation AgentInvocation,
 	options RecordingOptions,
@@ -95,7 +95,7 @@ func (noopRuntime) StartAgent(
 	return startAgent(ctx, nil, invocation, options)
 }
 
-func (noopRuntime) StartWorkflow(
+func (noopRecorder) StartWorkflow(
 	ctx context.Context,
 	invocation WorkflowInvocation,
 	options RecordingOptions,

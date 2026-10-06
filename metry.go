@@ -50,11 +50,6 @@ type Provider struct {
 	shutdownErr  error
 }
 
-const (
-	genaiMeterName  = "metry/genai"
-	genaiTracerName = "metry/genai"
-)
-
 func (p *Provider) tracerProvider() trace.TracerProvider {
 	if p == nil || p.otelTracer == nil {
 		return nooptrace.NewTracerProvider()

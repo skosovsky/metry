@@ -131,7 +131,7 @@ func TestToolCustomSanitizerInputValidationAndPrecision(t *testing.T) {
 		policy := &toolInputPolicy{}
 		tracker, _, _ := newTestTracker(t, WithPayloadPolicy(policy))
 		// Act.
-		_, handle, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "search", Arguments: raw})
+		_, handle, err := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "search", Arguments: raw})
 		require.NoError(t, err)
 		require.NoError(t, handle.Finish(ToolResult{Result: raw}))
 		// Assert: rejection is observational and avoids custom sanitizer execution.
@@ -142,7 +142,7 @@ func TestToolCustomSanitizerInputValidationAndPrecision(t *testing.T) {
 	policy := &toolInputPolicy{}
 	tracker, _, _ := newTestTracker(t, WithPayloadPolicy(policy))
 	// Act.
-	_, handle, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "search", Arguments: raw})
+	_, handle, err := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "search", Arguments: raw})
 	require.NoError(t, err)
 	require.NoError(t, handle.Finish(ToolResult{Result: raw}))
 	// Assert: both policy inputs retain original bytes.

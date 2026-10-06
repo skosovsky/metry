@@ -22,9 +22,10 @@
 // observations without including payload data. Telemetry diagnostics must be
 // handled separately from the host's business result or error.
 //
-// Profile is a snapshotted declaration of supported schema, ownership, encoding,
-// units, enum values, payload channels and bounded metric dimensions. Conformance
-// is a fixture tool, not a runtime registry or execution engine. Built-in payload
+// SchemaDescriptor describes fixed fields, ownership, encoding and channels.
+// Profile contains snapshotted policy settings and bounded metric dimensions.
+// Contract combines the descriptor with effective settings. Conformance is a
+// fixture tool, not a recorder registry or execution engine. Built-in payload
 // policy declarations must match the installed policy; raw export requires host
 // permission. Policy applies before controlled fan-out. Custom SDK attributes and
 // exporter callbacks remain outside that guarantee. Fingerprints are not anonymity.

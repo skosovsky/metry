@@ -15,9 +15,9 @@ func TestConformanceAccountingAndWireEvidenceRejectSafeMismatches(t *testing.T) 
 		t.Run(scenario, func(t *testing.T) {
 			// Arrange: expected known-zero usage and actual exporter/write witnesses.
 			profile := DefaultProfile()
-			declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping,
+			declaration := AdapterDeclaration{ProfileID: Schema().ID(), Mapping: Schema().Mapping(),
 				Boundaries: []string{profileModelBoundary}}
-			observation := zeroAccountingObservation(profile)
+			observation := zeroAccountingObservation()
 			switch scenario {
 			case "logical":
 				observation.Boundary, observation.Operation = string(IdentityLogical), string(IdentityLogical)
@@ -30,7 +30,7 @@ func TestConformanceAccountingAndWireEvidenceRejectSafeMismatches(t *testing.T) 
 					Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1,
 						Expected: []AccountingMeasurement{{Instrument: ToolDurationMetricName, Count: 1, Total: 1}},
 						Actual:   []AccountingMeasurement{{Instrument: ToolDurationMetricName, Count: 2, Total: 1}}}}
-				field, _ := declaredField(profile, OperationName)
+				field, _ := declaredField(OperationName)
 				observation.Fields = []ProfileField{field}
 			case "missing_zero":
 				observation.Accounting.Actual = nil
@@ -57,7 +57,7 @@ func TestConformanceAccountingAndWireEvidenceRejectSafeMismatches(t *testing.T) 
 				observation.Payloads = []PayloadEvidence{{Attribute: InputMessages,
 					Value: `[{"role":"private_fixture_secret","parts":[]}]`}}
 			case "missing_payload":
-				field, _ := declaredField(profile, InputMessages)
+				field, _ := declaredField(InputMessages)
 				observation.Fields = append(observation.Fields, field)
 			case "duplicate_payload":
 				observation.Payloads = []PayloadEvidence{
@@ -82,14 +82,14 @@ func TestConformanceToolPayloadKeepsHostOwnedEnvelopeLikeKeys(t *testing.T) {
 	for _, channel := range []string{ToolCallArguments, ToolCallResult} {
 		// Arrange: these are business JSON keys, not a typed message envelope.
 		profile := DefaultProfile()
-		declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping,
+		declaration := AdapterDeclaration{ProfileID: Schema().ID(), Mapping: Schema().Mapping(),
 			Boundaries: []string{"tool"}}
 		observation := ObservedBoundary{Boundary: "tool", Operation: profileToolOperation,
 			Accounting: &AccountingEvidence{ExpectedSpans: 1, ActualSpans: 1},
 			Payloads: []PayloadEvidence{{Attribute: channel,
 				Value: `{"truncated":true,"reason":"private_fixture_secret"}`}}}
-		operationField, _ := declaredField(profile, OperationName)
-		payloadField, _ := declaredField(profile, channel)
+		operationField, _ := declaredField(OperationName)
+		payloadField, _ := declaredField(channel)
 		observation.Fields = []ProfileField{operationField, payloadField}
 		// Act.
 		report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
@@ -105,9 +105,9 @@ func TestConformanceIntegerAccountingPreservesPrecision(t *testing.T) {
 	for _, mismatch := range []bool{false, true} {
 		// Arrange: adjacent integers beyond float64's exact integer range.
 		profile := DefaultProfile()
-		declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping,
+		declaration := AdapterDeclaration{ProfileID: Schema().ID(), Mapping: Schema().Mapping(),
 			Boundaries: []string{profileModelBoundary}}
-		observation := zeroAccountingObservation(profile)
+		observation := zeroAccountingObservation()
 		const tokens = int64(1<<53 + 1)
 		observation.Usage.InputTokens = Observe(int(tokens), UnitTokens, SourceMeasured)
 		observation.Accounting.Expected[0].IntegerTotal = tokens
@@ -124,10 +124,10 @@ func TestConformanceIntegerAccountingPreservesPrecision(t *testing.T) {
 	}
 }
 
-func zeroAccountingObservation(profile Profile) ObservedBoundary {
+func zeroAccountingObservation() ObservedBoundary {
 	fields := make([]ProfileField, 0, 4)
 	for _, name := range []string{OperationName, InputTokens, measurementProvenanceKey(InputTokens) + ".source", measurementProvenanceKey(InputTokens) + ".unit"} {
-		field, _ := declaredField(profile, name)
+		field, _ := declaredField(name)
 		fields = append(fields, field)
 	}
 	return ObservedBoundary{
@@ -147,9 +147,9 @@ func TestConformanceRejectsDuplicateModelTimingMeasurements(t *testing.T) {
 		t.Run(instrument, func(t *testing.T) {
 			// Arrange: one scenario observation, two actual histogram writes.
 			profile := DefaultProfile()
-			declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping,
+			declaration := AdapterDeclaration{ProfileID: Schema().ID(), Mapping: Schema().Mapping(),
 				Boundaries: []string{profileModelBoundary}}
-			observation := zeroAccountingObservation(profile)
+			observation := zeroAccountingObservation()
 			observation.Accounting.Expected = append(observation.Accounting.Expected,
 				AccountingMeasurement{Instrument: instrument, Count: 1, Total: 1})
 			observation.Accounting.Actual = append(observation.Accounting.Actual,
@@ -170,11 +170,11 @@ func TestConformanceKnownZeroAndPolicyEncodedPayloadEnums(t *testing.T) {
 		profile := DefaultProfile()
 		profile.PayloadPolicyID = policy
 		profile.AllowRaw = policy == profileRawPolicy
-		declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping,
+		declaration := AdapterDeclaration{ProfileID: Schema().ID(), Mapping: Schema().Mapping(),
 			Boundaries: []string{
 				profileModelBoundary,
 			}, Units: []FieldUnitDeclaration{{Field: InputTokens, Unit: UnitTokens}}}
-		observation := zeroAccountingObservation(profile)
+		observation := zeroAccountingObservation()
 		role := redactedPayloadText
 		switch policy {
 		case profileHashPolicy:
@@ -184,7 +184,7 @@ func TestConformanceKnownZeroAndPolicyEncodedPayloadEnums(t *testing.T) {
 		}
 		observation.Payloads = []PayloadEvidence{{Attribute: InputMessages,
 			Value: fmt.Sprintf(`[{"role":%q,"parts":[{"type":"tool_call","name":"lookup"}]}]`, role)}}
-		field, _ := declaredField(profile, InputMessages)
+		field, _ := declaredField(InputMessages)
 		observation.Fields = append(observation.Fields, field)
 		// Act.
 		report, err := CheckConformance(testContract(profile, profile.AllowRaw), []AdapterDeclaration{declaration},

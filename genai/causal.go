@@ -85,7 +85,7 @@ func (i CausalIdentity) empty() bool {
 		i.StepID == "" && i.AttemptID == "" && i.Kind == "" && i.PromptIdentity == ""
 }
 
-func (i CausalIdentity) attributes(cfg runtimeConfig) []attribute.KeyValue {
+func (i CausalIdentity) attributes(cfg recorderConfig) []attribute.KeyValue {
 	if i.empty() {
 		return nil
 	}

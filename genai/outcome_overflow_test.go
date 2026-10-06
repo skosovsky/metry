@@ -32,7 +32,7 @@ func TestOperationOutcomeSurvivesSeriesOverflow(t *testing.T) {
 	// Act.
 	for model := range 20 {
 		for _, status := range statuses {
-			require.NoError(t, tracker.Runtime().RecordOperation(context.Background(),
+			require.NoError(t, tracker.Recorder().RecordOperation(context.Background(),
 				Operation{Locality: ExecutionRemote, Name: "chat", Model: fmt.Sprintf("model-%d", model)},
 				OperationResult{Status: status, Duration: time.Millisecond}))
 		}

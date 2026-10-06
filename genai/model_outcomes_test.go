@@ -40,13 +40,13 @@ func TestModelOutcomeMatrix(t *testing.T) {
 			// Arrange.
 			tracker, provider, mem := newTestTracker(t, WithProfile(observedModelProfile()), WithRawPayloads())
 			ctx := WithScope(context.Background(), Scope{Model: "router-default"})
-			_, handle, err := tracker.Runtime().
+			_, handle, err := tracker.Recorder().
 				StartOperation(ctx, Operation{Locality: ExecutionRemote, Name: "chat"}, RecordingOptions{})
 			require.NoError(t, err)
 			result := OperationResult{Status: test.status, ErrorType: test.class}
 			// Act.
 			err = handle.Finish(result)
-			noopErr := NoopRuntime().RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, result)
+			noopErr := NoopRecorder().RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, result)
 			// Assert.
 			if test.invalid {
 				require.ErrorIs(t, err, ErrInvalidObservation)
@@ -77,7 +77,7 @@ func TestModelActualMetadataAndConcurrentFinish(t *testing.T) {
 		WithProfile(observedModelProfile()),
 		WithRawPayloads(),
 	)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat", Model: "router-default"}, RecordingOptions{})
 	require.NoError(t, err)
 	var committed atomic.Int32
@@ -128,10 +128,10 @@ func TestCloseDoesNotInventUsage(t *testing.T) {
 		WithProfile(observedModelProfile()),
 		WithRawPayloads(),
 	)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat", Model: "alias"}, RecordingOptions{})
 	require.NoError(t, err)
-	require.NoError(t, handle.RecordStreamingUpdate(Usage{InputTokens: Observe(99, UnitTokens, SourceMeasured)}))
+	require.NoError(t, handle.ValidateStreamingUpdate(Usage{InputTokens: Observe(99, UnitTokens, SourceMeasured)}))
 	// Act.
 	require.NoError(t, handle.Close())
 	// Assert.
@@ -163,7 +163,7 @@ func observedModelProfile() Profile {
 func TestModelFinishVersusClose(t *testing.T) {
 	// Arrange.
 	tracker, provider, metrics, spans := newTestTrackerWithMetrics(t)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, RecordingOptions{})
 	require.NoError(t, err)
 	var committed atomic.Int32
@@ -224,7 +224,7 @@ func TestModelMetadataAcrossCompletedRoutes(t *testing.T) {
 				var err error
 				switch route {
 				case "completed":
-					err = tracker.Runtime().
+					err = tracker.Recorder().
 						RecordOperation(ctx, Operation{Locality: ExecutionRemote, Name: "chat", Model: "router-default"}, OperationResult{Status: OperationStatusOK, Response: ResponseMetadata{Model: actual}, Usage: Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}})
 				case "streaming":
 					err = tracker.RecordStreamingCompletion(
@@ -293,12 +293,12 @@ func TestFinalizedModelRejectsAllFurtherWrites(t *testing.T) {
 		for _, noop := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/noop=%t", terminal, noop), func(t *testing.T) {
 				// Arrange.
-				runtime := NoopRuntime()
+				recorder := NoopRecorder()
 				if !noop {
 					tracker, _, _ := newTestTracker(t)
-					runtime = tracker.Runtime()
+					recorder = tracker.Recorder()
 				}
-				_, handle, err := runtime.StartOperation(
+				_, handle, err := recorder.StartOperation(
 					context.Background(),
 					Operation{Locality: ExecutionRemote, Name: "chat"},
 					RecordingOptions{},
@@ -315,7 +315,7 @@ func TestFinalizedModelRejectsAllFurtherWrites(t *testing.T) {
 				require.ErrorIs(t, handle.Finish(OperationResult{Duration: time.Second}), ErrFinalized)
 				require.ErrorIs(
 					t,
-					handle.RecordStreamingUpdate(Usage{InputTokens: Observe(-1, UnitTokens, SourceMeasured)}),
+					handle.ValidateStreamingUpdate(Usage{InputTokens: Observe(-1, UnitTokens, SourceMeasured)}),
 					ErrFinalized,
 				)
 				require.ErrorIs(t, handle.Close(), ErrFinalized)

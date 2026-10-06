@@ -32,7 +32,7 @@ func TestPayloadPoliciesProtectDynamicKeys(t *testing.T) {
 		call := policy.SanitizeToolCall(ToolCall{Arguments: raw})
 		result := policy.SanitizeToolResult(ToolResult{Status: OperationStatusOK, Result: raw})
 		require.NoError(t, tracker.RecordInteraction(context.Background(), testMeta(), payload, Usage{}))
-		_, end, startErr := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "test", Arguments: raw})
+		_, end, startErr := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "test", Arguments: raw})
 		require.NoError(t, startErr)
 		require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: raw}))
 		flushTestProvider(t, provider)
@@ -86,7 +86,7 @@ func TestPayloadJSONInputIsBounded(t *testing.T) {
 	}
 	// The regular recording path must use the same policy boundary.
 	tracker, provider, exporter := newTestTracker(t, WithPayloadPolicy(policy))
-	_, end, startErr := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "test", Arguments: inputs[0]})
+	_, end, startErr := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "test", Arguments: inputs[0]})
 	require.NoError(t, startErr)
 	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusOK, Result: inputs[1]}))
 	flushTestProvider(t, provider)

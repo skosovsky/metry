@@ -43,7 +43,7 @@ func TestBoundedJSONMinimumBudgetAndConstructorDiagnostic(t *testing.T) {
 		encoded, err := boundedJSON([]string{"secret"}, budget)
 		require.ErrorIs(t, err, ErrInvalidObservation)
 		assert.Empty(t, encoded)
-		tracker, err := NewTrackerFromProvider(provider, WithMaxContextLength(budget))
+		tracker, err := NewTrackerFromProvider(provider, WithPayloadByteLimit(budget))
 		require.ErrorIs(t, err, ErrInvalidObservation)
 		assert.Nil(t, tracker)
 		assert.NotContains(t, err.Error(), "secret")
@@ -83,8 +83,8 @@ func (*countingPayloadPolicy) SanitizeToolResult(result ToolResult) ToolResult {
 
 func TestInvalidPayloadCanBeCorrectedBeforeHandleFinalization(t *testing.T) {
 	// Arrange.
-	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
-	_, handle, err := tracker.Runtime().StartOperation(context.Background(),
+	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(64))
+	_, handle, err := tracker.Recorder().StartOperation(context.Background(),
 		Operation{Name: profileChatOperation, Locality: ExecutionRemote}, RecordingOptions{})
 	require.NoError(t, err)
 	// Act.
@@ -110,8 +110,8 @@ func TestInvalidPayloadCanBeCorrectedBeforeHandleFinalization(t *testing.T) {
 
 func TestToolStructuredPayloadLimitsAndBoundedDiagnostic(t *testing.T) {
 	// Arrange.
-	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
-	_, end, startErr := tracker.Runtime().StartTool(context.Background(), ToolCall{
+	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(64))
+	_, end, startErr := tracker.Recorder().StartTool(context.Background(), ToolCall{
 		Name: "search", Arguments: `{"large":"` + strings.Repeat("secret", 200) + `"}`,
 	})
 	require.NoError(t, startErr)

@@ -15,34 +15,34 @@ import (
 	"github.com/skosovsky/metry/metrytest"
 )
 
-func TestRuntimeConstructorReturnsConfigurationErrors(t *testing.T) {
+func TestRecorderConstructorReturnsConfigurationErrors(t *testing.T) {
 	// Arrange.
 	provider, _ := metrytest.NewTestProvider(t)
 	unsupported := DefaultProfile()
-	unsupported.ID = "unsupported"
+	unsupported.SeriesBudget = 0
 	mismatch := DefaultProfile()
 	mismatch.PayloadPolicyID = profileHashPolicy
 	cases := map[string][]Option{
-		"zero payload budget":   {WithMaxContextLength(0)},
-		"negative event budget": {WithMaxEventLength(-1)},
-		"unsupported profile":   {WithProfile(unsupported)},
+		"zero payload budget":   {WithPayloadByteLimit(0)},
+		"negative event budget": {WithEventTextByteLimit(-1)},
+		"invalid series budget": {WithProfile(unsupported)},
 		"policy mismatch":       {WithProfile(mismatch)},
 		"undeclared raw":        {WithPayloadPolicy(RawPayloadPolicy())},
 	}
 	for name, opts := range cases {
 		t.Run(name, func(t *testing.T) {
 			// Act.
-			runtime, err := NewRuntimeFromProvider(provider, opts...)
+			recorder, err := NewRecorderFromProvider(provider, opts...)
 			// Assert: caller receives error, no usable recorder silently replaces it.
 			require.ErrorIs(t, err, ErrInvalidObservation)
-			require.Nil(t, runtime)
+			require.Nil(t, recorder)
 		})
 	}
 	// Act.
-	runtime, err := NewRuntimeFromProvider(nil)
+	recorder, err := NewRecorderFromProvider(nil)
 	// Assert.
 	require.ErrorIs(t, err, ErrProviderRequired)
-	require.Nil(t, runtime)
+	require.Nil(t, recorder)
 }
 
 type failingInstrumentMeter struct {
@@ -87,7 +87,7 @@ type failingInstrumentProvider struct {
 
 func (p failingInstrumentProvider) Meter(string, ...metric.MeterOption) metric.Meter { return p.meter }
 
-func TestRuntimeConstructorReturnsInstrumentErrors(t *testing.T) {
+func TestRecorderConstructorReturnsInstrumentErrors(t *testing.T) {
 	for _, name := range []string{
 		InputTokenUsageMetricName, OutputTokenUsageMetricName, ObservedOperationDurationMetricName,
 		InvocationDurationMetricName, TokenComponentUsageMetricName, OperationDurationMetricName,
@@ -106,15 +106,15 @@ func TestRuntimeConstructorReturnsInstrumentErrors(t *testing.T) {
 			})
 			require.NoError(t, err)
 			// Act.
-			runtime, err := NewRuntimeFromProvider(provider)
+			recorder, err := NewRecorderFromProvider(provider)
 			// Assert.
 			require.ErrorIs(t, err, failure)
-			require.Nil(t, runtime)
+			require.Nil(t, recorder)
 		})
 	}
 }
 
-func TestRuntimeExplicitOptionalComposition(t *testing.T) {
+func TestRecorderExplicitOptionalComposition(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		name := "disabled"
 		if enabled {
@@ -123,14 +123,14 @@ func TestRuntimeExplicitOptionalComposition(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// Arrange: the host decides enablement before constructor invocation.
 			provider, exports := metrytest.NewTestProvider(t)
-			runtime := NoopRuntime()
+			recorder := NoopRecorder()
 			if enabled {
 				var err error
-				runtime, err = NewRuntimeFromProvider(provider)
+				recorder, err = NewRecorderFromProvider(provider)
 				require.NoError(t, err)
 			}
 			// Act.
-			require.NoError(t, runtime.RecordOperation(context.Background(),
+			require.NoError(t, recorder.RecordOperation(context.Background(),
 				Operation{Name: "chat", Locality: ExecutionRemote}, OperationResult{Status: OperationStatusOK}))
 			require.NoError(t, provider.ForceFlush(context.Background()))
 			// Assert.

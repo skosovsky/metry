@@ -194,7 +194,7 @@ func validateToolJSONInput(raw string) error {
 	return nil
 }
 
-func boundedToolJSON(raw string, cfg runtimeConfig) (string, error) {
+func boundedToolJSON(raw string, cfg recorderConfig) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
@@ -202,11 +202,11 @@ func boundedToolJSON(raw string, cfg runtimeConfig) (string, error) {
 		return "", err
 	}
 	if json.Valid([]byte(raw)) {
-		return boundedJSON(json.RawMessage(raw), cfg.MaxContextLength())
+		return boundedJSON(json.RawMessage(raw), cfg.PayloadByteLimit())
 	}
 	// Tool inputs may be plain text. Encode them as a JSON string rather than
 	// emitting malformed structured content or silently interpreting fragments.
-	return boundedJSON(raw, cfg.MaxContextLength())
+	return boundedJSON(raw, cfg.PayloadByteLimit())
 }
 
 func recordPayloadDiagnostic(span trace.Span, err error) {

@@ -58,7 +58,7 @@ func validModelErrorType(value string) bool {
 }
 
 func resolveToolOutcome(t *Tracker, status Outcome, businessErr error, explicit ErrorClass) (string, string, error) {
-	cfg := defaultRuntimeConfig()
+	cfg := defaultRecorderConfig()
 	if t != nil {
 		cfg = t.cfg
 	}

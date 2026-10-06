@@ -46,17 +46,17 @@ func TestNewTrackerFromProvider_KeepsTrackersIsolated(t *testing.T) {
 
 	tracker1, err := NewTrackerFromProvider(provider1,
 		WithPayloadPolicy(RedactPayloadPolicy()),
-		WithMaxContextLength(96),
+		WithPayloadByteLimit(96),
 	)
 	require.NoError(t, err)
 	tracker2, err := NewTrackerFromProvider(provider2,
-		WithMaxContextLength(32),
+		WithPayloadByteLimit(32),
 	)
 	require.NoError(t, err)
 
 	toolJSON := `{"prompt":"` + strings.Repeat("a", 512) + `"}`
-	recorder1 := tracker1.Runtime()
-	recorder2 := tracker2.Runtime()
+	recorder1 := tracker1.Recorder()
+	recorder2 := tracker2.Recorder()
 
 	ctx1, end1, startErr := recorder1.StartTool(context.Background(), ToolCall{
 		Name:      "search",

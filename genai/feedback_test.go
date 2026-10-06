@@ -141,8 +141,8 @@ func TestFeedbackExplanationUsesEventBudgetAndRejectsInvalidUTF8BeforeWrites(t *
 	tracker, provider, exporter := newTestTracker(
 		t,
 		WithRawPayloads(),
-		WithMaxContextLength(256),
-		WithMaxEventLength(48),
+		WithPayloadByteLimit(256),
+		WithEventTextByteLimit(48),
 	)
 	linked := metrytest.AsyncHandleFromSpanContext(t, testutil.NewTestParentSpanContext(false))
 	// Act.

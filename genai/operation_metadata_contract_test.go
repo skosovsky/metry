@@ -19,10 +19,10 @@ func TestCompletedObservationsRequireEffectiveOperationBeforeAnyWrites(t *testin
 		tracker, provider, metricExporter, exporter := newTestTrackerWithMetrics(t)
 		usage := Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}
 		// Act.
-		err := tracker.Runtime().
+		err := tracker.Recorder().
 			RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: name}, OperationResult{Usage: usage})
 		interactionErr := tracker.RecordInteraction(context.Background(), Meta{Operation: name}, Payload{}, usage)
-		noopErr := NoopRuntime().RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: name}, OperationResult{Usage: usage})
+		noopErr := NoopRecorder().RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: name}, OperationResult{Usage: usage})
 		flushTestProvider(t, provider)
 		metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 		// Assert.
@@ -46,9 +46,9 @@ func TestStreamingCompletionRequiresEffectiveOperationBeforeMetrics(t *testing.T
 		// Act.
 		diagnostics := []error{
 			tracker.RecordStreamingCompletion(context.Background(), event),
-			tracker.Runtime().RecordStreamingCompletion(context.Background(), event),
-			NoopRuntime().RecordStreamingCompletion(context.Background(), event),
-			(trackerRuntime{}).RecordStreamingCompletion(context.Background(), event),
+			tracker.Recorder().RecordStreamingCompletion(context.Background(), event),
+			NoopRecorder().RecordStreamingCompletion(context.Background(), event),
+			(trackerRecorder{}).RecordStreamingCompletion(context.Background(), event),
 		}
 		flushTestProvider(t, provider)
 		metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
@@ -72,8 +72,8 @@ func TestStreamingCompletionAcceptsCallerScopeOperation(t *testing.T) {
 	event := StreamingCompletion{Usage: Usage{OutputTokens: Observe(0, UnitTokens, SourceMeasured)},
 		FirstTokenPresent: true, TotalDuration: time.Second}
 	// Act.
-	require.NoError(t, tracker.Runtime().RecordStreamingCompletion(ctx, event))
-	require.NoError(t, NoopRuntime().RecordStreamingCompletion(ctx, event))
+	require.NoError(t, tracker.Recorder().RecordStreamingCompletion(ctx, event))
+	require.NoError(t, NoopRecorder().RecordStreamingCompletion(ctx, event))
 	flushTestProvider(t, provider)
 	metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
 	// Assert: caller metadata permits a measured-zero observation once.
@@ -89,9 +89,9 @@ func TestCompletedObservationsAcceptCallerDeclaredScopeOperation(t *testing.T) {
 	tracker, provider, exporter := newTestTracker(t)
 	ctx := WithScope(context.Background(), Scope{Operation: profileChatOperation})
 	// Act.
-	require.NoError(t, tracker.Runtime().RecordOperation(ctx, Operation{Locality: ExecutionRemote}, OperationResult{}))
+	require.NoError(t, tracker.Recorder().RecordOperation(ctx, Operation{Locality: ExecutionRemote}, OperationResult{}))
 	require.NoError(t, tracker.RecordInteraction(ctx, Meta{}, Payload{}, Usage{}))
-	require.NoError(t, NoopRuntime().RecordOperation(ctx, Operation{Locality: ExecutionRemote}, OperationResult{}))
+	require.NoError(t, NoopRecorder().RecordOperation(ctx, Operation{Locality: ExecutionRemote}, OperationResult{}))
 	flushTestProvider(t, provider)
 	// Assert: a scope value is caller-owned metadata, not a synthetic fallback.
 	spans := exporter.GetSpans()

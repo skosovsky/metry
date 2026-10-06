@@ -26,7 +26,7 @@ func BenchmarkPayloadEncode(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				if _, err := boundedJSON(raw, defaultMaxContextLength); err != nil {
+				if _, err := boundedJSON(raw, defaultPayloadByteLimit); err != nil {
 					b.Fatal(err)
 				}
 			}

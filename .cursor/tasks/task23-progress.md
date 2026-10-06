@@ -20,7 +20,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T05 Durable trace restoration | R04 | Own W3C decoding across W3C/baggage/custom transports, exact reference restore over foreign ctx; policy rejection returns error and original ctx | `fix: trace restore` | accepted |
 | T06 Raw enrichment and bounded propagation | R05, D12, D13 | Raw string span/log/private/transport AAA, literal percent stability, invalid keys; ordinary allowlisted W3C strings; deterministic byte/member overflow tests | `fix: baggage values` | accepted |
 | T07 Private GenAI scope | R06 | Package/Tracker scope and direct Meta sentinel privacy across parent/child/logs; originals survive merge, safe/raw opt-in, local precedence/remote trust | `fix: scope privacy` | accepted |
-| T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | pending |
+| T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | accepted |
 | T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | pending |
 | T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | pending |
 | T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | pending |
@@ -171,3 +171,22 @@ creator, partial merges are immutable, explicit Meta/private/admitted enrichment
 precedence and arbitrary baggage rejection are preserved. Docs state raw Enrich
 boundary and worker reapplication. Limits: no absolute bug-free claim or external
 backend verification; serialized OTLP fixture remains T13.
+
+T08 accepted after correcting first-review documentation findings: mechanical
+rename had altered historical removed Runtime names and one README sentence.
+Repeat independent reviews: `t08_completeness` 100%, no gaps;
+`t08_correctness` no unresolved findings. Both rechecked the current diff and
+independently ran GenAI tests; correctness also ran root package tests. Parent
+root `go test -p 2 -race ./...`, root lint (0 issues), gRPC/OTLP module tests and
+all 9 examples passed. Build parallelism was bounded after a transient temporary
+storage failure; subsequent checks passed. Existing conformance/export fixtures
+and pinned scope/schema assertions remain; new AAA checks detached immutable
+schema fields/boundaries, effective vs fixed error enums, resolved byte getter
+and channel names, exact typed SDK scope/version/schema and zero-provider noop
+SDK behavior. Existing stream tests prove validation-only updates, known-zero
+TTFT and single Finish accounting. All public Recorder names and byte-limit
+options/declarations migrated without aliases; scalar TTFT, pretend-schema input,
+MeterTracer bridge and obsolete errors/tests removed, private async bridge kept.
+Migration records exact removals/renames and unchanged wire semantics. Limits:
+no external backend proof or absolute absence-of-bugs claim; complete cross-module
+release/final acceptance remains T14.

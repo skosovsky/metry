@@ -7,7 +7,7 @@ import (
 )
 
 func TestContractRejectsExplicitInvalidBudgets(t *testing.T) {
-	for _, option := range []Option{WithMaxContextLength(0), WithMaxContextLength(len(truncatedJSONMarker) - 1), WithMaxContextLength(maxPayloadInputBytes + 1), WithMaxEventLength(0), WithMaxEventLength(-1), WithMaxEventLength(maxPayloadInputBytes + 1)} {
+	for _, option := range []Option{WithPayloadByteLimit(0), WithPayloadByteLimit(len(truncatedJSONMarker) - 1), WithPayloadByteLimit(maxPayloadInputBytes + 1), WithEventTextByteLimit(0), WithEventTextByteLimit(-1), WithEventTextByteLimit(maxPayloadInputBytes + 1)} {
 		// Arrange.
 		options := []Option{option}
 		// Act.
@@ -25,22 +25,22 @@ func TestContractSnapshotIsDetachedAndResolved(t *testing.T) {
 		t,
 		WithProfile(profile),
 		WithRawPayloads(),
-		WithMaxContextLength(100000),
-		WithMaxEventLength(17),
+		WithPayloadByteLimit(100000),
+		WithEventTextByteLimit(17),
 	)
 	// Act.
 	contract := tracker.Contract()
 	copied := contract.Profile()
-	copied.Fields[0].Name = "changed"
+	fields := contract.Schema().Fields()
+	fields[0].Name = "changed"
 	copied.Dimensions[1].Values[0] = "changed"
 	channels := contract.PayloadChannels()
 	channels[0].OutputByteLimit = 1
-	profile.Fields[0].Name = "changed"
 	// Assert.
 	require.NoError(t, contract.Validate())
 	require.True(t, contract.RawEnabled())
-	require.Equal(t, InstrumentationProfileID, contract.Profile().ID)
-	require.NotEqual(t, "changed", contract.Profile().Fields[0].Name)
+	require.Equal(t, InstrumentationProfileID, contract.Schema().ID())
+	require.NotEqual(t, "changed", contract.Schema().Fields()[0].Name)
 	require.NotEqual(t, "changed", contract.Profile().Dimensions[1].Values[0])
 	for _, channel := range contract.PayloadChannels() {
 		expected := 100000

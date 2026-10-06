@@ -23,29 +23,29 @@ func main() {
 	defer func() { _ = provider.Shutdown(context.Background()) }()
 	tracker, err := genai.NewTrackerFromProvider(provider)
 	must(err)
-	runtime := tracker.Runtime().ForProvider("synthetic")
+	recorder := tracker.Recorder().ForProvider("synthetic")
 
 	var evidence observationEvidence
-	observeStandaloneAndSingle(ctx, runtime, &evidence)
+	observeStandaloneAndSingle(ctx, recorder, &evidence)
 
 	// The host chooses two agents and the join. IDs below are existing host IDs.
-	workflowCtx, workflow, err := runtime.StartWorkflow(ctx, genai.WorkflowInvocation{
+	workflowCtx, workflow, err := recorder.StartWorkflow(ctx, genai.WorkflowInvocation{
 		Name: "research", ID: "workflow-resource", Version: "v1", ConversationID: "conversation-7",
 	}, genai.RecordingOptions{})
 	must(err)
 	evidence.workflow = trace.SpanContextFromContext(workflowCtx)
-	first, firstContext := observeAgent(workflowCtx, runtime, genai.ExecutionLocal, "researcher", "agent-local")
+	first, firstContext := observeAgent(workflowCtx, recorder, genai.ExecutionLocal, "researcher", "agent-local")
 	evidence.first = firstContext
 	second, secondContext := observeAgent(
-		workflowCtx, runtime, genai.ExecutionRemote, "hosted", "provider-agent-resource",
+		workflowCtx, recorder, genai.ExecutionRemote, "hosted", "provider-agent-resource",
 	)
 	evidence.hosted = secondContext
-	joinCtx, join, err := runtime.StartAgent(workflowCtx, genai.AgentInvocation{
+	joinCtx, join, err := recorder.StartAgent(workflowCtx, genai.AgentInvocation{
 		Name: "join", Locality: genai.ExecutionLocal,
 	}, genai.RecordingOptions{Links: []metry.AsyncHandle{first, second}})
 	must(err)
 	evidence.join = trace.SpanContextFromContext(joinCtx)
-	must(observeRetrieval(joinCtx, runtime))
+	must(observeRetrieval(joinCtx, recorder))
 	must(join.Finish(genai.InvocationResult{Status: genai.OperationStatusOK}))
 	workflowReference, err := metry.NewAsyncHandle(workflowCtx)
 	must(err)
@@ -60,7 +60,7 @@ func main() {
 	must(err)
 	resumed, err := provider.ContextWithTraceSnapshot(ctx, parsed)
 	must(err)
-	detachedCtx, detached, err := runtime.StartAgent(resumed, genai.AgentInvocation{
+	detachedCtx, detached, err := recorder.StartAgent(resumed, genai.AgentInvocation{
 		Name: "resumed", Locality: genai.ExecutionLocal,
 	}, genai.RecordingOptions{Detached: true})
 	must(err)
@@ -81,31 +81,31 @@ func main() {
 	)
 }
 
-func observeStandaloneAndSingle(ctx context.Context, runtime genai.Runtime, evidence *observationEvidence) {
+func observeStandaloneAndSingle(ctx context.Context, recorder genai.Recorder, evidence *observationEvidence) {
 	// Model and tool calls need no agent, workflow or business identity.
 	var err error
-	evidence.standaloneModel, err = observeModel(ctx, runtime, genai.ExecutionRemote)
+	evidence.standaloneModel, err = observeModel(ctx, recorder, genai.ExecutionRemote)
 	must(err)
-	evidence.standaloneTool, err = observeTool(ctx, runtime)
+	evidence.standaloneTool, err = observeTool(ctx, recorder)
 	must(err)
 
 	// A single local agent owns both a local model and a tool interval.
-	agentCtx, agent, err := runtime.StartAgent(ctx, genai.AgentInvocation{
+	agentCtx, agent, err := recorder.StartAgent(ctx, genai.AgentInvocation{
 		Name: "standalone", Locality: genai.ExecutionLocal,
 	}, genai.RecordingOptions{})
 	must(err)
 	evidence.singleAgent = trace.SpanContextFromContext(agentCtx)
-	evidence.singleModel, err = observeModel(agentCtx, runtime, genai.ExecutionLocal)
+	evidence.singleModel, err = observeModel(agentCtx, recorder, genai.ExecutionLocal)
 	must(err)
-	evidence.singleTool, err = observeTool(agentCtx, runtime)
+	evidence.singleTool, err = observeTool(agentCtx, recorder)
 	must(err)
 	must(agent.Finish(genai.InvocationResult{Status: genai.OperationStatusOK}))
 }
 
 func observeModel(
-	ctx context.Context, runtime genai.Runtime, locality genai.ExecutionLocality,
+	ctx context.Context, recorder genai.Recorder, locality genai.ExecutionLocality,
 ) (trace.SpanContext, error) {
-	modelCtx, handle, err := runtime.StartOperation(ctx, genai.Operation{
+	modelCtx, handle, err := recorder.StartOperation(ctx, genai.Operation{
 		Name: "chat", Locality: locality,
 	}, genai.RecordingOptions{})
 	if err != nil {
@@ -119,11 +119,11 @@ func observeModel(
 
 func observeAgent(
 	ctx context.Context,
-	runtime genai.Runtime,
+	recorder genai.Recorder,
 	locality genai.ExecutionLocality,
 	name, id string,
 ) (metry.AsyncHandle, trace.SpanContext) {
-	childCtx, handle, err := runtime.StartAgent(ctx, genai.AgentInvocation{
+	childCtx, handle, err := recorder.StartAgent(ctx, genai.AgentInvocation{
 		Name: name, ID: id, Version: "v1", Locality: locality,
 	}, genai.RecordingOptions{})
 	must(err)
@@ -133,8 +133,8 @@ func observeAgent(
 	return reference, trace.SpanContextFromContext(childCtx)
 }
 
-func observeRetrieval(ctx context.Context, runtime genai.Runtime) error {
-	_, handle, err := runtime.StartRetrieval(ctx, "", genai.RetrievalRequest{
+func observeRetrieval(ctx context.Context, recorder genai.Recorder) error {
+	_, handle, err := recorder.StartRetrieval(ctx, "", genai.RetrievalRequest{
 		Provider: "synthetic", Source: "documents", TopK: 1, Locality: genai.ExecutionLocal,
 	})
 	if err != nil {
@@ -164,8 +164,8 @@ type observationEvidence struct {
 	detached        trace.SpanContext
 }
 
-func observeTool(ctx context.Context, runtime genai.Runtime) (trace.SpanContext, error) {
-	toolCtx, handle, err := runtime.StartTool(ctx, genai.ToolCall{Name: "lookup"})
+func observeTool(ctx context.Context, recorder genai.Recorder) (trace.SpanContext, error) {
+	toolCtx, handle, err := recorder.StartTool(ctx, genai.ToolCall{Name: "lookup"})
 	if err != nil {
 		return trace.SpanContext{}, err
 	}

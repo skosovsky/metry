@@ -45,7 +45,7 @@ func TestToolAndRetrievalOutcomeMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange.
 			tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
-			_, tool, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "lookup"})
+			_, tool, err := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "lookup"})
 			require.NoError(t, err)
 			_, retrieval, err := tracker.StartRetrieval(
 				context.Background(),
@@ -123,7 +123,7 @@ func TestToolAndRetrievalInvalidFinishCorrectable(t *testing.T) {
 func TestToolAndRetrievalConcurrentFinishClose(t *testing.T) {
 	// Arrange.
 	tracker, provider, metrics, exporter := newTestTrackerWithMetrics(t)
-	_, tool, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "lookup"})
+	_, tool, err := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "lookup"})
 	require.NoError(t, err)
 	_, retrieval, err := tracker.StartRetrieval(
 		context.Background(),
@@ -220,7 +220,7 @@ func TestToolAndRetrievalZeroHandlesReject(t *testing.T) {
 func TestToolAndRetrievalDroppedSamplingStillValidate(t *testing.T) {
 	// Arrange.
 	tracker, provider, exporter := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
-	_, tool, err := tracker.Runtime().StartTool(context.Background(), ToolCall{Name: "lookup"})
+	_, tool, err := tracker.Recorder().StartTool(context.Background(), ToolCall{Name: "lookup"})
 	require.NoError(t, err)
 	_, retrieval, err := tracker.StartRetrieval(
 		context.Background(),

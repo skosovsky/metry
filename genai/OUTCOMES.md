@@ -8,8 +8,8 @@ This contract defines local recording lifecycles; callers own business execution
 - `ResponseMetadata{Model string}`; `OperationResult.Response ResponseMetadata`. RequestModel определяется Operation.Model/Meta.RequestModel/request scope. Meta.ResponseModel допускается только как явно наблюдавшийся caller факт; никакого request/scope fallback.
 - `ProviderAdapter.ParseResponse(any) (ResponseObservation,error)`; `ResponseObservation{Payload Payload,Usage Usage,Metadata ResponseMetadata,Status Outcome,ErrorType string}`. Adapter не хранит состояние. ParseRequest.Meta.ResponseModel сбрасывается перед применением actual response.
 - `OperationHandle.Finish(OperationResult) error`, `Close() error`.
-- `Runtime.StartTool(ctx,ToolCall,...ToolOption) (context.Context,*ToolHandle,error)`; `ToolHandle.Finish(ToolResult) error`, `Close() error`. Удалить ToolEnd и Runtime.RecordToolResult.
-- `Tracker.StartRetrieval(ctx,name,RetrievalRequest,...ChildSpanOption) (context.Context,*RetrievalHandle,error)`; тот же метод Runtime (noop validate). `RetrievalResult` добавляет `Status Outcome, Err error, ErrorClass ErrorClass`. `RetrievalHandle.Finish(RetrievalResult) error`, `Close() error`. Старые StartRetrievalSpan/RecordRetrievalResult удалить.
+- `Recorder.StartTool(ctx,ToolCall,...ToolOption) (context.Context,*ToolHandle,error)`; `ToolHandle.Finish(ToolResult) error`, `Close() error`. Удалить ToolEnd и Runtime.RecordToolResult.
+- `Tracker.StartRetrieval(ctx,name,RetrievalRequest,...ChildSpanOption) (context.Context,*RetrievalHandle,error)`; тот же метод Recorder (noop validate). `RetrievalResult` добавляет `Status Outcome, Err error, ErrorClass ErrorClass`. `RetrievalHandle.Finish(RetrievalResult) error`, `Close() error`. Старые StartRetrievalSpan/RecordRetrievalResult удалить.
 - Все handles локальные mutex-protected: invalid Finish ничего не пишет и исправим; успешный Finish/Close закрывает один раз, далее ErrFinalized. Нулевая/отсутствующая handle — bounded diagnostic. Close завершает unknown без fabricated usage/result/chunks. Noop validation равна recording validation.
 
 ## Outcome table

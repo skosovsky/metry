@@ -37,8 +37,8 @@ func main() {
 }
 
 func runStandalone(ctx context.Context, tracker *genai.Tracker) error {
-	runtime := tracker.Runtime()
-	_, model, err := runtime.StartOperation(
+	recorder := tracker.Recorder()
+	_, model, err := recorder.StartOperation(
 		ctx, genai.Operation{Name: "chat", Locality: genai.ExecutionRemote}, genai.RecordingOptions{},
 	)
 	if err != nil {
@@ -52,7 +52,7 @@ func runStandalone(ctx context.Context, tracker *genai.Tracker) error {
 		return finishErr
 	}
 	// This host-owned call preserves its business result even if instrumentation fails.
-	if _, businessErr := observeLookup(ctx, runtime, func(context.Context) (string, error) {
+	if _, businessErr := observeLookup(ctx, recorder, func(context.Context) (string, error) {
 		return `{"found":true}`, nil
 	}, func(err error) { fmt.Printf("tool telemetry: %v\n", err) }); businessErr != nil {
 		return businessErr
@@ -71,10 +71,10 @@ func runStandalone(ctx context.Context, tracker *genai.Tracker) error {
 }
 
 // observeLookup controls only this application's I/O; metry owns its observation.
-func observeLookup(ctx context.Context, runtime genai.Runtime,
+func observeLookup(ctx context.Context, recorder genai.Recorder,
 	call func(context.Context) (string, error), reportTelemetry func(error),
 ) (string, error) {
-	toolCtx, tool, telemetryErr := runtime.StartTool(ctx, genai.ToolCall{Name: "lookup"})
+	toolCtx, tool, telemetryErr := recorder.StartTool(ctx, genai.ToolCall{Name: "lookup"})
 	if telemetryErr != nil {
 		reportTelemetry(telemetryErr)
 		toolCtx = ctx

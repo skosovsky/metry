@@ -32,9 +32,9 @@ func TestModelBoundaryKindAndDurationRoute(t *testing.T) {
 			// Act.
 			if test.completed {
 				result.Duration = time.Second
-				require.NoError(t, tracker.Runtime().RecordOperation(context.Background(), operation, result))
+				require.NoError(t, tracker.Recorder().RecordOperation(context.Background(), operation, result))
 			} else {
-				_, handle, err := tracker.Runtime().StartOperation(context.Background(), operation, RecordingOptions{})
+				_, handle, err := tracker.Recorder().StartOperation(context.Background(), operation, RecordingOptions{})
 				require.NoError(t, err)
 				require.NoError(t, handle.Finish(result))
 			}
@@ -61,7 +61,7 @@ func TestLogicalAccountingDoesNotChangeRemoteBoundary(t *testing.T) {
 	tracker, provider, metrics, spans := newTestTrackerWithMetrics(t)
 	identity := CausalIdentity{RunID: "run", OperationID: "operation", Kind: IdentityLogical}
 	// Act.
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Name: "chat", Locality: ExecutionRemote}, RecordingOptions{Identity: identity})
 	require.NoError(t, err)
 	require.NoError(
@@ -97,7 +97,7 @@ func TestContractRawReferencePermissionIndependentOfContent(t *testing.T) {
 	contract, err := NewContract(
 		WithProfile(profile),
 		WithPayloadPolicy(RawPayloadPolicy()),
-		func(cfg *runtimeConfig) { cfg.recordPayloads = false },
+		func(cfg *recorderConfig) { cfg.recordPayloads = false },
 	)
 	// Assert.
 	require.NoError(t, err)
@@ -110,10 +110,10 @@ func TestInvalidModelMetadataRejectedBeforeWrites(t *testing.T) {
 		// Arrange.
 		tracker, provider, _, spans := newTestTrackerWithMetrics(t)
 		// Act.
-		_, handle, err := tracker.Runtime().StartOperation(context.Background(), operation, RecordingOptions{})
-		_, noopHandle, noopErr := NoopRuntime().StartOperation(context.Background(), operation, RecordingOptions{})
-		completedErr := tracker.Runtime().RecordOperation(context.Background(), operation, OperationResult{})
-		noopCompletedErr := NoopRuntime().RecordOperation(context.Background(), operation, OperationResult{})
+		_, handle, err := tracker.Recorder().StartOperation(context.Background(), operation, RecordingOptions{})
+		_, noopHandle, noopErr := NoopRecorder().StartOperation(context.Background(), operation, RecordingOptions{})
+		completedErr := tracker.Recorder().RecordOperation(context.Background(), operation, OperationResult{})
+		noopCompletedErr := NoopRecorder().RecordOperation(context.Background(), operation, OperationResult{})
 		flushTestProvider(t, provider)
 		// Assert.
 		require.ErrorIs(t, err, ErrInvalidObservation)

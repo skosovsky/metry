@@ -45,7 +45,7 @@ func prepareRetrievalDocuments(result RetrievalResult) ([]retrievalDocumentWire,
 	return documents, nil
 }
 
-func protectRetrievalDocuments(documents []retrievalDocumentWire, cfg runtimeConfig) {
+func protectRetrievalDocuments(documents []retrievalDocumentWire, cfg recorderConfig) {
 	for index := range documents {
 		document := &documents[index]
 		document.ID = referenceWithConfig(document.ID, cfg)

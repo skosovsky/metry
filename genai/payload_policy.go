@@ -346,7 +346,7 @@ func hashJSONLeaf(value any) any {
 	return fingerprintPayloadLabel(string(buf))
 }
 
-func sanitizeTextWithConfig(value string, cfg runtimeConfig) string {
+func sanitizeTextWithConfig(value string, cfg recorderConfig) string {
 	if value == "" {
 		return ""
 	}

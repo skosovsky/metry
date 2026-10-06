@@ -34,7 +34,7 @@ func (t *Tracker) RecordAsyncFeedback(
 			w.SetAttributes(
 				metry.StringAttribute(
 					EvaluationExplanation,
-					truncateContextWithLimit(feedbackText, t.cfg.MaxEventLength()),
+					truncateContextWithLimit(feedbackText, t.cfg.EventTextByteLimit()),
 				),
 			)
 		}

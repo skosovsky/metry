@@ -22,9 +22,9 @@ import (
 func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t, WithRawPayloads())
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 	parentIdentity := CausalIdentity{RunID: "parent", OperationID: "request", Kind: IdentityLogical}
-	ctx, parent, err := runtime.StartOperation(
+	ctx, parent, err := recorder.StartOperation(
 		context.Background(),
 		Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 		RecordingOptions{Identity: parentIdentity},
@@ -33,7 +33,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 	parentSC := trace.SpanContextFromContext(ctx)
 	// Act: two child runs and two physical attempts of one logical operation.
 	for _, child := range []string{"child-one", "child-two"} {
-		childCtx, childHandle, startErr := runtime.StartOperation(
+		childCtx, childHandle, startErr := recorder.StartOperation(
 			ctx,
 			Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 			RecordingOptions{
@@ -55,7 +55,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 				AttemptID:   attemptID,
 				Kind:        IdentityAttempt,
 			}
-			_, attempt, attemptErr := runtime.StartOperation(
+			_, attempt, attemptErr := recorder.StartOperation(
 				childCtx,
 				Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 				RecordingOptions{Identity: identity},
@@ -120,7 +120,7 @@ func TestCausalChildrenRetryAndLogicalAccounting(t *testing.T) {
 func TestOperationHandleConcurrentFinalizationAndValidationRetry(t *testing.T) {
 	// Arrange.
 	tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
-	_, handle, err := tracker.Runtime().
+	_, handle, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	require.NoError(t, err)
 	invalid := OperationResult{Usage: Usage{InputTokens: Observe(-1, UnitTokens, SourceMeasured)}}
@@ -169,7 +169,7 @@ func TestDetachedResumeLinksCompletedCheckpointAndFanIn(t *testing.T) {
 		StepID:      "checkpoint-step",
 		Kind:        IdentityLogical,
 	}
-	ctx, origin, err := tracker.Runtime().
+	ctx, origin, err := tracker.Recorder().
 		StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{Identity: identity})
 	require.NoError(t, err)
 	originSC := trace.SpanContextFromContext(ctx)
@@ -217,7 +217,7 @@ func TestDetachedResumeLinksCompletedCheckpointAndFanIn(t *testing.T) {
 	require.NoError(t, err)
 	links := []metry.AsyncHandle{firstLink, secondLink}
 	// Act.
-	_, resumed, err := tracker.Runtime().
+	_, resumed, err := tracker.Recorder().
 		StartOperation(workerCtx, Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{Identity: restoredIdentity, Detached: true, Links: links, PolicyID: restored.Policy})
 	require.NoError(t, err)
 	links[0] = metry.AsyncHandle{}
@@ -252,7 +252,7 @@ func TestMalformedCausalObservationsDoNotStartSpans(t *testing.T) {
 	}
 	// Act and Assert.
 	for _, option := range options {
-		_, handle, err := tracker.Runtime().
+		_, handle, err := tracker.Recorder().
 			StartOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: profileChatOperation}, option)
 		require.Error(t, err)
 		assert.Nil(t, handle)
@@ -266,7 +266,7 @@ func TestNoopOperationHandleHasNoExecutionDecisions(t *testing.T) {
 	// Arrange.
 	ctx := context.Background()
 	// Act.
-	gotContext, handle, err := NoopRuntime().StartOperation(ctx, Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
+	gotContext, handle, err := NoopRecorder().StartOperation(ctx, Operation{Locality: ExecutionRemote, Name: profileChatOperation}, RecordingOptions{})
 	// Assert.
 	require.NoError(t, err)
 	assert.Equal(t, ctx, gotContext)

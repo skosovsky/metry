@@ -36,7 +36,7 @@ func main() {
 	}
 	defer func() { _ = provider.Shutdown(context.Background()) }()
 
-	runtime, evaluations, err := exampleRecorders(provider)
+	recorder, evaluations, err := exampleRecorders(provider)
 	if err != nil {
 		panic(err)
 	}
@@ -58,7 +58,7 @@ func main() {
 		panic(err)
 	}
 
-	err = runtime.RecordOperation(
+	err = recorder.RecordOperation(
 		ctx,
 		genai.Operation{
 			Name:    demoOperation,
@@ -85,7 +85,7 @@ func main() {
 		panic(err)
 	}
 
-	if err := recordExampleTool(ctx, runtime); err != nil {
+	if err := recordExampleTool(ctx, recorder); err != nil {
 		panic(err)
 	}
 	endRequest()
@@ -102,8 +102,8 @@ func main() {
 	if err := provider.ForceFlush(ctx); err != nil {
 		panic(err)
 	}
-	if !hasRuntimeOperationSpan(traceMem.GetSpans()) {
-		panic("runtime operation span not exported")
+	if !hasRecorderOperationSpan(traceMem.GetSpans()) {
+		panic("recorder operation span not exported")
 	}
 	rm := metricMem.LastResourceMetrics()
 	if !hasFloat64Histogram(rm, genai.ObservedOperationDurationMetricName) {
@@ -118,7 +118,7 @@ func main() {
 	fmt.Printf("exported tool metric: %s\n", genai.ToolDurationMetricName)
 }
 
-func exampleRecorders(provider *metry.Provider) (genai.Runtime, *genai.EvaluationRecorder, error) {
+func exampleRecorders(provider *metry.Provider) (genai.Recorder, *genai.EvaluationRecorder, error) {
 	profile := genai.DefaultProfile()
 	for index := range profile.Dimensions {
 		switch profile.Dimensions[index].Key {
@@ -138,7 +138,7 @@ func exampleRecorders(provider *metry.Provider) (genai.Runtime, *genai.Evaluatio
 	if err != nil {
 		return nil, nil, err
 	}
-	return tracker.Runtime().ForProvider("provider"), tracker.EvaluationRecorder(), nil
+	return tracker.Recorder().ForProvider("provider"), tracker.EvaluationRecorder(), nil
 }
 
 func resumeExampleConsumer(provider *metry.Provider, token string) error {
@@ -168,7 +168,7 @@ func recordExampleEvaluation(recorder *genai.EvaluationRecorder, origin metry.As
 	})
 }
 
-func hasRuntimeOperationSpan(spans tracetest.SpanStubs) bool {
+func hasRecorderOperationSpan(spans tracetest.SpanStubs) bool {
 	for _, span := range spans {
 		if span.Name != demoOperation+" model" {
 			continue
@@ -218,8 +218,8 @@ func attrString(attrs []attribute.KeyValue, key string) string {
 	return value.AsString()
 }
 
-func recordExampleTool(ctx context.Context, runtime genai.Runtime) error {
-	_, tool, err := runtime.StartTool(ctx, genai.ToolCall{
+func recordExampleTool(ctx context.Context, recorder genai.Recorder) error {
+	_, tool, err := recorder.StartTool(ctx, genai.ToolCall{
 		Name: "search", CallID: "call-1", Arguments: `{"query":"private"}`,
 	})
 	if err != nil {

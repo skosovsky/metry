@@ -57,15 +57,15 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 					Usage{InputTokens: Observe(0, UnitTokens, SourceMeasured), Purpose: secret, PriceReference: secret},
 				),
 			)
-			runtime := tracker.Runtime().ForProvider(secret)
-			_, end, startErr := runtime.StartTool(context.Background(), ToolCall{
+			recorder := tracker.Recorder().ForProvider(secret)
+			_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 				Name: secret, CallID: secret, Arguments: `{"` + secret + `":"` + secret + `"}`,
 			})
 			require.NoError(t, startErr)
 			require.NoError(t, end.Finish(
 				ToolResult{Result: `{"` + secret + `":"` + secret + `"}`, Err: errors.New(secret)},
 			))
-			_, operation, err := runtime.
+			_, operation, err := recorder.
 				StartOperation(
 					context.Background(),
 					Operation{Locality: ExecutionRemote, Name: secret, Model: secret, Purpose: secret},
@@ -109,11 +109,11 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 			tracker.RecordCacheHit(retrievalCtx, true, secret)
 			require.NoError(t, tracker.RecordTraceIO(retrievalCtx, payload, payload))
 			require.NoError(t, finishRetrieval.Finish(RetrievalResult{Status: OperationStatusOK, ReturnedDocuments: 0}))
-			origin, err := runtime.StartAsync(context.Background(), secret)
+			origin, err := recorder.StartAsync(context.Background(), secret)
 			require.NoError(t, err)
 			require.NoError(
 				t,
-				runtime.RecordAsyncResult(
+				recorder.RecordAsyncResult(
 					context.Background(),
 					origin,
 					AsyncResult{Name: secret, Err: errors.New(secret)},
@@ -161,7 +161,7 @@ func assertExportedPriceReference(t *testing.T, value, secret string, raw bool) 
 
 func assertDeclaredEvent(t *testing.T, name string, attrs []attribute.KeyValue) {
 	t.Helper()
-	for _, event := range DefaultProfile().Events() {
+	for _, event := range Schema().Events() {
 		if event.Name != name {
 			continue
 		}
@@ -177,7 +177,7 @@ func assertDeclaredEvent(t *testing.T, name string, attrs []attribute.KeyValue) 
 func assertDeclaredWireFields(t *testing.T, attrs []attribute.KeyValue) {
 	t.Helper()
 	fields := make(map[string]ProfileField)
-	for _, field := range DefaultProfile().Fields {
+	for _, field := range Schema().Fields() {
 		fields[field.Name] = field
 	}
 	for _, attr := range attrs {
@@ -232,7 +232,7 @@ func TestMediaDescriptorsRejectInlineBodiesAndProtectReferences(t *testing.T) {
 func TestTextInputBoundIsAppliedBeforeCustomSanitizer(t *testing.T) {
 	// Arrange.
 	policy := &countingPayloadPolicy{calls: 0}
-	cfg := buildRuntimeConfig(WithPayloadPolicy(policy))
+	cfg := buildRecorderConfig(WithPayloadPolicy(policy))
 	// Act.
 	result := sanitizeTextWithConfig(strings.Repeat("x", maxPayloadInputBytes+1), cfg)
 	// Assert.

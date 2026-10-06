@@ -186,7 +186,7 @@ func TestEvaluationPrivacyAndBoundedReasoning(t *testing.T) {
 		tracker, provider, exporter := newTestTracker(
 			t,
 			WithPayloadPolicy(policy),
-			WithMaxEventLength(64),
+			WithEventTextByteLimit(64),
 		)
 		evaluation := successfulEvaluation()
 		evaluation.ObservationID = "secret-marker"
@@ -228,17 +228,17 @@ func TestEvaluationHonorsDropSampling(t *testing.T) {
 }
 
 func TestEvaluationRawReasoningLimitsAndCallerDefinedScoreScale(t *testing.T) {
-	for _, limit := range []int{64, defaultMaxEventLength} {
+	for _, limit := range []int{64, defaultEventTextByteLimit} {
 		// Arrange: the first rune at the cutoff may span several bytes.
 		tracker, provider, exporter := newTestTracker(
 			t,
 			WithRawPayloads(),
-			WithMaxEventLength(limit),
+			WithEventTextByteLimit(limit),
 		)
 		evaluation := successfulEvaluation()
 		score := -12.5 // The metric contract, not metry, defines a valid score range.
 		evaluation.Outcome, evaluation.Score = "", &score
-		evaluation.Reasoning = strings.Repeat("世", defaultMaxEventLength)
+		evaluation.Reasoning = strings.Repeat("世", defaultEventTextByteLimit)
 		// Act.
 		require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
 		flushTestProvider(t, provider)

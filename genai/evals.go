@@ -197,14 +197,14 @@ func (r *EvaluationRecorder) attributes(e Evaluation) []attribute.KeyValue {
 			EvaluationExplanation,
 			truncateContextWithLimit(
 				sanitizeTextWithConfig(e.Reasoning, r.tracker.cfg),
-				r.tracker.cfg.MaxEventLength(),
+				r.tracker.cfg.EventTextByteLimit(),
 			),
 		))
 	}
 	return attrs
 }
 
-func evaluationMetricWithConfig(metric EvaluationMetric, cfg runtimeConfig) string {
+func evaluationMetricWithConfig(metric EvaluationMetric, cfg recorderConfig) string {
 	switch metric {
 	case EvaluationFaithfulness, EvaluationAnswerRelevance, EvaluationContextPrecision, EvaluationHallucinationIndex:
 		return string(metric)

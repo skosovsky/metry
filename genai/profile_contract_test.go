@@ -18,13 +18,13 @@ import (
 )
 
 func TestProfileRejectsUnsafeDeclarationsBeforeFixtures(t *testing.T) {
-	for _, scenario := range []string{"unsupported_profile", "raw", "ownership", "mapping", "unit", "fields", "missing_field", "unknown_field", "encoding", "boundary_missing", "boundary_accounting", "boundary_operation", "boundary_unknown"} {
+	for _, scenario := range []string{"unsupported_profile", "raw", "ownership", "mapping", "unit", "boundary_unknown"} {
 		t.Run(scenario, func(t *testing.T) {
 			// Arrange.
 			profile := DefaultProfile()
 			adapter := AdapterDeclaration{
-				ProfileID:  profile.ID,
-				Mapping:    profile.Mapping,
+				ProfileID:  Schema().ID(),
+				Mapping:    Schema().Mapping(),
 				Boundaries: []string{"model"},
 				Units:      []FieldUnitDeclaration{{Field: InputTokens, Unit: UnitTokens}},
 			}
@@ -33,7 +33,7 @@ func TestProfileRejectsUnsafeDeclarationsBeforeFixtures(t *testing.T) {
 			called := false
 			switch scenario {
 			case "unsupported_profile":
-				profile.ID = "fixture-secret"
+				declarations[0].ProfileID = "fixture-secret"
 			case "raw":
 				raw = true
 			case "ownership":
@@ -42,28 +42,9 @@ func TestProfileRejectsUnsafeDeclarationsBeforeFixtures(t *testing.T) {
 				declarations[0].Mapping = "fixture-secret"
 			case "unit":
 				declarations[0].Units = []FieldUnitDeclaration{{Field: InputTokens, Unit: UnitFrames}}
-			case "fields":
-				profile.Fields[7].Unit = UnitFrames
-			case "missing_field":
-				profile.Fields = profile.Fields[:len(profile.Fields)-1]
-			case "unknown_field":
-				profile.Fields = append(
-					profile.Fields,
-					ProfileField{Name: "fixture-secret", Encoding: EncodingString, Stability: StabilityExtension},
-				)
-			case "encoding":
-				profile.Fields[len(profile.Fields)-1].Encoding = EncodingInteger
-			case "boundary_missing":
-				profile.Boundaries = profile.Boundaries[:len(profile.Boundaries)-1]
-			case "boundary_accounting":
-				profile.Boundaries[0].Accounting = false
-			case "boundary_operation":
-				profile.Boundaries[0].Operation = "fixture-secret"
+
 			case "boundary_unknown":
-				profile.Boundaries = append(
-					profile.Boundaries,
-					Boundary{Name: "fixture-secret", Operation: "fixture-secret"},
-				)
+				declarations[0].Boundaries = []string{"fixture-secret"}
 			}
 			// Act.
 			_, err := CheckConformance(testContract(profile, raw),
@@ -82,20 +63,20 @@ func TestProfileSchemaDeclarationsAreDetachedAndCoverOwnedChannels(t *testing.T)
 	// Arrange.
 	profile := DefaultProfile()
 	// Act.
-	enums := profile.Enumerations()
-	channels := profile.PayloadChannels()
+	enums := effectiveEnumerations(profile)
+	channels := Schema().PayloadChannels()
 	// Assert.
 	require.NoError(t, profile.Validate())
-	require.LessOrEqual(t, len(profile.Fields), maxProfileEntries)
+	require.LessOrEqual(t, len(Schema().Fields()), maxProfileEntries)
 	require.NotEmpty(t, enums)
 	original := enums[0].Values[0]
 	enums[0].Values[0] = "changed"
-	assert.Equal(t, original, profile.Enumerations()[0].Values[0])
+	assert.Equal(t, original, effectiveEnumerations(profile)[0].Values[0])
 	for _, channel := range channels {
 		assert.Equal(t, maxPayloadInputBytes, channel.InputByteLimit)
 		assert.NotEmpty(t, channel.BudgetSetting)
 		found := false
-		for _, field := range profile.Fields {
+		for _, field := range Schema().Fields() {
 			if field.Name == channel.Attribute {
 				found = field.Encoding == channel.Encoding
 			}
@@ -103,14 +84,14 @@ func TestProfileSchemaDeclarationsAreDetachedAndCoverOwnedChannels(t *testing.T)
 		assert.True(t, found, "channel has no matching field: %s", channel.Attribute)
 	}
 	channels[0].Attribute = "changed"
-	assert.Equal(t, SystemInstructions, profile.PayloadChannels()[0].Attribute)
-	events := profile.Events()
+	assert.Equal(t, SystemInstructions, Schema().PayloadChannels()[0].Attribute)
+	events := Schema().Events()
 	for _, event := range events {
 		assert.NotEmpty(t, event.Owner)
 		assert.NotEmpty(t, event.Fields)
 		for _, name := range event.Fields {
 			found := false
-			for _, field := range profile.Fields {
+			for _, field := range Schema().Fields() {
 				found = found || field.Name == name
 			}
 			assert.True(t, found, "undeclared event field: %s", name)
@@ -118,22 +99,22 @@ func TestProfileSchemaDeclarationsAreDetachedAndCoverOwnedChannels(t *testing.T)
 	}
 	originalEventField := events[0].Fields[0]
 	events[0].Fields[0] = "changed"
-	assert.Equal(t, originalEventField, profile.Events()[0].Fields[0])
+	assert.Equal(t, originalEventField, Schema().Events()[0].Fields[0])
 }
 
 func TestConformanceRejectsObservedBoundaryWithoutDeclaredOwner(t *testing.T) {
 	// Arrange: schema compatibility alone does not establish composition ownership.
 	profile := DefaultProfile()
 	declaration := AdapterDeclaration{
-		ProfileID:  profile.ID,
-		Mapping:    profile.Mapping,
+		ProfileID:  Schema().ID(),
+		Mapping:    Schema().Mapping(),
 		Boundaries: []string{"tool"},
 	}
 	// Act.
 	report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 		func() ([]ObservedBoundary, error) {
 			return []ObservedBoundary{{Boundary: profileModelBoundary, Operation: profileChatOperation,
-				Fields: []ProfileField{profile.Fields[1]}}}, nil
+				Fields: []ProfileField{Schema().Fields()[1]}}}, nil
 		})
 	// Assert.
 	require.NoError(t, err)
@@ -145,7 +126,9 @@ func TestConformanceRejectsObservedBoundaryWithoutDeclaredOwner(t *testing.T) {
 func TestConformanceReportsSafeMismatches(t *testing.T) {
 	// Arrange.
 	profile := DefaultProfile()
-	declaration := AdapterDeclaration{ProfileID: profile.ID, Mapping: profile.Mapping, Boundaries: []string{"model"}}
+	declaration := AdapterDeclaration{
+		ProfileID: Schema().ID(), Mapping: Schema().Mapping(), Boundaries: []string{"model"},
+	}
 	// Act.
 	report, err := CheckConformance(testContract(profile, false), []AdapterDeclaration{declaration},
 		func() ([]ObservedBoundary, error) { return nil, errors.New("fixture-secret") },
@@ -154,7 +137,7 @@ func TestConformanceReportsSafeMismatches(t *testing.T) {
 				{
 					Boundary:  "model",
 					Operation: "fixture-secret",
-					Fields:    profile.Fields,
+					Fields:    Schema().Fields(),
 					Payloads:  []PayloadEvidence{{Attribute: InputMessages, Value: "fixture-secret"}},
 					Series: []InstrumentSeries{
 						{Instrument: InputTokenUsageMetricName, Count: profile.SeriesBudget + 1},
@@ -176,16 +159,15 @@ func TestProfileCopiesConfiguration(t *testing.T) {
 	profile := testInstrumentationProfile()
 	option := WithProfile(profile)
 	profile.Dimensions[0].Values[0] = "changed"
-	profile.Fields[0].Name = "changed"
 	tracker, _, _, _ := newTestTrackerWithMetrics(t, option)
 	// Act.
 	profile.Dimensions[0].Values = nil
 	// Assert.
 	assert.Equal(t, "scope-provider", tracker.cfg.profile.Dimensions[0].Values[0])
-	assert.Equal(t, ProviderName, tracker.cfg.profile.Fields[0].Name)
+	assert.Equal(t, ProviderName, tracker.Contract().Schema().Fields()[0].Name)
 	detached := tracker.Profile()
-	detached.Fields[0].Name = "modified"
-	assert.Equal(t, ProviderName, tracker.Profile().Fields[0].Name)
+	detached.Dimensions[0].Values[0] = "modified"
+	assert.Equal(t, "scope-provider", tracker.Profile().Dimensions[0].Values[0])
 }
 
 func TestRemotePolicyIdentityCannotEnableRawFallback(t *testing.T) {
@@ -260,7 +242,7 @@ func TestCardinalityBudgetBoundsConcurrentModelToolSeries(t *testing.T) {
 					t.Errorf("unexpected observation validation: %v", err)
 					return
 				}
-				closeTestTool(t, tracker.Runtime(), name)
+				closeTestTool(t, tracker.Recorder(), name)
 			}
 		})
 	}
@@ -312,8 +294,8 @@ func TestConformanceReadsExportedOperation(t *testing.T) {
 	profile := DefaultProfile()
 	tracker, provider, exporter := newTestTracker(t, WithProfile(profile))
 	declaration := AdapterDeclaration{
-		ProfileID:  profile.ID,
-		Mapping:    profile.Mapping,
+		ProfileID:  Schema().ID(),
+		Mapping:    Schema().Mapping(),
 		Boundaries: []string{profileModelBoundary},
 	}
 	// Act.
@@ -391,9 +373,9 @@ func TestCostOverflowPreservesCurrency(t *testing.T) {
 	assert.Len(t, totals, 2)
 }
 
-func closeTestTool(t *testing.T, runtime Runtime, name string) {
+func closeTestTool(t *testing.T, recorder Recorder, name string) {
 	t.Helper()
-	_, handle, err := runtime.StartTool(context.Background(), ToolCall{Name: name})
+	_, handle, err := recorder.StartTool(context.Background(), ToolCall{Name: name})
 	if err != nil {
 		t.Errorf("unexpected tool start validation: %v", err)
 		return
@@ -407,8 +389,8 @@ func closeTestTool(t *testing.T, runtime Runtime, name string) {
 func testContract(profile Profile, raw bool) Contract {
 	return Contract{
 		profile:      cloneProfile(profile),
-		contextBytes: defaultMaxContextLength,
-		eventBytes:   defaultMaxEventLength,
+		contextBytes: defaultPayloadByteLimit,
+		eventBytes:   defaultEventTextByteLimit,
 		raw:          raw,
 	}
 }

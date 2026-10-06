@@ -42,7 +42,7 @@ type InstrumentSeries struct {
 	Count      int
 }
 
-// ConformanceFixture runs a caller-provided scenario against a configured runtime.
+// ConformanceFixture runs a caller-provided scenario against a configured recorder.
 type ConformanceFixture func() ([]ObservedBoundary, error)
 
 // ConformanceCheck uses categorical actual results, never raw fixture values.
@@ -125,26 +125,25 @@ func validateComposition(contract Contract, declarations []AdapterDeclaration) e
 	if err := contract.Validate(); err != nil {
 		return err
 	}
-	profile := contract.Profile()
 	if len(declarations) > maxProfileEntries {
 		return invalidObservation("adapters", "too_large")
 	}
 	owners := make(map[string]struct{})
 	for _, declaration := range declarations {
-		if declaration.ProfileID != profile.ID {
+		if declaration.ProfileID != Schema().ID() {
 			return invalidObservation("adapter_profile", "incompatible")
 		}
-		if declaration.Mapping != profile.Mapping {
+		if declaration.Mapping != Schema().Mapping() {
 			return invalidObservation("adapter_mapping", "incompatible")
 		}
 		if len(declaration.Boundaries) > maxProfileEntries || len(declaration.Units) > maxProfileEntries {
 			return invalidObservation("adapter", "too_large")
 		}
-		if err := validateFieldUnits(profile, declaration.Units); err != nil {
+		if err := validateFieldUnits(declaration.Units); err != nil {
 			return err
 		}
 		for _, boundary := range declaration.Boundaries {
-			if _, valid := findBoundary(profile, boundary); !valid {
+			if _, valid := findBoundary(boundary); !valid {
 				return invalidObservation("adapter_boundary", "unsupported")
 			}
 			if _, conflict := owners[boundary]; conflict {
@@ -156,8 +155,8 @@ func validateComposition(contract Contract, declarations []AdapterDeclaration) e
 	return nil
 }
 
-func findBoundary(profile Profile, name string) (Boundary, bool) {
-	for _, boundary := range profile.Boundaries {
+func findBoundary(name string) (Boundary, bool) {
+	for _, boundary := range Schema().Boundaries() {
 		if boundary.Name == name {
 			return boundary, true
 		}
@@ -181,7 +180,7 @@ func (r *ConformanceReport) add(index int, instrument, rule, expected, actual st
 
 func (r *ConformanceReport) checkObservation(index int, contract Contract, observed ObservedBoundary) {
 	profile := contract.Profile()
-	boundary, known := findBoundary(profile, observed.Boundary)
+	boundary, known := findBoundary(observed.Boundary)
 	r.add(index, "", "boundary", "declared", categorical(known), known)
 	if !known {
 		return
@@ -193,7 +192,7 @@ func (r *ConformanceReport) checkObservation(index int, contract Contract, obser
 		r.add(index, "", "observation_size", "bounded", conformanceInvalid, false)
 		return
 	}
-	fieldValid := compatibleObservedFields(profile.Fields, observed.Fields)
+	fieldValid := compatibleObservedFields(Schema().Fields(), observed.Fields)
 	r.add(index, "", "fields", "compatible", categorical(fieldValid), fieldValid)
 	usageValid := observed.Usage.Validate() == nil
 	r.add(index, "", "usage", "valid", categorical(usageValid), usageValid)

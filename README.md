@@ -15,7 +15,7 @@ go get github.com/skosovsky/metry/middleware/grpc
 
 Use matching versions of `metry` and `metry/middleware/grpc` after the stateless API break.
 
-**Migration (task16):** use `genai.Runtime`, explicit `PayloadPolicy`, `TraceSnapshot` for durable resume, runtime-owned async outcomes, and typed tool error classes. Historical task14 notes live in [`.cursor/docs/task14-migration.md`](.cursor/docs/task14-migration.md), but task16 supersedes carrier-map queue guidance and narrow recorder wiring.
+**Migration (task16):** use `genai.Recorder`, explicit `PayloadPolicy`, `TraceSnapshot` for durable resume, recorder-owned async outcomes, and typed tool error classes. Historical task14 notes live in [`.cursor/docs/task14-migration.md`](.cursor/docs/task14-migration.md), but task16 supersedes carrier-map queue guidance and narrow recorder wiring.
 
 HTTP and generic execution use root `metry.HTTPHandler` and `metry.ExecutorWrap`. gRPC is an optional integration module; core does not import gRPC. See [integration and clear-break migration](INTEGRATION.md).
 
@@ -31,7 +31,7 @@ import (
     "github.com/skosovsky/metry/genai"
 )
 
-func setup(ctx context.Context) (*metry.Provider, genai.Runtime, error) {
+func setup(ctx context.Context) (*metry.Provider, genai.Recorder, error) {
     provider, err := metry.New(
         ctx,
         metry.WithServiceName("my-ai-service"),
@@ -44,13 +44,13 @@ func setup(ctx context.Context) (*metry.Provider, genai.Runtime, error) {
         return nil, nil, err
     }
 
-    runtime, err := genai.NewRuntimeFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
+    recorder, err := genai.NewRecorderFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
     if err != nil {
         _ = provider.Shutdown(ctx)
         return nil, nil, err
     }
 
-    return provider, runtime.ForProvider("provider"), nil
+    return provider, recorder.ForProvider("provider"), nil
 }
 ```
 
@@ -95,7 +95,7 @@ A real loopback OTLP trace/metric consumer test lives in `integration/otlp`.
 ## Provider lifecycle
 
 ```go
-provider, runtime, err := setup(ctx)
+provider, recorder, err := setup(ctx)
 if err != nil {
     return err
 }
@@ -107,7 +107,7 @@ if err != nil {
 }
 defer end()
 
-err = runtime.RecordOperation(ctx,
+err = recorder.RecordOperation(ctx,
     genai.Operation{
         Name:    "chat",
         Model:   "model",
@@ -132,7 +132,7 @@ if err != nil {
 }
 ```
 
-`Runtime.RecordOperation` creates its own span, writes standard GenAI attributes and metrics, and applies the configured payload policy before export.
+`Recorder.RecordOperation` creates its own span, writes standard GenAI attributes and metrics, and applies the configured payload policy before export.
 
 Raw payload export requires `genai.WithRawPayloads()`. Use it only when the application has already handled privacy before calling `metry`.
 
@@ -140,18 +140,17 @@ Extra `attrs ...metry.Attribute` on `RecordOperation` are for bounded metadata a
 
 ## Supported GenAI semantics
 
-The supported subset is pinned to GenAI Development commit `e07f4eb`; profile identity is `metry.genai.semconv.e07f4eb.v1`. GenAI instrumentation scopes declare version `semconv-genai-e07f4eb+metry-v1` and schema `https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev`. See [SEMANTICS.md](genai/SEMANTICS.md) for every controlled field/instrument, upstream mappings and deliberate extensions; [MIGRATION.md](genai/MIGRATION.md) lists the clear break.
+The supported subset is pinned to GenAI Development commit `e07f4eb`; schema identity is `metry.genai.semconv.e07f4eb.v1`. GenAI instrumentation scopes declare version `semconv-genai-e07f4eb+metry-v1` and schema `https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev`. See [SEMANTICS.md](genai/SEMANTICS.md) for every controlled field/instrument, upstream mappings and deliberate extensions; [MIGRATION.md](genai/MIGRATION.md) lists the clear break.
 
 `StartAgent` and `StartWorkflow` are optional observations of host execution. Agent locality is required; workflow is local. Names are machine labels, IDs are existing stable resource identities, and conversation IDs are existing host references. Handles accept only outcome evidence and measure their own elapsed interval. They do not run agents, aggregate child usage, schedule retries, execute handoffs or store checkpoints. Names and references remain protected span metadata; invocation duration uses only fixed kind/locality/status labels.
 
 ## GenAI API
 
-Use `genai.Runtime` as the application boundary:
+Use `genai.Recorder` as the application boundary:
 
 - `RecordOperation(ctx, Operation, OperationResult, attrs...)`
 - `StartOperation(ctx, Operation, RecordingOptions)` followed by `OperationHandle.Finish(OperationResult)`
 - `RecordTraceIO(ctx, input, output)`
-- `RecordTTFT(ctx, duration)`
 - `RecordStreamingCompletion(ctx, StreamingCompletion)`
 - `StartTool(ctx, ToolCall, opts...) (context.Context, *ToolHandle, error)`
 - `ToolHandle.Finish(ToolResult) error` / `Close() error`
@@ -161,33 +160,33 @@ Use `genai.Runtime` as the application boundary:
 - `RecordAsyncResult(ctx, AsyncHandle, AsyncResult)`
 - `RecordAsyncTokenResult(ctx, token, AsyncResult)`
 
-Select `genai.NoopRuntime()` explicitly when telemetry is disabled. Enabled
-telemetry uses `genai.NewRuntimeFromProvider(...)`; configuration and instrument
+Select `genai.NoopRecorder()` explicitly when telemetry is disabled. Enabled
+telemetry uses `genai.NewRecorderFromProvider(...)`; configuration and instrument
 creation errors must reach the host. There is no automatic fallback on error.
 
 ```go
-var runtime genai.Runtime = genai.NoopRuntime()
+var recorder genai.Recorder = genai.NoopRecorder()
 if telemetryEnabled {
     var err error
-    runtime, err = genai.NewRuntimeFromProvider(provider)
+    recorder, err = genai.NewRecorderFromProvider(provider)
     if err != nil {
         return err
     }
 }
 ```
 
-Application/business code should use `Runtime`; do not build a local compatibility facade over lower-level tracker methods. Bind provider context in the composition root with `runtime.ForProvider(...)` so business services record operation intent, not vendor labels. Framework code that owns SDK translation can use adapter-level APIs behind its own package boundary.
+Application/business code should use `Recorder`; do not build a local compatibility facade over lower-level tracker methods. Bind provider context in the composition root with `recorder.ForProvider(...)` so business services record operation intent, not vendor labels. Framework code that owns SDK translation can use adapter-level APIs behind its own package boundary.
 
 ## Payload policy
 
 Payload recording is policy-driven:
 
 ```go
-runtime, err := genai.NewRuntimeFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
+recorder, err := genai.NewRecorderFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
 if err != nil {
     return err
 }
-runtime = runtime.ForProvider("provider")
+recorder = recorder.ForProvider("provider")
 ```
 
 - `RedactPayloadPolicy()` redacts arbitrary JSON objects as a whole, protecting dynamic keys as well as values. Pass explicit static schema keys to preserve their structure, for example `RedactPayloadPolicy("arguments", "query")`.
@@ -204,7 +203,7 @@ The same policy applies to messages, tool arguments/results, retrieval queries, 
 
 ## Usage presence and provenance
 
-See [the contract migration table](genai/MIGRATION.md) for caller changes, field names, units, boundaries and dashboard actions. `DefaultProfile().Fields` is the canonical checked catalogue; missing, incompatible or unknown declarations are rejected under the supported schema identity. Host custom attributes are not silently renamed or certified by the profile.
+See [the contract migration table](genai/MIGRATION.md) for caller changes, field names, units, boundaries and dashboard actions. `Schema().Fields()` is the fixed field catalogue; conformance rejects missing, incompatible or unknown observed fields under this schema identity. Host custom attributes are not silently renamed or certified by the profile.
 
 Metric dimensions use finite allowlists from `genai.DefaultProfile()`. Unlisted model/provider/tool/server values become `unknown` in metrics; spans retain their permitted operation metadata. Set a dimension's `Values` in a profile and pass `genai.WithProfile(profile)` at construction to permit application-specific labels. `SeriesBudget` caps combinations per instrument, including reserved overflow series. Overflow preserves token type/provenance and cost currency. Cost currency must be declared: undeclared units return a validation diagnostic instead of mixing different currencies in one counter.
 
@@ -229,7 +228,7 @@ all controlled writes, actual enum values, events with their instrumentation
 owner, and named JSON payloads. Missing JSON-channel evidence is rejected.
 Do not copy recording inputs into the actual-evidence side of a fixture.
 
-`Profile.Events()` declares controlled event names, instrumentation ownership,
+`Schema().Events()` declares controlled event names, instrumentation ownership,
 stability and allowed fields; `Enumerations()` and `PayloadChannels()` declare
 wire values and input/encoding/budget boundaries. Returned declarations are
 detached copies. Canonical boundary names, operations and accounting semantics
@@ -247,7 +246,7 @@ Caller adapters must normalize exhaustive, disjoint exclusive buckets to inclusi
 
 ## Execution intervals, causal identity and streaming
 
-Call `Runtime.StartOperation` before I/O and `handle.Finish` after I/O. It records a real execution interval and uses a local monotonic clock for duration. Set `Operation.Locality` to `ExecutionRemote` or `ExecutionLocal`; zero is invalid for interval starts. Remote model intervals are CLIENT and record `gen_ai.client.operation.duration`. Local intervals and completed model observations are INTERNAL and record `metry.gen_ai.operation.duration`. Identity controls accounting independently of locality: a remote logical observation remains CLIENT but adds no resource metrics. `Finish` rejects a supplied `OperationResult.Duration`: the handle measures its own interval. `RecordOperation` and `RecordInteraction` are completed-observation spans, marked `metry.observation.kind=completed`; their span timestamps describe recording, not the earlier execution. Their caller-supplied durations must not be inferred by subtracting wall clocks on different workers.
+Call `Recorder.StartOperation` before I/O and `handle.Finish` after I/O. It records a real execution interval and uses a local monotonic clock for duration. Set `Operation.Locality` to `ExecutionRemote` or `ExecutionLocal`; zero is invalid for interval starts. Remote model intervals are CLIENT and record `gen_ai.client.operation.duration`. Local intervals and completed model observations are INTERNAL and record `metry.gen_ai.operation.duration`. Identity controls accounting independently of locality: a remote logical observation remains CLIENT but adds no resource metrics. `Finish` rejects a supplied `OperationResult.Duration`: the handle measures its own interval. `RecordOperation` and `RecordInteraction` are completed-observation spans, marked `metry.observation.kind=completed`; their span timestamps describe recording, not the earlier execution. Their caller-supplied durations must not be inferred by subtracting wall clocks on different workers.
 
 An effective operation name is required. Completed recording resolves an omitted
 name from caller-declared `Scope.Operation`; if neither is present, or the name
@@ -264,14 +263,14 @@ An active context can supply the parent. With `Detached: true`, recording create
 
 Request and observed response models are separate. `Operation.Model` and request scope supply the request model. Supply `OperationResult.Response: ResponseMetadata{Model: actualModel}` only when a response was observed. Completed `Meta.ResponseModel` has the same caller-evidence requirement. Missing response metadata is omitted, including errors before response. Stateless `ProviderAdapter.ParseResponse(any) (ResponseObservation, error)` returns payload, usage, response metadata, status and bounded error class; it never needs to retain request state.
 
-For streaming, `RecordStreamingUpdate` validates intermediate cumulative usage without recording or storing totals. Only successful `Finish` commits final usage and cost. An aborted stream with missing final usage stays missing even if earlier updates contained counts. `OperationResult.Streaming` supplies TTFT measured from the same local start; `FirstTokenPresent` distinguishes unknown TTFT from a known zero. Impossible intervals are rejected before finalization and may be corrected. Concurrent successful finalization records once; further calls return `ErrFinalized`.
+For streaming, `ValidateStreamingUpdate` validates intermediate cumulative usage without recording or storing totals. Only successful `Finish` commits final usage and cost. An aborted stream with missing final usage stays missing even if earlier updates contained counts. `OperationResult.Streaming` supplies TTFT measured from the same local start; `FirstTokenPresent` distinguishes unknown TTFT from a known zero. Impossible intervals are rejected before finalization and may be corrected. Concurrent successful finalization records once; further calls return `ErrFinalized`.
 
-`RecordStreamingCompletion` accepts a standalone final DTO with explicit usage and total duration. It is a stateless completed observation, not a deduplication handle: the producer must deliver it once. Use `StartOperation`/`Finish` when local duplicate-finalization protection is needed. Do not separately call `RecordTTFT` for a final DTO that already supplies TTFT, or emit the same usage through both recording paths.
+`RecordStreamingCompletion` accepts a standalone final DTO with explicit usage and total duration. It is a stateless completed observation, not a deduplication handle: the producer must deliver it once. Use `StartOperation`/`Finish` when local duplicate-finalization protection is needed. TTFT is recorded only from final presence-aware timing; do not emit the same usage through both recording paths.
 
 ## Tool lifecycle
 
 ```go
-toolCtx, tool, telemetryErr := runtime.StartTool(ctx, genai.ToolCall{
+toolCtx, tool, telemetryErr := recorder.StartTool(ctx, genai.ToolCall{
     Name: "search", CallID: callID, Arguments: argsJSON,
 })
 if telemetryErr != nil {
@@ -378,11 +377,11 @@ Host business keys in the map are preserved. Injection clears the configured pro
 Capture a portable handle at enqueue time and record linked outcomes in workers without storing `SpanContext` or tunneling tokens through `context.Context`:
 
 ```go
-handle, err := runtime.StartAsync(ctx, "queue.delivery")
+handle, err := recorder.StartAsync(ctx, "queue.delivery")
 token, err := handle.Marshal()
 // enqueue token...
 
-err = runtime.RecordAsyncTokenResult(ctx, token, genai.AsyncResult{
+err = recorder.RecordAsyncTokenResult(ctx, token, genai.AsyncResult{
     Name:   "delivery.success",
     Status: genai.OperationStatusOK,
     Attributes: []metry.Attribute{
@@ -391,7 +390,7 @@ err = runtime.RecordAsyncTokenResult(ctx, token, genai.AsyncResult{
 })
 ```
 
-Adapter helpers for async feedback and evaluations still accept `metry.AsyncHandle` (portable marshal token), but application code should prefer the runtime-owned async path above.
+Adapter helpers for async feedback and evaluations still accept `metry.AsyncHandle` (portable marshal token), but application code should prefer the recorder-owned async path above.
 
 For delayed GenAI feedback, adapter code captures a handle at request time and passes the same handle token to the worker-side adapter helper. Feedback recording requires a valid handle (`genai.ErrInvalidAsyncHandle` otherwise). Correlation uses Span Links, not parent-child hierarchy.
 
@@ -402,7 +401,7 @@ Advanced: optional typed span options (e.g. `genai.WithSamplingKeep()`) do not r
 Metric names and label values must be static or bounded by the host. The generic
 registry does not inherit the GenAI series budget.
 
-Register histograms, counters, and gauges at init; record at runtime with typed labels (no `go.opentelemetry.io/otel/metric` in host code):
+Register histograms, counters, and gauges at init; record during execution with typed labels (no `go.opentelemetry.io/otel/metric` in host code):
 
 ```go
 registry := metry.NewMetricsRegistry(provider)
@@ -423,7 +422,7 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 **Footgun (labels):** empty keys and empty values are skipped in `LabelsOf`, `copyLabels`, and metric attribute conversion.
 
-**Footgun (GenAI scope metrics):** token/TTFT/streaming histograms require an `Operation` in scope or `Meta`. Provider is bound by `Runtime.ForProvider(...)` or defaults to `unknown`; do not push provider labels through business scope just to make metrics appear.
+**Footgun (GenAI scope metrics):** token/TTFT/streaming histograms require an `Operation` in scope or `Meta`. Provider is bound by `Recorder.ForProvider(...)` or defaults to `unknown`; do not push provider labels through business scope just to make metrics appear.
 
 **Footgun (payload policy):** payload recording is off until you pass `WithPayloadPolicy(...)` or `WithRawPayloads()`. Use raw export only after application-level privacy handling.
 
@@ -439,17 +438,17 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 ## Adapter-only GenAI APIs
 
-Application code should stay on `genai.Runtime`. Lower-level tracker APIs exist for framework or SDK adapters that must translate vendor-specific request/response types into canonical `genai.Payload`, `genai.Meta`, and `genai.Usage`. Do not wrap them into a local compatibility facade; move adapter code to the boundary and expose `Runtime` to the host application.
+Application code should stay on `genai.Recorder`. Lower-level tracker APIs exist for framework or SDK adapters that must translate vendor-specific request/response types into canonical `genai.Payload`, `genai.Meta`, and `genai.Usage`. Do not wrap them into a local compatibility facade; move adapter code to the boundary and expose `Recorder` to the host application.
 
 ## Sampling hints (head-based)
 
 ```go
-runtime, err := genai.NewRuntimeFromProvider(provider)
+recorder, err := genai.NewRecorderFromProvider(provider)
 if err != nil {
     return err
 }
 
-_, tool, err := runtime.StartTool(ctx, genai.ToolCall{Name: "retrieval"}, genai.WithSpanSamplingKeep())
+_, tool, err := recorder.StartTool(ctx, genai.ToolCall{Name: "retrieval"}, genai.WithSpanSamplingKeep())
 if err != nil { return err }
 defer func() { _ = tool.Close() }()
 ```
@@ -462,10 +461,10 @@ When caller options contain duplicate attribute keys, helper built-in keys win.
 
 ## Retrieval observations
 
-`Tracker` and `Runtime` observe the host's retrieval interval. Declare locality explicitly:
+`Tracker` and `Recorder` observe the host's retrieval interval. Declare locality explicitly:
 
 ```go
-retrievalCtx, retrieval, telemetryErr := runtime.StartRetrieval(ctx, "vector.search", genai.RetrievalRequest{
+retrievalCtx, retrieval, telemetryErr := recorder.StartRetrieval(ctx, "vector.search", genai.RetrievalRequest{
     Provider: "qdrant", Source: "knowledge_base", Query: query, TopK: 5,
     Locality: genai.ExecutionRemote,
 })
@@ -492,7 +491,7 @@ Provenance is optional and may describe a subset of returned documents. `Returne
 
 ## Completed evaluation observations
 
-Create an app-scoped evaluation recorder from the tracker. It shares the provider, profile and payload policy but does not extend the execution runtime or run a grader:
+Create an app-scoped evaluation recorder from the tracker. It shares the provider, profile and payload policy but does not extend the execution recorder or run a grader:
 
 ```go
 score := 0.91
@@ -531,10 +530,10 @@ The wire representation of IDs, outcomes and opaque references is a stable finge
 Controlled structured attributes are JSON strings; sanitation precedes encoding. System instructions, input/output messages and retrieval documents remain JSON arrays after truncation: metry retains the longest complete-element prefix that fits and emits a separate boolean truncation attribute. No JSON bytes are sliced. Arbitrary tool arguments/results use `metry.gen_ai.tool.call.arguments` / `result`, accept any JSON value, and may use an envelope with `truncated: true`; plain text is encoded as a JSON string. These tool channels are extensions because the pinned upstream schemas accept objects only.
 
 - Default max length: `65536` bytes.
-- Configure via `genai.WithMaxContextLength(bytes)`.
+- Configure via `genai.WithPayloadByteLimit(bytes)`.
 - The minimum context budget is 18 bytes, sufficient for the marker-only envelope. Smaller/zero/negative configured budgets return a bounded configuration diagnostic; they do not silently restore the default.
 - Typed message payloads are limited to 4,096 messages per direction, 4,096 content parts across directions, 1 MiB aggregate input text/JSON, and JSON depth 32 before sanitizer work. Structured serialization also has a 1 MiB input cap. Tool JSON receives the same byte/depth checks before sanitization.
-- Span **event** text (e.g. LLM-judge reasoning on evaluation events when payloads are enabled) uses a separate, smaller default (`4096` bytes) via `genai.WithMaxEventLength`, because backends often cap event attributes more strictly than span attributes.
+- Span **event** text (e.g. LLM-judge reasoning on evaluation events when payloads are enabled) uses a separate, smaller default (`4096` bytes) via `genai.WithEventTextByteLimit`, because backends often cap event attributes more strictly than span attributes.
 - Text-only feedback/query/reasoning channels use UTF-8-safe text truncation, not a JSON envelope.
 
 Invalid/beyond-bound message payloads return `ObservationError` before operation/interaction writes. `RecordTraceIO` now returns an error and leaves the active span untouched on rejection. Invalid handle finalization can be corrected without consuming the finalization guard. Tool payload rejection omits the payload and records a bounded `metry.observation.rejected` event with field/rule; it never changes the tool's business outcome. Custom attributes are outside this checked payload boundary.
@@ -594,10 +593,10 @@ Primary examples (run via `make test-examples`):
 | Example                     | Demonstrates                                                              |
 | --------------------------- | ------------------------------------------------------------------------- |
 | `examples/enrich`           | `Enrich` + `ContextHandler` slog correlation                              |
-| `examples/async_handle`     | `TraceSnapshot` + runtime-owned async linked outcome                      |
+| `examples/async_handle`     | `TraceSnapshot` + recorder-owned async linked outcome                      |
 | `examples/metrics_registry` | `TraceSnapshot` + registry metrics without OTel metric imports            |
 | `examples/executor`         | Root `metry.ExecutorWrap` for generic executors                           |
-| `examples/genai_recorder`   | `genai.Runtime` + payload policy + trace snapshot + tool lifecycle        |
+| `examples/genai_recorder`   | `genai.Recorder` + payload policy + trace snapshot + tool lifecycle        |
 | `examples/genai_standalone` | Model/tool/retrieval without causal IDs, experiments or execution store |
 | `examples/agent_workflow` | Standalone, local/hosted agents, two-agent workflow, fan-in, detached resume, retrieval references and late evaluation |
 

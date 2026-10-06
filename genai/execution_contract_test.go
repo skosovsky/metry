@@ -16,10 +16,10 @@ func TestStandaloneExecutionBoundariesEncloseModelToolRetrievalIO(t *testing.T) 
 	// Arrange: ordinary instrumentation requires no causal IDs, experiment
 	// metadata, adapter registry or external execution store.
 	tracker, provider, metricExporter, exporter := newTestTrackerWithMetrics(t)
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 	ctx := context.Background()
 	// Act: recording starts before each I/O boundary and finishes after it.
-	modelCtx, model, err := runtime.StartOperation(
+	modelCtx, model, err := recorder.StartOperation(
 		ctx,
 		Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 		RecordingOptions{},
@@ -28,7 +28,7 @@ func TestStandaloneExecutionBoundariesEncloseModelToolRetrievalIO(t *testing.T) 
 	require.True(t, trace.SpanFromContext(modelCtx).IsRecording())
 	modelIOStart, modelIOEnd := syntheticIOInterval()
 	require.NoError(t, model.Finish(OperationResult{Usage: Usage{InputTokens: Observe(1, UnitTokens, SourceMeasured)}}))
-	toolCtx, endTool, startErr := runtime.StartTool(ctx, ToolCall{Name: "search"})
+	toolCtx, endTool, startErr := recorder.StartTool(ctx, ToolCall{Name: "search"})
 	require.NoError(t, startErr)
 	require.True(t, trace.SpanFromContext(toolCtx).IsRecording())
 	toolIOStart, toolIOEnd := syntheticIOInterval()

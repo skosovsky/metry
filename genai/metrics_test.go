@@ -66,7 +66,7 @@ func TestRecordInteraction_NegativeCost_IsRejectedAtomically(t *testing.T) {
 	metrytest.AssertMetricAbsent(t, rm, metrytest.MetricSelector{Name: CostMetricName})
 }
 
-func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
+func TestRecordStreamingCompletion_RecordsMetrics(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
 
 	require.NoError(
@@ -97,18 +97,6 @@ func TestRecordTTFT_AndStreamingCompletion_RecordMetrics(t *testing.T) {
 		metrytest.Float64HistogramSum(t, rm, metrytest.MetricSelector{Name: DerivedMeanOutputTokenIntervalMetricName}),
 		1e-9,
 	)
-}
-
-func TestRecordTTFT_WithScope_UsesScopeProviderInMetrics(t *testing.T) {
-	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
-
-	ctx := WithScope(context.Background(), Scope{Provider: "scope-provider", Operation: "chat"})
-	tracker.RecordTTFT(ctx, Meta{}, 100*time.Millisecond)
-
-	rm := metrytest.CollectResourceMetrics(t, provider, memMetric)
-	hist := metrytest.FindFloat64Histogram(t, rm, metrytest.MetricSelector{Name: TTFTMetricName})
-	require.NotEmpty(t, hist.DataPoints)
-	assert.Equal(t, "scope-provider", testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, ProviderName))
 }
 
 func TestRecordStreamingCompletion_WithScope_UsesScopeProviderInMetrics(t *testing.T) {

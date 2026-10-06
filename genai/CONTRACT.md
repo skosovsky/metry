@@ -1,20 +1,20 @@
 # Effective instrumentation contract
 
-`NewContract(options...)` validates the same runtime configuration as
+`NewContract(options...)` validates the same recorder configuration as
 `NewTrackerFromProvider` without registering SDK instruments. `Tracker.Contract()`
 returns the settings actually installed in that tracker. The zero contract is
 invalid. The schema identity is `metry.genai.semconv.e07f4eb.v1`.
 
 `RawEnabled()` reports permitted raw content capture. `ReferenceRawEnabled()`
 reports raw reference permission independently, including when content capture is
-disabled. The contract exposes detached profile and channel declarations. It contains no
+disabled. The contract exposes detached runtime settings through `Profile()` and the immutable fixed descriptor through `Schema()`. Fields and boundaries cannot configure the schema. `Enumerations()` resolves local error classes. It contains no
 payloads, sanitizer callbacks or credentials. `PayloadChannels()` resolves each
 channel's output byte limit and declares fixed input byte, depth and entry bounds.
-JSON channels use the context budget; evaluation reasoning uses the event budget,
+JSON channels use `PayloadByteLimit()`; evaluation reasoning uses `EventTextByteLimit()`,
 whether it is carried by a span attribute or a declared event. Text channels use
-UTF-8 wire strings. Defaults are 65536 context bytes and 4096 event bytes. Explicit
-context budgets must range from the minimum `{"truncated":true}` envelope through
-1048576 bytes; explicit event budgets must range from 1 through 1048576 bytes.
+UTF-8 wire strings. Defaults are 65536 payload bytes and 4096 event text bytes. Explicit
+payload budgets must range from the minimum `{"truncated":true}` envelope through
+1048576 bytes; explicit event text budgets must range from 1 through 1048576 bytes.
 
 `CheckConformance(contract, declarations, fixtures...)` rejects invalid composition
 before executing fixtures. Fixtures derive `PayloadEvidence{Attribute, Value}`
@@ -55,3 +55,7 @@ version, schema URL and attributes also participate in exact scope matching. A n
 scope requires one unique name across all scopes. Typed helpers verify aggregation;
 duplicate candidates fail before conversion. Attribute helpers likewise require
 exact OTel types, including when expected values are zero, false or empty.
+
+Channel `BudgetSetting` names are `payload_byte_limit` and `event_text_byte_limit`,
+matching `WithPayloadByteLimit` and `WithEventTextByteLimit`. These declaration
+names do not change the fixed schema or exported telemetry names.

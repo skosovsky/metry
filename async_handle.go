@@ -16,14 +16,8 @@ const defaultAsyncTracerName = "metry.async"
 // ErrNilProvider is returned when a Provider method is called on a nil provider.
 var ErrNilProvider = errors.New("metry: provider is nil")
 
-// ErrInvalidProviderType is returned when a value is not a *Provider.
-var ErrInvalidProviderType = errors.New("metry: provider must be *Provider")
-
 // ErrNilTracerProvider is returned when a provider has no tracer configured.
 var ErrNilTracerProvider = errors.New("metry: tracer provider is nil")
-
-// ErrNilMeterProvider is returned when a provider has no meter configured.
-var ErrNilMeterProvider = errors.New("metry: meter provider is nil")
 
 // AsyncHandle is a serializable token linking deferred outcomes to an originating interaction.
 type AsyncHandle struct {

@@ -55,10 +55,10 @@ type ObservedEvent struct {
 	Payloads []PayloadEvidence
 }
 
-func validateFieldUnits(profile Profile, units []FieldUnitDeclaration) error {
+func validateFieldUnits(units []FieldUnitDeclaration) error {
 	seen := make(map[string]bool)
 	for _, unit := range units {
-		field, found := declaredField(profile, unit.Field)
+		field, found := declaredField(unit.Field)
 		if !found || field.Unit == "" || field.Unit != unit.Unit || seen[unit.Field] {
 			return invalidObservation("adapter_unit", "incompatible")
 		}
@@ -67,8 +67,8 @@ func validateFieldUnits(profile Profile, units []FieldUnitDeclaration) error {
 	return nil
 }
 
-func declaredField(profile Profile, name string) (ProfileField, bool) {
-	for _, field := range profile.Fields {
+func declaredField(name string) (ProfileField, bool) {
+	for _, field := range Schema().Fields() {
 		if field.Name == name {
 			return field, true
 		}
@@ -88,7 +88,7 @@ func (r *ConformanceReport) checkEvidence(
 	profile, raw := contract.Profile(), contract.RawEnabled()
 	unitValid := observedOwnerUnits(declarations, observation)
 	r.add(index, "", "owner_units", "declared", categorical(unitValid), unitValid)
-	boundary, known := findBoundary(profile, observation.Boundary)
+	boundary, known := findBoundary(observation.Boundary)
 	accounting := known && validAccounting(boundary, observation)
 	r.add(index, "", "accounting", "single_boundary", categorical(accounting), accounting)
 	enums := validObservedEnums(profile, raw, observation.Fields, observation.Enums)
@@ -350,7 +350,7 @@ func validObservedEnums(profile Profile, raw bool, fields []ProfileField, values
 		seen[value.Name] = true
 	}
 	for _, field := range fields {
-		for _, enum := range profile.Enumerations() {
+		for _, enum := range effectiveEnumerations(profile) {
 			if enum.Name == field.Name && !seen[field.Name] {
 				return false
 			}
@@ -363,7 +363,7 @@ func enumValueAllowed(profile Profile, raw bool, value ObservedEnum) bool {
 	if len(value.Value) > maxPayloadInputBytes {
 		return false
 	}
-	for _, enum := range profile.Enumerations() {
+	for _, enum := range effectiveEnumerations(profile) {
 		if enum.Name != value.Name {
 			continue
 		}
@@ -406,7 +406,7 @@ func validObservedEvent(contract Contract, observed ObservedEvent) bool {
 		len(observed.Payloads) > maxProfileEntries {
 		return false
 	}
-	for _, event := range profile.Events() {
+	for _, event := range Schema().Events() {
 		if event.Name != observed.Name {
 			continue
 		}
@@ -415,7 +415,7 @@ func validObservedEvent(contract Contract, observed ObservedEvent) bool {
 		}
 		seen := make(map[string]bool)
 		for _, field := range observed.Fields {
-			declared, found := declaredField(profile, field.Name)
+			declared, found := declaredField(field.Name)
 			if !found || field != declared || !slices.Contains(event.Fields, field.Name) || seen[field.Name] {
 				return false
 			}

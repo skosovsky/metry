@@ -12,9 +12,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRuntime_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
+func TestRecorder_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t, WithRawPayloads())
-	rec := tracker.Runtime()
+	rec := tracker.Recorder()
 
 	_, handle, startErr := rec.StartTool(
 		context.Background(),
@@ -33,9 +33,9 @@ func TestRuntime_ToolLifecycle_RecordsDurationMetricOnce(t *testing.T) {
 	assert.Equal(t, OperationStatusOK, testutil.SpanStringAttr(t, hist.DataPoints[0].Attributes, OperationStatus))
 }
 
-func TestRuntime_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T) {
+func TestRecorder_ToolLifecycle_RecordsErrorMetricWithBoundedLabels(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
-	rec := tracker.Runtime()
+	rec := tracker.Recorder()
 
 	_, handle, startErr := rec.StartTool(context.Background(), ToolCall{Name: "", CallID: "call-1"})
 	require.NoError(t, startErr)

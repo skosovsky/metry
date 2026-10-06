@@ -99,8 +99,8 @@ func WithAsyncAttributes(attrs ...metry.Attribute) AsyncOption {
 	}
 }
 
-// Runtime is the app-scoped GenAI instrumentation boundary.
-type Runtime interface {
+// Recorder is the app-scoped GenAI instrumentation boundary.
+type Recorder interface {
 	StartAgent(context.Context, AgentInvocation, RecordingOptions) (context.Context, *InvocationHandle, error)
 	StartWorkflow(context.Context, WorkflowInvocation, RecordingOptions) (context.Context, *InvocationHandle, error)
 	StartOperation(
@@ -108,11 +108,10 @@ type Runtime interface {
 		op Operation,
 		options RecordingOptions,
 	) (context.Context, *OperationHandle, error)
-	ForProvider(provider string) Runtime
+	ForProvider(provider string) Recorder
 	RecordOperation(ctx context.Context, op Operation, result OperationResult, attrs ...metry.Attribute) error
 	RecordTraceIO(ctx context.Context, input, output Payload) error
 	RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error
-	RecordTTFT(ctx context.Context, duration time.Duration)
 	StartTool(ctx context.Context, call ToolCall, opts ...ToolOption) (context.Context, *ToolHandle, error)
 	StartRetrieval(
 		ctx context.Context,
@@ -125,42 +124,42 @@ type Runtime interface {
 	RecordAsyncTokenResult(ctx context.Context, token string, result AsyncResult) error
 }
 
-type trackerRuntime struct {
+type trackerRecorder struct {
 	tracker  *Tracker
 	provider string
 }
 
-type noopRuntime struct{}
+type noopRecorder struct{}
 
-// NoopRuntime returns a safe runtime that drops all observations.
-func NoopRuntime() Runtime {
-	return noopRuntime{}
+// NoopRecorder returns a safe recorder that drops all observations.
+func NoopRecorder() Recorder {
+	return noopRecorder{}
 }
 
-// Runtime returns an app-scoped runtime backed by this tracker.
-func (t *Tracker) Runtime() Runtime {
+// Recorder returns an app-scoped recorder backed by this tracker.
+func (t *Tracker) Recorder() Recorder {
 	if t == nil {
-		return NoopRuntime()
+		return NoopRecorder()
 	}
-	return trackerRuntime{tracker: t, provider: ""}
+	return trackerRecorder{tracker: t, provider: ""}
 }
 
-// NewRuntimeFromProvider creates a runtime backed by provider.
+// NewRecorderFromProvider creates a recorder backed by provider.
 // Configuration and instrument creation errors are returned to the caller.
-// Optional telemetry must select NoopRuntime explicitly at the composition root.
-func NewRuntimeFromProvider(p *metry.Provider, opts ...Option) (Runtime, error) {
+// Optional telemetry must select NoopRecorder explicitly at the composition root.
+func NewRecorderFromProvider(p *metry.Provider, opts ...Option) (Recorder, error) {
 	tracker, err := NewTrackerFromProvider(p, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return tracker.Runtime(), nil
+	return tracker.Recorder(), nil
 }
 
-func (noopRuntime) ForProvider(string) Runtime {
-	return noopRuntime{}
+func (noopRecorder) ForProvider(string) Recorder {
+	return noopRecorder{}
 }
 
-func (noopRuntime) RecordOperation(
+func (noopRecorder) RecordOperation(
 	ctx context.Context,
 	operation Operation,
 	result OperationResult,
@@ -190,11 +189,11 @@ func validateOperationName(name string) error {
 	return nil
 }
 
-func (noopRuntime) RecordTraceIO(context.Context, Payload, Payload) error {
+func (noopRecorder) RecordTraceIO(context.Context, Payload, Payload) error {
 	return nil
 }
 
-func (noopRuntime) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
+func (noopRecorder) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
 	if _, _, err := resolveModelOutcome(event.Meta.Status, event.Meta.ErrorType); err != nil {
 		return err
 	}
@@ -217,9 +216,7 @@ func (noopRuntime) RecordStreamingCompletion(ctx context.Context, event Streamin
 	)
 }
 
-func (noopRuntime) RecordTTFT(context.Context, time.Duration) {}
-
-func (noopRuntime) StartTool(
+func (noopRecorder) StartTool(
 	ctx context.Context,
 	call ToolCall,
 	opts ...ToolOption,
@@ -227,7 +224,7 @@ func (noopRuntime) StartTool(
 	return startTool(ctx, nil, call, opts...)
 }
 
-func (noopRuntime) StartRetrieval(
+func (noopRecorder) StartRetrieval(
 	ctx context.Context,
 	name string,
 	req RetrievalRequest,
@@ -236,40 +233,40 @@ func (noopRuntime) StartRetrieval(
 	return startRetrieval(ctx, nil, name, req, opts...)
 }
 
-func (noopRuntime) StartAsync(context.Context, string, ...AsyncOption) (metry.AsyncHandle, error) {
+func (noopRecorder) StartAsync(context.Context, string, ...AsyncOption) (metry.AsyncHandle, error) {
 	return metry.NoopAsyncHandle(), nil
 }
 
-func (noopRuntime) RecordAsyncResult(_ context.Context, handle metry.AsyncHandle, _ AsyncResult) error {
+func (noopRecorder) RecordAsyncResult(_ context.Context, handle metry.AsyncHandle, _ AsyncResult) error {
 	if !handle.IsValid() {
 		return ErrInvalidAsyncHandle
 	}
 	return nil
 }
 
-func (noopRuntime) RecordAsyncTokenResult(_ context.Context, token string, _ AsyncResult) error {
+func (noopRecorder) RecordAsyncTokenResult(_ context.Context, token string, _ AsyncResult) error {
 	if _, err := metry.ParseAsyncHandle(token); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (r trackerRuntime) ForProvider(provider string) Runtime {
+func (r trackerRecorder) ForProvider(provider string) Recorder {
 	if r.tracker == nil {
-		return NoopRuntime()
+		return NoopRecorder()
 	}
 	r.provider = strings.TrimSpace(provider)
 	return r
 }
 
-func (r trackerRuntime) RecordOperation(
+func (r trackerRecorder) RecordOperation(
 	ctx context.Context,
 	op Operation,
 	result OperationResult,
 	attrs ...metry.Attribute,
 ) error {
 	if r.tracker == nil {
-		return NoopRuntime().RecordOperation(ctx, op, result)
+		return NoopRecorder().RecordOperation(ctx, op, result)
 	}
 	if err := validateModelMetadata(op.Model, op.Purpose); err != nil {
 		return err
@@ -285,7 +282,7 @@ func (r trackerRuntime) RecordOperation(
 		return outcomeErr
 	}
 	meta := Meta{ //nolint:exhaustruct_v5 // only operation-level fields are relevant here.
-		Provider:      r.runtimeProvider(),
+		Provider:      r.recorderProvider(),
 		Operation:     op.Name,
 		Purpose:       op.Purpose,
 		RequestModel:  op.Model,
@@ -347,7 +344,7 @@ func validateCompletedResult(result OperationResult) error {
 	return nil
 }
 
-func (r trackerRuntime) RecordTraceIO(ctx context.Context, input, output Payload) error {
+func (r trackerRecorder) RecordTraceIO(ctx context.Context, input, output Payload) error {
 	if r.tracker == nil {
 		return nil
 	}
@@ -356,28 +353,21 @@ func (r trackerRuntime) RecordTraceIO(ctx context.Context, input, output Payload
 	}
 	mutateSpan(ctx, func(span trace.Span) {
 		span.SetAttributes(
-			attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+			attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, r.recorderProvider(), r.tracker.cfg)),
 		)
 	})
 	return nil
 }
 
-func (r trackerRuntime) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
+func (r trackerRecorder) RecordStreamingCompletion(ctx context.Context, event StreamingCompletion) error {
 	if r.tracker == nil {
-		return NoopRuntime().RecordStreamingCompletion(ctx, event)
+		return NoopRecorder().RecordStreamingCompletion(ctx, event)
 	}
 	event.Meta = r.bindMeta(event.Meta)
 	return r.tracker.RecordStreamingCompletion(ctx, event)
 }
 
-func (r trackerRuntime) RecordTTFT(ctx context.Context, duration time.Duration) {
-	if r.tracker == nil {
-		return
-	}
-	r.tracker.RecordTTFT(ctx, r.bindMeta(emptyMeta()), duration)
-}
-
-func (r trackerRuntime) StartTool(
+func (r trackerRecorder) StartTool(
 	ctx context.Context,
 	call ToolCall,
 	opts ...ToolOption,
@@ -389,13 +379,13 @@ func (r trackerRuntime) StartTool(
 	options = append(
 		options,
 		WithSpanAttributes(
-			metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+			metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.recorderProvider(), r.tracker.cfg)),
 		),
 	)
 	return startTool(ctx, r.tracker, call, options...)
 }
 
-func (r trackerRuntime) StartRetrieval(
+func (r trackerRecorder) StartRetrieval(
 	ctx context.Context,
 	name string,
 	req RetrievalRequest,
@@ -404,7 +394,7 @@ func (r trackerRuntime) StartRetrieval(
 	return startRetrieval(ctx, r.tracker, name, req, opts...)
 }
 
-func (r trackerRuntime) StartAsync(
+func (r trackerRecorder) StartAsync(
 	ctx context.Context,
 	name string,
 	opts ...AsyncOption,
@@ -423,7 +413,7 @@ func (r trackerRuntime) StartAsync(
 	attrs = append(attrs, attribute.Key(OperationName).String(spanName))
 	attrs = append(
 		attrs,
-		attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+		attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, r.recorderProvider(), r.tracker.cfg)),
 	)
 
 	ctx, span := r.tracker.tracer.Start(ctx, spanName, trace.WithAttributes(attrs...))
@@ -431,7 +421,7 @@ func (r trackerRuntime) StartAsync(
 	return metry.NewAsyncHandle(ctx)
 }
 
-func (r trackerRuntime) RecordAsyncResult(
+func (r trackerRecorder) RecordAsyncResult(
 	ctx context.Context,
 	handle metry.AsyncHandle,
 	result AsyncResult,
@@ -449,7 +439,7 @@ func (r trackerRuntime) RecordAsyncResult(
 	attrs = append(attrs, metry.StringAttribute(OperationStatus, status))
 	attrs = append(
 		attrs,
-		metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.runtimeProvider(), r.tracker.cfg)),
+		metry.StringAttribute(ProviderName, metadataWithConfig(ProviderName, r.recorderProvider(), r.tracker.cfg)),
 	)
 	if class != "" {
 		attrs = append(attrs, metry.StringAttribute(ErrorType, errorClassString(class)))
@@ -473,7 +463,7 @@ func (r trackerRuntime) RecordAsyncResult(
 	})
 }
 
-func (r trackerRuntime) RecordAsyncTokenResult(
+func (r trackerRecorder) RecordAsyncTokenResult(
 	ctx context.Context,
 	token string,
 	result AsyncResult,
@@ -485,19 +475,19 @@ func (r trackerRuntime) RecordAsyncTokenResult(
 	return r.RecordAsyncResult(ctx, handle, result)
 }
 
-func (r trackerRuntime) bindMeta(meta Meta) Meta {
-	meta.Provider = r.runtimeProvider()
+func (r trackerRecorder) bindMeta(meta Meta) Meta {
+	meta.Provider = r.recorderProvider()
 	return meta
 }
 
-func (r trackerRuntime) runtimeProvider() string {
+func (r trackerRecorder) recorderProvider() string {
 	if r.provider == "" {
 		return unknownProviderName
 	}
 	return r.provider
 }
 
-func (r trackerRuntime) asyncStatusAndClass(result AsyncResult) (string, ErrorClass) {
+func (r trackerRecorder) asyncStatusAndClass(result AsyncResult) (string, ErrorClass) {
 	class := r.tracker.classifyToolError(result.Err, result.ErrorClass)
 	status := strings.ToLower(strings.TrimSpace(result.Status))
 	if result.Err != nil || class != "" || status == OperationStatusError {

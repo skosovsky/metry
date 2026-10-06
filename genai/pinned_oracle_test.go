@@ -137,7 +137,7 @@ func TestPinnedOracleActualExports(t *testing.T) {
 	// Arrange: literals below come from the selected registry/metrics and final
 	// explicit extension contract, never current constants/Profile declarations.
 	tracker, provider, metrics, exporter := newTestTrackerWithMetrics(t, WithRawPayloads())
-	runtime := tracker.Runtime().ForProvider("openai")
+	recorder := tracker.Recorder().ForProvider("openai")
 	ctx := context.Background()
 	usage := Usage{
 		InputTokens:           Observe(11, UnitTokens, SourceProvider),
@@ -159,14 +159,14 @@ func TestPinnedOracleActualExports(t *testing.T) {
 	}
 	// Act: real model boundaries, completed model observation, universal tool JSON,
 	// retrieval known-zero score, hosted/local agents and a workflow.
-	_, remote, err := runtime.StartOperation(
+	_, remote, err := recorder.StartOperation(
 		ctx,
 		Operation{Name: "chat", Model: "model", Locality: ExecutionRemote},
 		RecordingOptions{},
 	)
 	require.NoError(t, err)
 	require.NoError(t, remote.Finish(OperationResult{Status: OperationStatusOK, Usage: usage, Payload: payload}))
-	_, local, err := runtime.StartOperation(
+	_, local, err := recorder.StartOperation(
 		ctx,
 		Operation{Name: "chat", Model: "model", Locality: ExecutionLocal},
 		RecordingOptions{},
@@ -175,13 +175,13 @@ func TestPinnedOracleActualExports(t *testing.T) {
 	require.NoError(t, local.Close())
 	require.NoError(
 		t,
-		runtime.RecordOperation(
+		recorder.RecordOperation(
 			ctx,
 			Operation{Name: "chat", Model: "model"},
 			OperationResult{Status: OperationStatusOK},
 		),
 	)
-	_, tool, err := runtime.StartTool(ctx, ToolCall{Name: "search", Arguments: `[1,true,null]`})
+	_, tool, err := recorder.StartTool(ctx, ToolCall{Name: "search", Arguments: `[1,true,null]`})
 	require.NoError(t, err)
 	require.NoError(t, tool.Finish(ToolResult{Status: OperationStatusOK, Result: `42`}))
 	_, retrieval, err := tracker.StartRetrieval(
@@ -261,7 +261,7 @@ func checkOracleInputMetric(metric metricdata.Metrics) error {
 
 func TestPinnedOracleActualTruncatedArrays(t *testing.T) {
 	// Arrange: one complete small element followed by one exceeding the channel cap.
-	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(128))
+	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(128))
 	payload := Payload{
 		SystemInstructions: []ContentPart{
 			{Type: "text", Content: "small"},

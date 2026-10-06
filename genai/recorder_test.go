@@ -13,9 +13,9 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
+func TestRecorder_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t, WithRawPayloads())
-	rec := tracker.Runtime()
+	rec := tracker.Recorder()
 	payload := Payload{
 		InputMessages: []Message{{
 			Role:  "user",
@@ -72,9 +72,9 @@ func TestRuntime_RecordOperation_SetsAttributesAndMetrics(t *testing.T) {
 	)
 }
 
-func TestRuntime_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
+func TestRecorder_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	rec := tracker.Runtime()
+	rec := tracker.Recorder()
 
 	err := rec.RecordOperation(
 		context.Background(),
@@ -91,9 +91,9 @@ func TestRuntime_RecordOperation_ErrorStatusSetsErrorType(t *testing.T) {
 	testutil.AssertSpanStubErrorStatus(t, spans[0])
 }
 
-func TestRuntime_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) {
+func TestRecorder_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	rec := tracker.Runtime()
+	rec := tracker.Recorder()
 
 	err := rec.RecordOperation(
 		context.Background(),
@@ -116,8 +116,8 @@ func TestRuntime_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) 
 	assert.False(t, testutil.SpanStubHasAttr(spans[0], InputMessages))
 }
 
-func TestNoopRuntime_DropsOperationsWithoutPanic(t *testing.T) {
-	rec := NoopRuntime()
+func TestNoopRecorder_DropsOperationsWithoutPanic(t *testing.T) {
+	rec := NoopRecorder()
 
 	require.NoError(t, rec.RecordOperation(
 		context.Background(),

@@ -70,8 +70,8 @@ type Payload struct {
 	OutputMessages     []Message
 }
 
-func truncateContextWithConfig(s string, cfg runtimeConfig) string {
-	return truncateContextWithLimit(s, cfg.MaxContextLength())
+func truncateContextWithConfig(s string, cfg recorderConfig) string {
+	return truncateContextWithLimit(s, cfg.PayloadByteLimit())
 }
 
 func truncateContextWithLimit(s string, limit int) string {
@@ -187,7 +187,7 @@ func (t *Tracker) recordInteractionOnSpan(
 	}
 }
 
-func buildMetaAttributes(meta Meta, cfg runtimeConfig) []attribute.KeyValue {
+func buildMetaAttributes(meta Meta, cfg recorderConfig) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapMetaAttrs)
 	if meta.Provider != "" {
 		attrs = append(attrs, attribute.Key(ProviderName).String(metadataWithConfig(ProviderName, meta.Provider, cfg)))
@@ -231,7 +231,7 @@ func buildMetaAttributes(meta Meta, cfg runtimeConfig) []attribute.KeyValue {
 	return attrs
 }
 
-func buildPayloadAttributes(payload Payload, cfg runtimeConfig) ([]attribute.KeyValue, error) {
+func buildPayloadAttributes(payload Payload, cfg recorderConfig) ([]attribute.KeyValue, error) {
 	if !cfg.RecordPayloads() {
 		return nil, nil
 	}
@@ -251,7 +251,7 @@ func buildPayloadAttributes(payload Payload, cfg runtimeConfig) ([]attribute.Key
 		{InputMessages, payload.InputMessages},
 		{OutputMessages, payload.OutputMessages},
 	} {
-		value, truncated, err := boundedJSONArray(item.value, cfg.MaxContextLength())
+		value, truncated, err := boundedJSONArray(item.value, cfg.PayloadByteLimit())
 		if err != nil {
 			return nil, err
 		}
@@ -265,7 +265,7 @@ func buildPayloadAttributes(payload Payload, cfg runtimeConfig) ([]attribute.Key
 	return attrs, nil
 }
 
-func buildUsageAttributes(usage Usage, cfg runtimeConfig) []attribute.KeyValue {
+func buildUsageAttributes(usage Usage, cfg recorderConfig) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, attrCapUsageAttrs)
 	if usage.InputTokens.Present {
 		attrs = append(attrs, attribute.Key(InputTokens).Int(usage.InputTokens.Value))
@@ -512,7 +512,7 @@ func (t *Tracker) RecordCacheHit(ctx context.Context, hit bool, source string) {
 }
 
 // metricMeta applies the same bounded metadata policy to actual metric facts.
-func metricMeta(meta Meta, cfg runtimeConfig) Meta {
+func metricMeta(meta Meta, cfg recorderConfig) Meta {
 	meta.Provider = metadataWithConfig(ProviderName, meta.Provider, cfg)
 	meta.Operation = metadataWithConfig(OperationName, meta.Operation, cfg)
 	if meta.RequestModel != "" {
@@ -527,7 +527,7 @@ func metricMeta(meta Meta, cfg runtimeConfig) Meta {
 	return meta
 }
 
-func modelSpanName(meta Meta, cfg runtimeConfig) string {
+func modelSpanName(meta Meta, cfg recorderConfig) string {
 	name := metadataWithConfig(OperationName, meta.Operation, cfg)
 	if meta.RequestModel != "" {
 		name += " " + metadataWithConfig(RequestModel, meta.RequestModel, cfg)

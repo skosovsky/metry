@@ -26,10 +26,10 @@ func TestMigrationPreservesKnownZeroUnitsAndHostCustomNames(t *testing.T) {
 		usage.InputTokens = Observe(input.tokens, UnitTokens, input.source)
 	}
 	// Act: logical and physical boundary choices are explicit, not inferred.
-	require.NoError(t, tracker.Runtime().RecordOperation(context.Background(),
+	require.NoError(t, tracker.Recorder().RecordOperation(context.Background(),
 		Operation{Locality: ExecutionRemote, Name: profileChatOperation}, OperationResult{Usage: usage},
 		metry.StringAttribute("host.custom.name", "safe-static-value")))
-	_, summary, err := tracker.Runtime().StartOperation(context.Background(),
+	_, summary, err := tracker.Recorder().StartOperation(context.Background(),
 		Operation{Locality: ExecutionRemote,
 			Name: "logical",
 		}, RecordingOptions{Identity: CausalIdentity{RunID: "run", OperationID: "operation", Kind: IdentityLogical}})

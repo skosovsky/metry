@@ -52,7 +52,7 @@ func TestRecordTraceIO_TruncatesLongPayload(t *testing.T) {
 	const limit = 128
 	tracker, provider, mem := newTestTracker(t,
 		WithRawPayloads(),
-		WithMaxContextLength(limit),
+		WithPayloadByteLimit(limit),
 	)
 
 	longText := strings.Repeat("x", limit+50)

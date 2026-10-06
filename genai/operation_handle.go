@@ -52,15 +52,15 @@ type OperationHandle struct {
 	started  time.Time
 }
 
-func (r trackerRuntime) StartOperation(
+func (r trackerRecorder) StartOperation(
 	ctx context.Context,
 	operation Operation,
 	options RecordingOptions,
 ) (context.Context, *OperationHandle, error) {
-	return startOperation(ctx, r.tracker, r.runtimeProvider(), operation, options)
+	return startOperation(ctx, r.tracker, r.recorderProvider(), operation, options)
 }
 
-func (noopRuntime) StartOperation(
+func (noopRecorder) StartOperation(
 	ctx context.Context,
 	operation Operation,
 	options RecordingOptions,
@@ -277,10 +277,10 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 	return nil
 }
 
-// RecordStreamingUpdate validates an intermediate cumulative observation without
+// ValidateStreamingUpdate validates an intermediate cumulative observation without
 // adding it to metrics. Only Finish commits usage/cost; metry never estimates a
 // missing final total from partial updates.
-func (h *OperationHandle) RecordStreamingUpdate(usage Usage) error {
+func (h *OperationHandle) ValidateStreamingUpdate(usage Usage) error {
 	if h == nil || h.started.IsZero() {
 		return invalidObservation("recording", "missing")
 	}

@@ -48,7 +48,7 @@ func TestRecordInteraction_WithPayloadAndUsage_SetsAttributes(t *testing.T) {
 func TestRecordInteraction_TruncatesPayloadString(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
 		WithRawPayloads(),
-		WithMaxContextLength(96),
+		WithPayloadByteLimit(96),
 	)
 
 	payload := Payload{
@@ -71,9 +71,9 @@ func TestRecordInteraction_TruncatesPayloadString(t *testing.T) {
 	assert.True(t, utf8.ValidString(value))
 }
 
-func TestRuntimeTool_SetToolAttributes(t *testing.T) {
-	tracker, provider, mem := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(64))
-	recorder := tracker.Runtime()
+func TestRecorderTool_SetToolAttributes(t *testing.T) {
+	tracker, provider, mem := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(64))
+	recorder := tracker.Recorder()
 
 	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
@@ -105,7 +105,7 @@ func TestRuntimeTool_SetToolAttributes(t *testing.T) {
 
 func TestToolHandle_ExplicitSuccess_SetsOkStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	recorder := tracker.Runtime()
+	recorder := tracker.Recorder()
 
 	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
@@ -122,9 +122,9 @@ func TestToolHandle_ExplicitSuccess_SetsOkStatus(t *testing.T) {
 	testutil.AssertSpanStubOkStatus(t, spans[0])
 }
 
-func TestRuntimeTool_CloseOnly_PreservesUnknownStatus(t *testing.T) {
+func TestRecorderTool_CloseOnly_PreservesUnknownStatus(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	recorder := tracker.Runtime()
+	recorder := tracker.Recorder()
 
 	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{
 		Name:      "search",
@@ -197,9 +197,9 @@ func TestRecordCacheHit_NoSpan_NoPanic(t *testing.T) {
 	})
 }
 
-func TestRuntimeTool_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
+func TestRecorderTool_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) {
 	tracker, provider, mem := newTestTrackerWithSampler(t, NewHintSampler(metry.NeverSample()))
-	recorder := tracker.Runtime()
+	recorder := tracker.Recorder()
 
 	_, end, startErr := recorder.StartTool(
 		context.Background(),
@@ -220,9 +220,9 @@ func TestRuntimeTool_WithKeepHint_ExportsSpanWhenBaseSamplerDrops(t *testing.T) 
 	assert.True(t, spans[0].SpanContext.IsSampled())
 }
 
-func TestRuntimeTool_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
+func TestRecorderTool_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	recorder := tracker.Runtime()
+	recorder := tracker.Recorder()
 
 	_, end, startErr := recorder.StartTool(
 		context.Background(),
@@ -244,9 +244,9 @@ func TestRuntimeTool_WithCallerAttributes_PreservesBuiltInAttributes(t *testing.
 	assert.Equal(t, "present", testutil.SpanStubStringAttr(t, spans[0], "test.caller.attr"))
 }
 
-func TestRuntimeTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
+func TestRecorderTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	recorder := tracker.Runtime()
+	recorder := tracker.Recorder()
 
 	_, end, startErr := recorder.StartTool(
 		context.Background(),
@@ -275,7 +275,7 @@ func TestRuntimeTool_WithDuplicateCallerKeys_BuiltInWins(t *testing.T) {
 func TestRecordInteraction_TruncatedPayloadRemainsValidJSON(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
 		WithRawPayloads(),
-		WithMaxContextLength(80),
+		WithPayloadByteLimit(80),
 	)
 
 	payload := Payload{

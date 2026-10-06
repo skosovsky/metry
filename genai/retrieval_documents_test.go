@@ -61,7 +61,7 @@ func TestRetrievalDocumentsRawReferencePolicyIndependentFromContentFlag(t *testi
 	tracker, provider, exporter := newTestTracker(
 		t,
 		WithRawPayloads(),
-		func(cfg *runtimeConfig) { cfg.recordPayloads = false },
+		func(cfg *recorderConfig) { cfg.recordPayloads = false },
 	)
 	_, handle, err := tracker.StartRetrieval(
 		context.Background(),
@@ -120,7 +120,7 @@ func TestRetrievalDocumentsBoundsRejectBeforeWritesAndRemainCorrectable(t *testi
 		tracker, provider, exporter := newTestTracker(t)
 		_, handle, err := tracker.StartRetrieval(context.Background(), "", RetrievalRequest{Locality: ExecutionLocal})
 		require.NoError(t, err)
-		_, noop, err := NoopRuntime().StartRetrieval(context.Background(), "", RetrievalRequest{Locality: ExecutionLocal})
+		_, noop, err := NoopRecorder().StartRetrieval(context.Background(), "", RetrievalRequest{Locality: ExecutionLocal})
 		require.NoError(t, err)
 		// Act.
 		require.ErrorIs(t, handle.Finish(result), ErrInvalidObservation)
@@ -140,7 +140,7 @@ func TestRetrievalDocumentsBoundsRejectBeforeWritesAndRemainCorrectable(t *testi
 func TestRetrievalDocumentsSchemaPreservingPrefixTruncation(t *testing.T) {
 	for _, budget := range []int{len(truncatedJSONMarker), 20, 64} {
 		// Arrange.
-		tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(budget))
+		tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(budget))
 		_, handle, err := tracker.StartRetrieval(context.Background(), "", RetrievalRequest{Locality: ExecutionLocal})
 		require.NoError(t, err)
 		docs := []RetrievalDocument{{ID: strings.Repeat("a", 40), Relevance: new(0.0)}, {ID: "second"}}
@@ -169,7 +169,7 @@ func TestRetrievalLocalityAndMalformedStartRejectedBeforeRecording(t *testing.T)
 		tracker, provider, exporter := newTestTracker(t)
 		// Act.
 		_, handle, err := tracker.StartRetrieval(context.Background(), "", request)
-		_, noop, noopErr := NoopRuntime().StartRetrieval(context.Background(), "", request)
+		_, noop, noopErr := NoopRecorder().StartRetrieval(context.Background(), "", request)
 		flushTestProvider(t, provider)
 		// Assert.
 		require.ErrorIs(t, err, ErrInvalidObservation)
@@ -209,7 +209,7 @@ func TestRetrievalDocumentInputAcceptsExactGlobalNodeBudget(t *testing.T) {
 	for index := range documents {
 		documents[index] = RetrievalDocument{ID: "id", Relevance: new(0.0)}
 	}
-	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithMaxContextLength(maxPayloadInputBytes))
+	tracker, provider, exporter := newTestTracker(t, WithRawPayloads(), WithPayloadByteLimit(maxPayloadInputBytes))
 	_, handle, err := tracker.StartRetrieval(context.Background(), "", RetrievalRequest{Locality: ExecutionLocal})
 	require.NoError(t, err)
 	// Act.

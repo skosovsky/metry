@@ -7,22 +7,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/skosovsky/metry"
-	"github.com/skosovsky/metry/internal/genaiwire"
 )
 
 var (
-	// ErrMeterRequired is returned when NewTrackerFromProvider is called with a provider without a meter.
-	ErrMeterRequired = errors.New("genai: meter is required")
-	// ErrTracerRequired is returned when NewTrackerFromProvider is called with a provider without a tracer.
-	ErrTracerRequired = errors.New("genai: tracer is required")
 	// ErrProviderRequired is returned when NewTrackerFromProvider is called with a nil provider.
 	ErrProviderRequired = errors.New("genai: provider is required")
 )
 
-// Tracker owns GenAI runtime config, metric instruments, and the tracer used for tool spans.
+// Tracker owns GenAI recorder config, metric instruments, and the tracer used for tool spans.
 type Tracker struct {
 	dimensions *metricDimensions
-	cfg        runtimeConfig
+	cfg        recorderConfig
 	metrics    *metricsHolder
 	tracer     trace.Tracer
 	provider   *metry.Provider
@@ -49,20 +44,17 @@ func NewTrackerFromProvider(p *metry.Provider, opts ...Option) (*Tracker, error)
 	if p == nil {
 		return nil, ErrProviderRequired
 	}
-	cfg := buildRuntimeConfig(opts...)
-	if configErr := validateRuntimeConfig(cfg); configErr != nil {
+	cfg := buildRecorderConfig(opts...)
+	if configErr := validateRecorderConfig(cfg); configErr != nil {
 		return nil, configErr
 	}
-	meter, tracer, err := genaiwire.MeterTracer(p)
-	if err != nil {
-		if errors.Is(err, metry.ErrNilMeterProvider) {
-			return nil, ErrMeterRequired
-		}
-		if errors.Is(err, metry.ErrNilTracerProvider) {
-			return nil, ErrTracerRequired
-		}
-		return nil, err
-	}
+	deps := p.SDK()
+	meter := deps.MeterProvider.Meter("metry/genai",
+		metric.WithInstrumentationVersion("semconv-genai-e07f4eb+metry-v1"),
+		metric.WithSchemaURL("https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev"))
+	tracer := deps.TracerProvider.Tracer("metry/genai",
+		trace.WithInstrumentationVersion("semconv-genai-e07f4eb+metry-v1"),
+		trace.WithSchemaURL("https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev"))
 
 	holder, err := newMetricsHolder(meter)
 	if err != nil {
@@ -78,7 +70,7 @@ func NewTrackerFromProvider(p *metry.Provider, opts ...Option) (*Tracker, error)
 	}, nil
 }
 
-func validatePolicyDeclaration(cfg runtimeConfig) error {
+func validatePolicyDeclaration(cfg recorderConfig) error {
 	var identity string
 	switch cfg.PayloadPolicy().(type) {
 	case rawPayloadPolicy:

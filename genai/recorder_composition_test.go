@@ -14,11 +14,11 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
+func TestRecorder_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
-	runtime := tracker.Runtime().ForProvider("gemini")
+	recorder := tracker.Recorder().ForProvider("gemini")
 
-	err := runtime.RecordOperation(
+	err := recorder.RecordOperation(
 		context.Background(),
 		Operation{Locality: ExecutionRemote, Name: "expand_query", Model: "model"},
 		OperationResult{
@@ -55,11 +55,11 @@ func TestRuntime_ForProvider_RecordOperationBindsProvider(t *testing.T) {
 	)
 }
 
-func TestRuntime_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
+func TestRecorder_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 
-	err := runtime.RecordOperation(
+	err := recorder.RecordOperation(
 		context.Background(),
 		Operation{Locality: ExecutionRemote, Name: "expand_query", Model: "model"},
 		OperationResult{
@@ -90,14 +90,14 @@ func TestRuntime_RecordOperation_DefaultsProviderWhenUnbound(t *testing.T) {
 	)
 }
 
-func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T) {
+func TestRecorder_RecordTraceIOAndStreamingMetricsUseRecorderBoundary(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t, WithRawPayloads())
-	runtime := tracker.Runtime().ForProvider("gemini")
+	recorder := tracker.Recorder().ForProvider("gemini")
 	ctx := WithScope(context.Background(), Scope{Operation: "chat"})
 
 	spanCtx, end, err := provider.StartSpan(ctx, "handler", "chat-handler")
 	require.NoError(t, err)
-	err = runtime.RecordTraceIO(
+	err = recorder.RecordTraceIO(
 		spanCtx,
 		Payload{
 			SystemInstructions: nil,
@@ -117,7 +117,7 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 		},
 	)
 	require.NoError(t, err)
-	require.NoError(t, runtime.RecordStreamingCompletion(ctx, StreamingCompletion{
+	require.NoError(t, recorder.RecordStreamingCompletion(ctx, StreamingCompletion{
 		Meta:              Meta{Provider: "caller-provider"},
 		Usage:             Usage{OutputTokens: Observe(5, UnitTokens, SourceProvider)},
 		TTFT:              time.Second,
@@ -152,16 +152,16 @@ func TestRuntime_RecordTraceIOAndStreamingMetricsUseRuntimeBoundary(t *testing.T
 	)
 }
 
-func TestRuntime_AsyncTokenResult_SuccessFiltersReservedCallerAttributes(t *testing.T) {
+func TestRecorder_AsyncTokenResult_SuccessFiltersReservedCallerAttributes(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	runtime := tracker.Runtime().ForProvider("gemini")
+	recorder := tracker.Recorder().ForProvider("gemini")
 
-	handle, err := runtime.StartAsync(context.Background(), "enqueue_summary")
+	handle, err := recorder.StartAsync(context.Background(), "enqueue_summary")
 	require.NoError(t, err)
 	token, err := handle.Marshal()
 	require.NoError(t, err)
 
-	err = runtime.RecordAsyncTokenResult(context.Background(), token, AsyncResult{
+	err = recorder.RecordAsyncTokenResult(context.Background(), token, AsyncResult{
 		Name:   "summary_done",
 		Status: OperationStatusOK,
 		Attributes: []metry.Attribute{
@@ -182,11 +182,11 @@ func TestRuntime_AsyncTokenResult_SuccessFiltersReservedCallerAttributes(t *test
 	testutil.AssertSpanStubOkStatus(t, outcome)
 }
 
-func TestRuntime_AsyncTokenResult_RecordsLinkedOutcomeWithoutContextTunnel(t *testing.T) {
+func TestRecorder_AsyncTokenResult_RecordsLinkedOutcomeWithoutContextTunnel(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	runtime := tracker.Runtime().ForProvider("gemini")
+	recorder := tracker.Recorder().ForProvider("gemini")
 
-	handle, err := runtime.StartAsync(
+	handle, err := recorder.StartAsync(
 		context.Background(),
 		"enqueue_summary",
 		WithAsyncAttributes(metry.StringAttribute("queue", "summaries")),
@@ -195,7 +195,7 @@ func TestRuntime_AsyncTokenResult_RecordsLinkedOutcomeWithoutContextTunnel(t *te
 	token, err := handle.Marshal()
 	require.NoError(t, err)
 
-	err = runtime.RecordAsyncTokenResult(context.Background(), token, AsyncResult{
+	err = recorder.RecordAsyncTokenResult(context.Background(), token, AsyncResult{
 		Name:       "summary_done",
 		Status:     OperationStatusError,
 		ErrorClass: ErrorClassPaused,
@@ -222,15 +222,15 @@ func TestRuntime_AsyncTokenResult_RecordsLinkedOutcomeWithoutContextTunnel(t *te
 	testutil.AssertSpanStubErrorStatus(t, outcome)
 }
 
-func TestRuntime_AsyncTokenResult_StatusOnlyErrorDefaultsUnknown(t *testing.T) {
+func TestRecorder_AsyncTokenResult_StatusOnlyErrorDefaultsUnknown(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t)
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 
 	handle, originSC := metrytest.AsyncHandleFromProducerSpan(t, provider, mem, "producer", "enqueue")
 	token, err := handle.Marshal()
 	require.NoError(t, err)
 
-	err = runtime.RecordAsyncTokenResult(context.Background(), token, AsyncResult{
+	err = recorder.RecordAsyncTokenResult(context.Background(), token, AsyncResult{
 		Name:   "summary_done",
 		Status: OperationStatusError,
 	})
@@ -246,42 +246,42 @@ func TestRuntime_AsyncTokenResult_StatusOnlyErrorDefaultsUnknown(t *testing.T) {
 	testutil.AssertSpanStubErrorStatus(t, outcome)
 }
 
-func TestRuntime_AsyncTokenResult_ParseFailureReturnsError(t *testing.T) {
+func TestRecorder_AsyncTokenResult_ParseFailureReturnsError(t *testing.T) {
 	tracker, _, _ := newTestTracker(t)
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 
-	err := runtime.RecordAsyncTokenResult(context.Background(), "not-a-token", AsyncResult{Name: "done"})
+	err := recorder.RecordAsyncTokenResult(context.Background(), "not-a-token", AsyncResult{Name: "done"})
 
 	require.ErrorIs(t, err, metry.ErrInvalidAsyncHandle)
 }
 
-func TestNoopRuntime_StartAsyncReturnsSerializableHandle(t *testing.T) {
-	runtime := NoopRuntime()
+func TestNoopRecorder_StartAsyncReturnsSerializableHandle(t *testing.T) {
+	recorder := NoopRecorder()
 
-	handle, err := runtime.StartAsync(context.Background(), "enqueue")
+	handle, err := recorder.StartAsync(context.Background(), "enqueue")
 
 	require.NoError(t, err)
 	token, err := handle.Marshal()
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
-	require.NoError(t, runtime.RecordAsyncTokenResult(context.Background(), token, AsyncResult{Name: "done"}))
+	require.NoError(t, recorder.RecordAsyncTokenResult(context.Background(), token, AsyncResult{Name: "done"}))
 	require.ErrorIs(
 		t,
-		runtime.RecordAsyncResult(context.Background(), metry.AsyncHandle{}, AsyncResult{Name: "done"}),
+		recorder.RecordAsyncResult(context.Background(), metry.AsyncHandle{}, AsyncResult{Name: "done"}),
 		ErrInvalidAsyncHandle,
 	)
 	require.ErrorIs(
 		t,
-		runtime.RecordAsyncTokenResult(context.Background(), "not-a-token", AsyncResult{Name: "done"}),
+		recorder.RecordAsyncTokenResult(context.Background(), "not-a-token", AsyncResult{Name: "done"}),
 		metry.ErrInvalidAsyncHandle,
 	)
 }
 
-func TestRuntime_ToolErrorClassifier_DefaultAndCustomClassesAreBounded(t *testing.T) {
+func TestRecorder_ToolErrorClassifier_DefaultAndCustomClassesAreBounded(t *testing.T) {
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t)
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 
-	_, end, startErr := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{Name: "search"})
 	require.NoError(t, startErr)
 	require.NoError(t, end.Finish(ToolResult{Err: errors.Join(context.DeadlineExceeded)}))
 
@@ -295,11 +295,11 @@ func TestRuntime_ToolErrorClassifier_DefaultAndCustomClassesAreBounded(t *testin
 	)
 }
 
-func TestRuntime_StartTool_ForProviderSetsProviderAttribute(t *testing.T) {
+func TestRecorder_StartTool_ForProviderSetsProviderAttribute(t *testing.T) {
 	tracker, provider, _, memTrace := newTestTrackerWithMetrics(t)
-	runtime := tracker.Runtime().ForProvider("gemini")
+	recorder := tracker.Recorder().ForProvider("gemini")
 
-	_, end, startErr := runtime.StartTool(
+	_, end, startErr := recorder.StartTool(
 		context.Background(),
 		ToolCall{Name: "search"},
 		WithSpanAttributes(metry.StringAttribute(ProviderName, "caller-provider")),
@@ -312,11 +312,11 @@ func TestRuntime_StartTool_ForProviderSetsProviderAttribute(t *testing.T) {
 	assert.Equal(t, "gemini", testutil.SpanStubStringAttr(t, span, ProviderName))
 }
 
-func TestRuntime_ToolErrorClassifier_StatusOnlyErrorDefaultsUnknown(t *testing.T) {
+func TestRecorder_ToolErrorClassifier_StatusOnlyErrorDefaultsUnknown(t *testing.T) {
 	tracker, provider, memMetric, memTrace := newTestTrackerWithMetrics(t)
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 
-	_, end, startErr := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{Name: "search"})
 	require.NoError(t, startErr)
 	require.NoError(t, end.Finish(ToolResult{Status: OperationStatusError}))
 
@@ -335,14 +335,14 @@ func TestRuntime_ToolErrorClassifier_StatusOnlyErrorDefaultsUnknown(t *testing.T
 	testutil.AssertSpanStubErrorStatus(t, span)
 }
 
-func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) {
+func TestRecorder_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) {
 	classifier := ToolErrorClassifierFunc(func(error) ErrorClass {
 		return ErrorClass("provider_overloaded")
 	})
 	tracker, provider, memMetric, _ := newTestTrackerWithMetrics(t, WithToolErrorClassifier(classifier))
-	runtime := tracker.Runtime()
+	recorder := tracker.Recorder()
 
-	_, end, startErr := runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	_, end, startErr := recorder.StartTool(context.Background(), ToolCall{Name: "search"})
 	require.NoError(t, startErr)
 	require.NoError(t, end.Finish(ToolResult{Err: errors.New("429")}))
 
@@ -359,8 +359,8 @@ func TestRuntime_ToolErrorClassifier_CustomClassRequiresAllowList(t *testing.T) 
 		WithToolErrorClassifier(classifier),
 		WithAllowedToolErrorClasses("provider_overloaded"),
 	)
-	runtime = tracker.Runtime()
-	_, end, startErr = runtime.StartTool(context.Background(), ToolCall{Name: "search"})
+	recorder = tracker.Recorder()
+	_, end, startErr = recorder.StartTool(context.Background(), ToolCall{Name: "search"})
 	require.NoError(t, startErr)
 	require.NoError(t, end.Finish(ToolResult{Err: errors.New("429")}))
 

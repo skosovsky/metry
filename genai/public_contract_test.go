@@ -9,8 +9,8 @@ import (
 
 func TestPublicContractShapesCompile(t *testing.T) {
 	// Arrange: assignments are compile-time assertions for the public boundaries.
-	var _ Runtime = trackerRuntime{tracker: nil, provider: ""}
-	var _ Runtime = noopRuntime{}
+	var _ Recorder = trackerRecorder{tracker: nil, provider: ""}
+	var _ Recorder = noopRecorder{}
 	var diagnostic error = &ObservationError{Field: "usage", Rule: "invalid"}
 	var _ ProviderAdapter = fakeProviderAdapter{}
 	var _ PayloadPolicy = rawPayloadPolicy{}

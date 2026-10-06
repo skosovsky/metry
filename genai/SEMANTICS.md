@@ -7,7 +7,7 @@ its standard semantic-conventions dependency is v1.44.0. Development definitions
 can change. This pin describes the supported exported subset, not all agent
 frameworks or every upstream instrument.
 
-Profile/Contract identity is `metry.genai.semconv.e07f4eb.v1`. GenAI tracer and
+Schema/Contract identity is `metry.genai.semconv.e07f4eb.v1`. GenAI tracer and
 meter scope are `metry/genai`, version `semconv-genai-e07f4eb+metry-v1`, with the
 pinned GenAI schema URL. Resource schema URL remains independently host-owned.
 Vendored fixture sources, license and hashes support offline export-oracle tests.
@@ -74,8 +74,8 @@ attribute with a checked structured value.
 | `metry.gen_ai.payload.<channel>.truncated`, `metry.gen_ai.retrieval.documents.truncated` | bool | E separate truncation evidence for array channels |
 
 Abbreviated suffix lists in this table retain the first key's namespace. The
-executable `Profile.Fields` catalogue supplies exact names/types and required
-contract declarations. `Profile.Events()` covers standard `exception`, upstream
+executable `Schema().Fields()` catalogue supplies exact names/types and required
+contract declarations. `Schema().Events()` covers standard `exception`, upstream
 `gen_ai.evaluation.result` and extension `metry.observation.rejected` event fields.
 
 ## Instruments

@@ -100,7 +100,7 @@ func TestNonFiniteUsageRejectedBeforeInstrumentation(t *testing.T) {
 		)
 		require.ErrorIs(
 			t,
-			tracker.Runtime().
+			tracker.Recorder().
 				RecordOperation(context.Background(), Operation{Locality: ExecutionRemote, Name: "chat"}, OperationResult{Usage: usage}),
 			ErrInvalidObservation,
 		)

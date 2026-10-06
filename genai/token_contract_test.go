@@ -44,7 +44,7 @@ func TestCorruptedContinuationTokensRejectBeforeAdapterRecording(t *testing.T) {
 	require.ErrorIs(t, err, metry.ErrHandleTokenTooLarge)
 	_, err = metry.ParseTraceSnapshot(strings.Repeat("x", 4096))
 	require.ErrorIs(t, err, metry.ErrTraceSnapshotTokenTooLarge)
-	_, recording, err := tracker.Runtime().StartOperation(context.Background(),
+	_, recording, err := tracker.Recorder().StartOperation(context.Background(),
 		Operation{
 			Locality: ExecutionRemote,
 			Name:     profileChatOperation,

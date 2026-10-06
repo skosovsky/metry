@@ -132,7 +132,7 @@ func (h *RetrievalHandle) Finish(result RetrievalResult) error {
 	var truncated bool
 	if h.tracker != nil && len(documents) > 0 {
 		protectRetrievalDocuments(documents, h.tracker.cfg)
-		encoded, truncated, err = boundedJSONArray(documents, h.tracker.cfg.MaxContextLength())
+		encoded, truncated, err = boundedJSONArray(documents, h.tracker.cfg.PayloadByteLimit())
 		if err != nil {
 			return err
 		}

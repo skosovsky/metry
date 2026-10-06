@@ -9,7 +9,7 @@ type EnumDeclaration struct {
 }
 
 // Enumerations returns detached schema declarations, never a mutable registry.
-func (p Profile) Enumerations() []EnumDeclaration {
+func (SchemaDescriptor) Enumerations() []EnumDeclaration {
 	enums := []EnumDeclaration{
 		{
 			Name:                 DerivedCalculationKey,
@@ -74,7 +74,7 @@ func (p Profile) Enumerations() []EnumDeclaration {
 			PolicyEncodedUnknown: true,
 		},
 	}
-	for _, dimension := range p.Dimensions {
+	for _, dimension := range DefaultProfile().Dimensions {
 		if dimension.Key == ErrorType {
 			enums = append(enums, EnumDeclaration{
 				Name: dimension.Key, Values: append([]string(nil), dimension.Values...), PolicyEncodedUnknown: false,
@@ -99,7 +99,7 @@ func (p Profile) Enumerations() []EnumDeclaration {
 			Name: "metry.observation.kind", Values: []string{"completed"}, PolicyEncodedUnknown: false,
 		},
 	)
-	return append(enums, usageEnumerations(p.Fields)...)
+	return append(enums, usageEnumerations(Schema().Fields())...)
 }
 
 func usageEnumerations(fields []ProfileField) []EnumDeclaration {
@@ -136,7 +136,7 @@ type EventDeclaration struct {
 
 // Events returns detached declarations for events emitted by controlled GenAI
 // recording paths. Direct host SDK events remain outside this contract.
-func (Profile) Events() []EventDeclaration {
+func (SchemaDescriptor) Events() []EventDeclaration {
 	const owner = "metry.genai"
 	return []EventDeclaration{
 		{Name: "metry.observation.rejected", Owner: owner, Stability: StabilityExtension,
@@ -165,7 +165,7 @@ func (Profile) Events() []EventDeclaration {
 }
 
 // PayloadChannel declares a controlled input/export boundary. BudgetSetting
-// identifies the runtime option that controls output; input limits are fixed.
+// identifies the recorder option that controls output; input limits are fixed.
 type PayloadChannel struct {
 	Attribute       string
 	Encoding        string
@@ -177,7 +177,7 @@ type PayloadChannel struct {
 }
 
 // PayloadChannels returns detached channel declarations for the supported schema.
-func (Profile) PayloadChannels() []PayloadChannel {
+func (SchemaDescriptor) PayloadChannels() []PayloadChannel {
 	channels := make([]PayloadChannel, 0, attrCapPayloadAttrs)
 	for _, name := range []string{SystemInstructions, InputMessages, OutputMessages, ToolCallArguments, ToolCallResult, RetrievalDocuments} {
 		channels = append(channels, PayloadChannel{
@@ -187,13 +187,13 @@ func (Profile) PayloadChannels() []PayloadChannel {
 			InputDepthLimit: maxPayloadJSONDepth,
 			InputEntryLimit: maxPayloadEntries,
 			OutputByteLimit: 0,
-			BudgetSetting:   "max_context_length",
+			BudgetSetting:   "payload_byte_limit",
 		})
 	}
 	for _, name := range []string{RetrievalQuery, EvaluationExplanation} {
-		budget := "max_context_length"
+		budget := "payload_byte_limit"
 		if name == EvaluationExplanation {
-			budget = "max_event_length"
+			budget = "event_text_byte_limit"
 		}
 		channels = append(channels, PayloadChannel{
 			Attribute:       name,
@@ -209,3 +209,22 @@ func (Profile) PayloadChannels() []PayloadChannel {
 }
 
 // Invocation enum values are fixed facts; no host vocabulary enters metrics.
+
+// Enumerations returns schema enums with locally configured error classes.
+func (c Contract) Enumerations() []EnumDeclaration { return effectiveEnumerations(c.profile) }
+
+func effectiveEnumerations(profile Profile) []EnumDeclaration {
+	enums := Schema().Enumerations()
+	for i := range enums {
+		if enums[i].Name != ErrorType {
+			continue
+		}
+		enums[i].Values = nil
+		for _, dimension := range profile.Dimensions {
+			if dimension.Key == ErrorType {
+				enums[i].Values = append([]string(nil), dimension.Values...)
+			}
+		}
+	}
+	return enums
+}

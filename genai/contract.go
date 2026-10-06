@@ -13,17 +13,17 @@ type Contract struct {
 
 // NewContract validates the same options as the tracker without creating SDK instruments.
 func NewContract(opts ...Option) (Contract, error) {
-	cfg := buildRuntimeConfig(opts...)
-	if err := validateRuntimeConfig(cfg); err != nil {
+	cfg := buildRecorderConfig(opts...)
+	if err := validateRecorderConfig(cfg); err != nil {
 		return Contract{}, err
 	}
 	return contractFromConfig(cfg), nil
 }
 
-func contractFromConfig(cfg runtimeConfig) Contract {
+func contractFromConfig(cfg recorderConfig) Contract {
 	_, raw := cfg.PayloadPolicy().(rawPayloadPolicy)
-	return Contract{profile: cloneProfile(cfg.profile), contextBytes: cfg.maxContextLength,
-		eventBytes: cfg.maxEventLength, raw: cfg.recordPayloads && raw, referenceRaw: raw}
+	return Contract{profile: cloneProfile(cfg.profile), contextBytes: cfg.payloadByteLimit,
+		eventBytes: cfg.eventTextByteLimit, raw: cfg.recordPayloads && raw, referenceRaw: raw}
 }
 
 // Contract returns the actual settings used by this tracker as a detached snapshot.
@@ -34,10 +34,19 @@ func (t *Tracker) Contract() Contract {
 	return contractFromConfig(t.cfg)
 }
 
-// Profile returns detached caller declarations.
+// Schema returns the immutable fixed descriptor used by this contract.
+func (c Contract) Schema() SchemaDescriptor { return Schema() }
+
+// PayloadByteLimit returns the resolved payload output budget in bytes.
+func (c Contract) PayloadByteLimit() int { return c.contextBytes }
+
+// EventTextByteLimit returns the resolved event text output budget in bytes.
+func (c Contract) EventTextByteLimit() int { return c.eventBytes }
+
+// Profile returns detached effective runtime settings.
 func (c Contract) Profile() Profile { return cloneProfile(c.profile) }
 
-// RawEnabled reports whether this runtime permits raw payload recording.
+// RawEnabled reports whether this recorder permits raw payload recording.
 func (c Contract) RawEnabled() bool { return c.raw }
 
 // ReferenceRawEnabled reports raw reference permission independently of content capture.
@@ -45,10 +54,10 @@ func (c Contract) ReferenceRawEnabled() bool { return c.referenceRaw }
 
 // PayloadChannels returns detached channel declarations with resolved budgets.
 func (c Contract) PayloadChannels() []PayloadChannel {
-	channels := c.profile.PayloadChannels()
+	channels := c.Schema().PayloadChannels()
 	for index := range channels {
 		channels[index].OutputByteLimit = c.contextBytes
-		if channels[index].BudgetSetting == "max_event_length" {
+		if channels[index].BudgetSetting == "event_text_byte_limit" {
 			channels[index].OutputByteLimit = c.eventBytes
 		}
 	}
@@ -69,8 +78,8 @@ func (c Contract) Validate() error {
 	return nil
 }
 
-func validateRuntimeConfig(cfg runtimeConfig) error {
-	if err := validateBudgets(cfg.maxContextLength, cfg.maxEventLength); err != nil {
+func validateRecorderConfig(cfg recorderConfig) error {
+	if err := validateBudgets(cfg.payloadByteLimit, cfg.eventTextByteLimit); err != nil {
 		return err
 	}
 	if err := cfg.profile.Validate(); err != nil {

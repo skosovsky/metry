@@ -9,23 +9,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// RecordTTFT records custom client-side time-to-first-token on an explicit tracker.
-func (t *Tracker) RecordTTFT(ctx context.Context, meta Meta, duration time.Duration) {
-	if t.metrics == nil || t.metrics.TTFT == nil || duration <= 0 {
-		return
-	}
-	meta = mergeMetaFromScope(ctx, meta)
-	attrs, ok := metricAttributesFromMeta(metricMeta(meta, t.cfg))
-	if !ok {
-		return
-	}
-	t.metrics.TTFT.Record(
-		ctx,
-		duration.Seconds(),
-		metric.WithAttributes(t.boundedMetricAttributes(TTFTMetricName, attrs)...),
-	)
-}
-
 // RecordStreamingCompletion records custom streaming quality metrics on an explicit tracker.
 func (t *Tracker) RecordStreamingCompletion(
 	ctx context.Context,

@@ -60,9 +60,8 @@ func TestConformanceRecognizedContentVocabulary(t *testing.T) {
 func TestConformanceTruncationMarkerRequiresItsArrayChannel(t *testing.T) {
 	contract, err := NewContract(WithRawPayloads())
 	require.NoError(t, err)
-	profile := contract.Profile()
-	marker, _ := declaredField(profile, payloadTruncationKey(InputMessages))
-	channel, _ := declaredField(profile, InputMessages)
+	marker, _ := declaredField(payloadTruncationKey(InputMessages))
+	channel, _ := declaredField(InputMessages)
 	assert.False(t, completePayloadEvidence(contract, []ProfileField{marker}, nil))
 	assert.True(
 		t,

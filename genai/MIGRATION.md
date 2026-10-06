@@ -12,8 +12,8 @@ span wrappers. This does not change explicit outcome owners in instrumentation
 such as executor callbacks or GenAI operation handles.
 
 `RuntimeFromProvider` has been removed. Replace it with
-`NewRuntimeFromProvider` and handle the returned error. For intentionally disabled
-telemetry, select `NoopRuntime` at the host composition root. Invalid budgets,
+`NewRecorderFromProvider` and handle the returned error. For intentionally disabled
+telemetry, select `NoopRecorder` at the host composition root. Invalid budgets,
 profile/policy mismatches and SDK instrument creation failures never select noop
 implicitly.
 
@@ -59,12 +59,39 @@ caller-owned state when a worker needs them.
 | Retrieval output attributes written without validation | `RetrievalHandle.Finish` returns an error before invalid writes | Finite optional relevance; bounded document array; nonnegative count; no imposed score scale | Handle telemetry diagnostics separately from business results; check returned errors |
 | Completed observation or standalone streaming completion without operation name silently dropped usage metrics | Effective operation name required, resolved from caller scope when omitted | Required `gen_ai.operation.name`; malformed name rejected before span/metric writes, including noop paths | Supply an operation name or `Scope.Operation`; model/purpose alone is insufficient |
 
+## Recorder and byte-budget API clear break
+
+`Runtime` is renamed to `Recorder`, `Tracker.Runtime()` to `Tracker.Recorder()`,
+`NewRuntimeFromProvider` to `NewRecorderFromProvider`, and `NoopRuntime` to
+`NoopRecorder`. These names have no aliases. The init-time `MeterTracer(any)`
+bridge and its obsolete `ErrMeterRequired`, `ErrTracerRequired`,
+`metry.ErrNilMeterProvider` and `metry.ErrInvalidProviderType` errors are removed;
+SDK dependency validation belongs to `metry.FromSDK`. The recorder observes caller work;
+it does not execute, retry or schedule it. Consumer-owned narrow interfaces remain
+supported. Constructing from a nil provider is an error; a zero provider exposes
+noop SDK dependencies through the typed `Provider.SDK()` contract.
+
+`OperationHandle.RecordStreamingUpdate` becomes `ValidateStreamingUpdate(Usage)`;
+it checks intermediate observations without exporting or retaining usage.
+`Tracker.RecordTTFT` and `Runtime.RecordTTFT` are removed. Final
+`OperationResult.Streaming` / `StreamingCompletion` with `FirstTokenPresent`
+are the sole TTFT sources, including a known zero. Successful handle Finish
+records once; a standalone completed DTO must be delivered once by its owner.
+
+`WithMaxContextLength` becomes `WithPayloadByteLimit(int)`;
+`WithMaxEventLength` becomes `WithEventTextByteLimit(int)`. Effective contract
+getters use `PayloadByteLimit()` and `EventTextByteLimit()`; channel
+`BudgetSetting` values become `payload_byte_limit` and `event_text_byte_limit`.
+Limits remain bytes with identical ranges and validation. Telemetry attribute
+and metric names, schema ID, instrumentation scope version and schema URL do not
+change: these are API/declaration renames with unchanged wire semantics.
+
 ## Outcome and handle clear break
 
 The following signatures are removed, with no compatibility wrappers:
 
-- `Runtime.StartTool(ctx, call, opts...) (context.Context, ToolEnd)` and `Runtime.RecordToolResult(ctx, result)` become `Runtime.StartTool(ctx, call, opts...) (context.Context, *ToolHandle, error)` and `ToolHandle.Finish(result) error`.
-- `Tracker.StartRetrievalSpan(ctx, name, request, opts...)` and `Tracker.RecordRetrievalResult(ctx, result)` become `Tracker.StartRetrieval(ctx, name, request, opts...) (context.Context, *RetrievalHandle, error)` and `RetrievalHandle.Finish(result) error`. Runtime exposes the same start method.
+- `Runtime.StartTool(ctx, call, opts...) (context.Context, ToolEnd)` and `Runtime.RecordToolResult(ctx, result)` become `Recorder.StartTool(ctx, call, opts...) (context.Context, *ToolHandle, error)` and `ToolHandle.Finish(result) error`.
+- `Tracker.StartRetrievalSpan(ctx, name, request, opts...)` and `Tracker.RecordRetrievalResult(ctx, result)` become `Tracker.StartRetrieval(ctx, name, request, opts...) (context.Context, *RetrievalHandle, error)` and `RetrievalHandle.Finish(result) error`. Recorder exposes the same start method.
 - Adapter `ParseResponse(any) (Payload, Usage, error)` becomes `ParseResponse(any) (ResponseObservation, error)`. Return all observed response facts from that call: `Payload`, `Usage`, `Metadata: ResponseMetadata{Model: actualModel}`, `Status` and `ErrorType`. Domain request/response types require no metry interface, and adapters require no mutable request state.
 
 All operation, tool and retrieval handles expose `Close() error`. Start before host I/O; finish after I/O. Defer `Close` to cover exits that cannot provide a valid result. A successful finish already closes the handle, so a deferred close returns `ErrFinalized`; it produces no additional writes. Invalid finish is repairable and produces no final usage or outcome writes. Close commits unknown without fabricated usage, tool result or retrieval documents. Live durations use a local monotonic clock; completed observations retain their supplied known duration and completed marker.
@@ -77,25 +104,21 @@ Host business errors retain their identity and result. Handle telemetry diagnost
 
 ## Profile and ownership
 
-`DefaultProfile()` provides the canonical field catalogue, field stability,
-encodings, units, operation boundary declarations and finite dimension policy.
-The profile is snapshotted by constructors. It cannot omit or reinterpret owned
-fields, or declare unknown fields under the same schema identity. Local safe
-label values and bounded series budget are configurable. Host custom SDK
-attributes retain their own names and remain outside this checked contract.
+`genai.Schema()` and `Contract.Schema()` return an immutable `SchemaDescriptor`
+for the fixed schema. Read `ID()`, `Mapping()`, `Fields()` and `Boundaries()` from
+it; collection methods return detached copies. `Profile.ID`, `Mapping`, `Fields`
+and `Boundaries` are removed. Schema configuration is not accepted by constructors.
+`DefaultProfile()` now contains only policy identity, raw permission, series
+budget and finite dimensions. Constructors snapshot these settings; `Profile()`
+returns a deep copy. Host custom SDK attributes remain outside this contract.
 
-Canonical boundaries are checked alongside fields: do not remove, rename or
-change accounting semantics under this profile identity. Configure finite safe
-dimension values for application-specific operation names. `Profile.Events()`
-declares event names, instrumentation ownership and allowed attributes. These
-declarations do not transfer ownership of business execution to the library.
-
-`Profile.Enumerations()` and `Profile.PayloadChannels()` return detached enum and
-input/encoding/budget-setting declarations. Present source fields never emit
-`unknown`: unknown usage is absence. Unknown structured metadata enum values
-follow payload policy; raw handling requires explicit permission. Channels name
-the runtime setting controlling output budget rather than introducing another
-independent payload limit.
+`Schema().Events()`, `Schema().Enumerations()` and `Schema().PayloadChannels()`
+provide the fixed catalogue. `Contract.Enumerations()` adds the effective local
+error-class declaration; `Contract.PayloadChannels()` resolves actual output
+budgets. Present source fields never emit `unknown`: unknown usage is absence.
+Unknown structured metadata enum values follow payload policy; raw handling
+requires explicit permission. Adapter declarations still identify the fixed
+schema, mapping and boundary owners; conformance checks actual export evidence.
 
 The declared built-in policy identity must match the installed sanitizer. Setting
 `PayloadPolicyID` alone does not install a policy. Conflicting options are rejected

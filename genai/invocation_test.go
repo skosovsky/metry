@@ -28,11 +28,11 @@ func TestInvocationLocalHostedAndWorkflowBoundaries(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// Act.
-	_, local, err := tracker.Runtime().
+	_, local, err := tracker.Recorder().
 		StartAgent(ctx, AgentInvocation{Name: "local", ID: "local-id", Locality: ExecutionLocal}, RecordingOptions{})
 	require.NoError(t, err)
 	require.NoError(t, local.Finish(InvocationResult{Status: OperationStatusOK}))
-	_, hosted, err := tracker.Runtime().
+	_, hosted, err := tracker.Recorder().
 		ForProvider("openai").
 		StartAgent(ctx, AgentInvocation{Name: "hosted", ID: "asst-1", Version: "v2", ConversationID: "conversation", Locality: ExecutionRemote}, RecordingOptions{Identity: CausalIdentity{RunID: "run", OperationID: "operation", Kind: IdentityLogical}})
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestInvocationLocalHostedAndWorkflowBoundaries(t *testing.T) {
 func TestInvocationRejectsBeforeWritesAndNoopParity(t *testing.T) {
 	// Arrange.
 	tracker, provider, exporter := newTestTracker(t)
-	for _, runtime := range []Runtime{tracker.Runtime(), NoopRuntime()} {
+	for _, recorder := range []Recorder{tracker.Recorder(), NoopRecorder()} {
 		for _, invocation := range []AgentInvocation{
 			{Name: "agent"},
 			{Name: "agent", Locality: "unsupported"},
@@ -85,12 +85,12 @@ func TestInvocationRejectsBeforeWritesAndNoopParity(t *testing.T) {
 			{Name: "agent", ConversationID: string([]byte{0xff}), Locality: ExecutionLocal},
 		} {
 			// Act.
-			_, handle, err := runtime.StartAgent(context.Background(), invocation, RecordingOptions{})
+			_, handle, err := recorder.StartAgent(context.Background(), invocation, RecordingOptions{})
 			// Assert.
 			require.ErrorIs(t, err, ErrInvalidObservation)
 			require.Nil(t, handle)
 		}
-		_, handle, err := runtime.StartWorkflow(
+		_, handle, err := recorder.StartWorkflow(
 			context.Background(),
 			WorkflowInvocation{Name: "workflow"},
 			RecordingOptions{Predecessor: "unsupported"},
@@ -107,11 +107,11 @@ func TestInvocationFinalizationOutcomesAndRace(t *testing.T) {
 		t.Run(fmt.Sprintf("noop=%t", noop), func(t *testing.T) {
 			// Arrange.
 			tracker, provider, exporter := newTestTracker(t)
-			runtime := tracker.Runtime()
+			recorder := tracker.Recorder()
 			if noop {
-				runtime = NoopRuntime()
+				recorder = NoopRecorder()
 			}
-			_, handle, err := runtime.StartAgent(
+			_, handle, err := recorder.StartAgent(
 				context.Background(),
 				AgentInvocation{Name: "agent", Locality: ExecutionLocal},
 				RecordingOptions{},
@@ -237,7 +237,7 @@ func TestInvocationAncestorsDoNotDuplicateAttemptResources(t *testing.T) {
 		RecordingOptions{},
 	)
 	require.NoError(t, err)
-	_, model, err := tracker.Runtime().
+	_, model, err := tracker.Recorder().
 		ForProvider("openai").
 		StartOperation(ctx, Operation{Name: "chat", Model: "model", Locality: ExecutionRemote}, RecordingOptions{Identity: CausalIdentity{RunID: "run", OperationID: "model-op", AttemptID: "attempt", Kind: IdentityAttempt}})
 	require.NoError(t, err)

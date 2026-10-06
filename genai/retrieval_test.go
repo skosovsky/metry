@@ -46,7 +46,7 @@ func TestRetrievalResultRejectsUnboundedAndNonFiniteBeforeMutation(t *testing.T)
 func TestStartRetrieval_SetsAttributesAndParent(t *testing.T) {
 	tracker, provider, mem := newTestTracker(t,
 		WithPayloadPolicy(RedactPayloadPolicy()),
-		WithMaxContextLength(128),
+		WithPayloadByteLimit(128),
 	)
 
 	parentCtx, endParent, err := provider.StartSpan(context.Background(), "genai-retrieval", "request")

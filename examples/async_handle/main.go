@@ -23,12 +23,12 @@ func run() int {
 		return 1
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
-	runtime, err := genai.NewRuntimeFromProvider(provider)
+	recorder, err := genai.NewRecorderFromProvider(provider)
 	if err != nil {
 		log.Println("create telemetry:", err)
 		return 1
 	}
-	runtime = runtime.ForProvider("worker")
+	recorder = recorder.ForProvider("worker")
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	if err != nil {
@@ -43,7 +43,7 @@ func run() int {
 		log.Println("capture trace snapshot:", err)
 		return 1
 	}
-	handle, err := runtime.StartAsync(ctx, "delivery.enqueue")
+	handle, err := recorder.StartAsync(ctx, "delivery.enqueue")
 	if err != nil {
 		log.Println("capture handle:", err)
 		return 1
@@ -60,7 +60,7 @@ func run() int {
 		log.Println("restore trace snapshot:", err)
 		return 1
 	}
-	if err := runtime.RecordAsyncTokenResult(workerCtx, token, genai.AsyncResult{
+	if err := recorder.RecordAsyncTokenResult(workerCtx, token, genai.AsyncResult{
 		Name:   "delivery.success",
 		Status: genai.OperationStatusOK,
 		Attributes: []metry.Attribute{

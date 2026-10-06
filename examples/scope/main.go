@@ -24,7 +24,7 @@ func run() int {
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
 
-	runtime, err := genai.NewRuntimeFromProvider(provider)
+	recorder, err := genai.NewRecorderFromProvider(provider)
 	if err != nil {
 		log.Println(err)
 		return 1
@@ -69,8 +69,8 @@ func run() int {
 	}
 	workerCtx = genai.WithScope(workerCtx, scope)
 	workerCtx = metry.Enrich(workerCtx, metry.TenantID(tenantID))
-	runtime = runtime.ForProvider("openai")
-	if err := runtime.RecordOperation(workerCtx, genai.Operation{
+	recorder = recorder.ForProvider("openai")
+	if err := recorder.RecordOperation(workerCtx, genai.Operation{
 		Name:    scope.Operation,
 		Model:   scope.Model,
 		Purpose: scope.Purpose,

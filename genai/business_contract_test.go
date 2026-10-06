@@ -15,10 +15,10 @@ func TestNoopAndSamplingPreserveHostBusinessResultAndDiagnostic(t *testing.T) {
 	// Arrange: host-owned business work is separate from its telemetry observer.
 	tracker, provider, exporter := newTestTrackerWithSampler(t, metry.NeverSample())
 	businessErr := errors.New("host failure")
-	for _, runtime := range []Runtime{NoopRuntime(), tracker.Runtime()} {
+	for _, recorder := range []Recorder{NoopRecorder(), tracker.Recorder()} {
 		for _, tokens := range []int{0, -1} {
 			// Act.
-			result, err, diagnostic := syntheticHostOperation(runtime, tokens, businessErr)
+			result, err, diagnostic := syntheticHostOperation(recorder, tokens, businessErr)
 			// Assert.
 			assert.Equal(t, "host result", result)
 			assert.Same(t, businessErr, err)
@@ -36,9 +36,9 @@ func TestNoopAndSamplingPreserveHostBusinessResultAndDiagnostic(t *testing.T) {
 	assert.Empty(t, exporter.GetSpans())
 }
 
-func syntheticHostOperation(runtime Runtime, tokens int, businessErr error) (string, error, error) {
+func syntheticHostOperation(recorder Recorder, tokens int, businessErr error) (string, error, error) {
 	result := "host result"
-	diagnostic := runtime.RecordOperation(
+	diagnostic := recorder.RecordOperation(
 		context.Background(),
 		Operation{Locality: ExecutionRemote, Name: profileChatOperation},
 		OperationResult{
