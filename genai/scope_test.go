@@ -36,7 +36,7 @@ func TestWithScope_PurposeOnly_RecordInteraction_SetsPurposeOnSpan(t *testing.T)
 	assert.Equal(t, PurposeQualityEvaluation, testutil.SpanStubStringAttr(t, spans[0], OperationPurpose))
 }
 
-func TestWithScope_StoresGenAIBaggageKeys(t *testing.T) {
+func TestWithScope_StoresOriginalDefaults(t *testing.T) {
 	ctx := WithScope(context.Background(), Scope{Provider: "openai", Model: "gpt-4o-mini"})
 	got, ok := ScopeFromContext(ctx)
 	require.True(t, ok)

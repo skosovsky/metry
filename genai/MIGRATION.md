@@ -31,6 +31,16 @@ invalid explicit markers and reserved collisions remain rejected. Visible/egress
 baggage uses a deterministic sorted fitting prefix within pinned SDK limits.
 Overflow no longer removes trusted values from private span/log context.
 
+Both package and Tracker `WithScope` now store original defaults privately.
+They do not enrich the parent span, ContextHandler logs or transport baggage.
+Explicit Meta fields override defaults; private local defaults override admitted
+enrichment fallback. Repeated partial scope writes merge non-empty local fields.
+Each tracker applies its own metadata policy when recording, so safe-label and
+raw permissions belong to the emitter rather than the scope creator. For
+intentional raw host enrichment use `metry.Enrich` explicitly. Durable snapshot
+and network baggage do not serialize private defaults; carry/reapply them through
+caller-owned state when a worker needs them.
+
 | Previous contract | Current contract | Names / units / boundary | Consumer action |
 |---|---|---|---|
 | Scalar `Usage`, zero treated as missing | Typed `Measurement[int]` / `Measurement[float64]` with explicit presence/source/unit | Existing total/component attributes remain; each present measurement adds `metry.gen_ai.measurement.<field>.source` and `.unit` | Replace literals with `Observe`; use zero-value measurement for absence and present zero for a known zero |

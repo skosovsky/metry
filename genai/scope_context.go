@@ -14,76 +14,52 @@ const (
 	scopeBaggagePurpose   = metry.GenAIBaggagePurposeKey
 )
 
-// WithScope attaches a typed GenAI scope to context via observability baggage.
+type scopeContextKey struct{}
+
+// WithScope stores original local defaults privately, without writing telemetry
+// or baggage. Non-empty fields replace previous local defaults; empty fields keep
+// them. Tracker policy is applied only when a tracker emits these values.
 func WithScope(ctx context.Context, scope Scope) context.Context {
-	attrs := scopeAttributes(scope)
-	if len(attrs) == 0 {
+	if scope == (Scope{}) { //nolint:exhaustruct_v5 // Compare all fields with the empty sentinel.
 		return ctx
 	}
-	return metry.Enrich(ctx, attrs...)
+	previous, _ := ctx.Value(scopeContextKey{}).(Scope)
+	return context.WithValue(ctx, scopeContextKey{}, mergeScope(scope, previous))
 }
 
-// WithScope is a Tracker sugar wrapper around the package-level WithScope.
+// WithScope stores the same private defaults as package WithScope. It does not
+// export through this receiver; each emitting tracker applies its own policy.
 func (t *Tracker) WithScope(ctx context.Context, scope Scope) context.Context {
-	_ = t
 	return WithScope(ctx, scope)
 }
 
-// ScopeFromContext returns only locally trusted or explicitly admitted scope values.
+// ScopeFromContext returns original private local defaults over locally trusted
+// or explicitly admitted enrichment fallback. Arbitrary OTel baggage is ignored.
 func ScopeFromContext(ctx context.Context) (Scope, bool) {
-	var scope Scope
-	var found bool
-
-	if v := enrichment.String(ctx, scopeBaggageProvider); v != "" {
-		scope.Provider = v
-		found = true
-	}
-	if v := enrichment.String(ctx, scopeBaggageModel); v != "" {
-		scope.Model = v
-		found = true
-	}
-	if v := enrichment.String(ctx, scopeBaggageOperation); v != "" {
-		scope.Operation = v
-		found = true
-	}
-	if v := enrichment.String(ctx, scopeBaggagePurpose); v != "" {
-		scope.Purpose = v
-		found = true
-	}
-	return scope, found
+	scope, _ := ctx.Value(scopeContextKey{}).(Scope)
+	scope = mergeScope(scope, Scope{
+		Provider:  enrichment.String(ctx, scopeBaggageProvider),
+		Model:     enrichment.String(ctx, scopeBaggageModel),
+		Operation: enrichment.String(ctx, scopeBaggageOperation),
+		Purpose:   enrichment.String(ctx, scopeBaggagePurpose),
+	})
+	return scope, scope != (Scope{}) //nolint:exhaustruct_v5 // Empty sentinel means no defaults.
 }
 
-func scopeAttributes(scope Scope) []metry.Attribute {
-	var attrs []metry.Attribute
-	if scope.Provider != "" {
-		attrs = append(attrs, scopeProviderAttribute(scope.Provider))
+func mergeScope(scope, defaults Scope) Scope {
+	if scope.Provider == "" {
+		scope.Provider = defaults.Provider
 	}
-	if scope.Model != "" {
-		attrs = append(attrs, scopeModelAttribute(scope.Model))
+	if scope.Model == "" {
+		scope.Model = defaults.Model
 	}
-	if scope.Operation != "" {
-		attrs = append(attrs, scopeOperationAttribute(scope.Operation))
+	if scope.Operation == "" {
+		scope.Operation = defaults.Operation
 	}
-	if scope.Purpose != "" {
-		attrs = append(attrs, scopePurposeAttribute(scope.Purpose))
+	if scope.Purpose == "" {
+		scope.Purpose = defaults.Purpose
 	}
-	return attrs
-}
-
-func scopeProviderAttribute(provider string) metry.Attribute {
-	return metry.GenAIProvider(provider)
-}
-
-func scopeModelAttribute(model string) metry.Attribute {
-	return metry.GenAIModel(model)
-}
-
-func scopeOperationAttribute(operation string) metry.Attribute {
-	return metry.GenAIOperation(operation)
-}
-
-func scopePurposeAttribute(purpose string) metry.Attribute {
-	return metry.GenAIPurpose(purpose)
+	return scope
 }
 
 func mergeMetaFromScope(ctx context.Context, meta Meta) Meta {

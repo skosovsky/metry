@@ -17,6 +17,7 @@ with the host. Direct host SDK writes and framework error logs are host-owned.
 | Security reason | Same diagnostic policy; suppressed by default | Action/validator/code/severity are host-supplied bounded machine metadata, not content-scanned text |
 | Local Enrich span/log fields | Trusted local typed values copied into context | Host must choose safe values; local logging permission does not imply network permission |
 | Inbound baggage and GenAI scope | No imported trust by default; explicit ingress key allowlist | A typed marker or manual OTel baggage is not evidence of trusted local origin |
+| GenAI WithScope defaults | Stored privately without span/log/baggage writes; each tracker applies metadata policy at emission | Local trust does not grant raw export; explicit Meta wins over defaults |
 | Outbound baggage | No business keys by default; explicit egress allowlist | Trace acceptance/rejection is independent of business baggage permissions |
 | Custom attributes, direct SDK calls, custom handlers/exporters | Host-owned | These can bypass all library-controlled content routes |
 

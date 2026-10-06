@@ -200,6 +200,8 @@ Declared image/audio/video/file content accepts only bounded `http:`, `https:` o
 
 The same policy applies to messages, tool arguments/results, retrieval queries, feedback text, and evaluation reasoning.
 
+`genai.WithScope` and `tracker.WithScope` store original local defaults privately. They do not add parent span attributes, log fields or baggage. Non-empty fields merge over previous local defaults; `ScopeFromContext` fills remaining fields from trusted enrichment, and explicit `Meta` wins. Each emitting tracker applies its own metadata policy. Private scope is not serialized by transport or trace snapshots; reapply worker defaults after restoration. Direct `metry.Enrich` remains an explicit host-owned write of raw values.
+
 ## Usage presence and provenance
 
 See [the contract migration table](genai/MIGRATION.md) for caller changes, field names, units, boundaries and dashboard actions. `DefaultProfile().Fields` is the canonical checked catalogue; missing, incompatible or unknown declarations are rejected under the supported schema identity. Host custom attributes are not silently renamed or certified by the profile.

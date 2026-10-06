@@ -19,7 +19,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T04 Explicit recorder construction | R03 | Catch-all constructor removed; invalid budgets/profile/policy/instruments reach caller; explicit noop; composition examples updated | `fix: recorder errors` | accepted |
 | T05 Durable trace restoration | R04 | Own W3C decoding across W3C/baggage/custom transports, exact reference restore over foreign ctx; policy rejection returns error and original ctx | `fix: trace restore` | accepted |
 | T06 Raw enrichment and bounded propagation | R05, D12, D13 | Raw string span/log/private/transport AAA, literal percent stability, invalid keys; ordinary allowlisted W3C strings; deterministic byte/member overflow tests | `fix: baggage values` | accepted |
-| T07 Private GenAI scope | R06 | Package/Tracker scope and direct Meta sentinel privacy across parent/child/logs; originals survive merge, safe/raw opt-in, local precedence/remote trust | `fix: scope privacy` | pending |
+| T07 Private GenAI scope | R06 | Package/Tracker scope and direct Meta sentinel privacy across parent/child/logs; originals survive merge, safe/raw opt-in, local precedence/remote trust | `fix: scope privacy` | accepted |
 | T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | pending |
 | T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | pending |
 | T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | pending |
@@ -157,3 +157,17 @@ Benchmark on Apple M1 Max (200ms, indicative, no agreed performance SLA):
 Small-batch overhead is documented; large-batch maps no longer clone per member.
 Limits: no external backends/fuzz; incoming wire is first bounded by pinned SDK
 parsing, library-owned retention covers local baggage, merged ledger and egress.
+
+T07 accepted by independent `t07_completeness` (100%, no gaps) and
+`t07_correctness` (no unresolved findings). Completeness ran GenAI/propagation
+scope/trust tests; correctness independently ran GenAI/propagation/gRPC tests
+and GenAI/propagation races. Parent root race suite, root lint (0 issues), all
+9 examples and diff check passed. Isolated pre-change HEAD archive fails the
+new default/package and default/tracker tests on raw parent/child log values.
+Current AAA matrix covers direct Meta/package/Tracker with actual default,
+declared safe labels and raw opt-in: parent/child spans, logs, baggage and default
+metrics. Private originals survive export; emitter policy is independent of
+creator, partial merges are immutable, explicit Meta/private/admitted enrichment
+precedence and arbitrary baggage rejection are preserved. Docs state raw Enrich
+boundary and worker reapplication. Limits: no absolute bug-free claim or external
+backend verification; serialized OTLP fixture remains T13.
