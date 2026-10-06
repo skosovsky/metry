@@ -57,3 +57,6 @@ jobs:
       - name: Run examples
         if: matrix.module == '.'
         run: make test-examples
+      - name: Test isolated release workflow
+        if: matrix.module == '.'
+        run: make test-release

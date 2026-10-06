@@ -15,7 +15,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 |---|---|---|---|---|
 | T01 Contracts and decisions | R01–R08, D01–D16 | Explicit status/restore/enrichment/scope contracts, complete decision register, breaking changes, sequential coverage of all DoD items | `docs: remediation contracts` | accepted |
 | T02 Generic span completion | R01 | AAA real SDK/public-only wrapper/noop; Error retained, unknown remains Unset; all shared helper callers audited | `fix: span status` | accepted |
-| T03 Isolated release workflow | R02, D16 | Temporary repo/bare remote: clean-state rejection, explicit manifests, only run-created tags, failure cleanup, portable edits; release/recovery docs | `fix: release staging` | pending |
+| T03 Isolated release workflow | R02, D16 | Temporary repo/bare remote: clean-state rejection, explicit manifests, only run-created tags, failure cleanup, portable edits; release/recovery docs | `fix: release staging` | accepted |
 | T04 Explicit recorder construction | R03 | Catch-all constructor removed; invalid budgets/profile/policy/instruments reach caller; explicit noop; composition examples updated | `fix: recorder errors` | pending |
 | T05 Durable trace restoration | R04 | Own W3C decoding across W3C/baggage/custom transports, exact reference restore over foreign ctx; policy rejection returns error and original ctx | `fix: trace restore` | pending |
 | T06 Raw enrichment and bounded propagation | R05, D12, D13 | Raw string span/log/private/transport AAA, literal percent stability, invalid keys; ordinary allowlisted W3C strings; deterministic byte/member overflow tests | `fix: baggage values` | pending |
@@ -110,3 +110,16 @@ temporary caches. Independent `t02_completeness` accepted 100%, no gaps;
 `t02_correctness` accepted with no findings. Both independently ran targeted
 tests and audited explicit result owners; neither repeated full race, lint or
 pre-change reproduction. No remaining T02 findings.
+
+T03 accepted after fixing initial review finding (isolated clone dropped local
+tag/GPG signing configuration). Effective signing settings now transfer and both
+commit/tag signing failures are regressions. Full suite passed macOS Bash 3.2,
+Bash 5.3 and Linux amd64 Docker golang:1.25.5 with network disabled; syntax and
+diff checks passed. Pre-change script failed the same suite on local tag leakage.
+Independent repeat reviews: `t03_completeness` 100%, independently reran macOS
+and Linux suites; `t03_correctness` no findings, independently reran macOS suite.
+Evidence includes dirty/staged/untracked preflight, exact staged manifest, version
+and replacement edits, shared root/module commit, unrelated tag exclusion,
+atomic remote rejection, malformed manifest, cancellation, root-only break and
+signer failures. Limits: no production publication, real keys, actual network
+ambiguity or uncatchable process termination. Recovery docs state these limits.

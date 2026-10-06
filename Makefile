@@ -5,7 +5,7 @@ MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor"
 # Consumer fixtures are tested and linted but are not published modules.
 RELEASE_MODULES := $(filter-out ./integration/%,$(MODULES))
 
-.PHONY: lint fix test test-examples bench bench-hotpath fuzz cover release-patch release-break
+.PHONY: lint fix test test-examples test-release bench bench-hotpath fuzz cover release-patch release-break
 
 lint:
 	@for dir in $(MODULES); do \
@@ -59,10 +59,13 @@ cover:
 		(cd "$$dir" && $(GO) test -coverprofile=coverage.out ./... && $(GO) tool cover -func=coverage.out) || exit 1; \
 	done
 
-release-patch: lint test ## v0.5.0 -> v0.5.1
+test-release:
+	@bash scripts/release_test.sh
+
+release-patch: lint test test-release ## v0.5.0 -> v0.5.1
 	@chmod +x ./scripts/release.sh
 	@./scripts/release.sh patch "$(RELEASE_MODULES)"
 
-release-break: lint test ## v0.5.1 -> v0.6.0
+release-break: lint test test-release ## v0.5.1 -> v0.6.0
 	@chmod +x ./scripts/release.sh
 	@./scripts/release.sh break "$(RELEASE_MODULES)"
