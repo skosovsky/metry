@@ -4,11 +4,10 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/skosovsky/metry/internal/traceutil"
 )
 
-// SpanEnd ends a span started with Provider.StartSpan.
+// SpanEnd ends a span started with Provider.StartSpan without assigning an outcome.
+// Unknown status stays Unset; explicitly assigned status is preserved.
 type SpanEnd func()
 
 // StartSpanOption configures span start without exposing OpenTelemetry types.
@@ -41,8 +40,7 @@ func (p *Provider) StartSpan(
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	//nolint:spancheck // caller ends span via SpanEnd
 	ctx, span := p.otelTracer.Tracer(tracerName).Start(ctx, spanName, cfg.otelOpts...)
-	end := func() { traceutil.EndSpanOKIfUnset(span) }
-	return ctx, end, nil //nolint:spancheck // caller ends span via SpanEnd
+	end := func() { span.End() }
+	return ctx, end, nil
 }

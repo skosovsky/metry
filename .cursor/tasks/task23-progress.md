@@ -14,7 +14,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | Task | Coverage | Acceptance evidence | Commit | State |
 |---|---|---|---|---|
 | T01 Contracts and decisions | R01–R08, D01–D16 | Explicit status/restore/enrichment/scope contracts, complete decision register, breaking changes, sequential coverage of all DoD items | `docs: remediation contracts` | accepted |
-| T02 Generic span completion | R01 | AAA real SDK/public-only wrapper/noop; Error retained, unknown remains Unset; all shared helper callers audited | `fix: span status` | pending |
+| T02 Generic span completion | R01 | AAA real SDK/public-only wrapper/noop; Error retained, unknown remains Unset; all shared helper callers audited | `fix: span status` | accepted |
 | T03 Isolated release workflow | R02, D16 | Temporary repo/bare remote: clean-state rejection, explicit manifests, only run-created tags, failure cleanup, portable edits; release/recovery docs | `fix: release staging` | pending |
 | T04 Explicit recorder construction | R03 | Catch-all constructor removed; invalid budgets/profile/policy/instruments reach caller; explicit noop; composition examples updated | `fix: recorder errors` | pending |
 | T05 Durable trace restoration | R04 | Own W3C decoding across W3C/baggage/custom transports, exact reference restore over foreign ctx; policy rejection returns error and original ctx | `fix: trace restore` | pending |
@@ -98,3 +98,15 @@ T01 accepted by independent agents `t01_completeness` (100%, no gaps) and
 correctness additionally inspected existing contracts and evaly consumer paths.
 Reports agreed on complete R/D/DoD coverage and grounded D15. Limits: specification
 review only, no runtime/portability/OTLP proof; those remain in implementation rows.
+
+T02 implementation evidence: shared helper caller audit found Provider.StartSpan
+as the sole generic end caller; both SDK-introspection helpers and obsolete tests
+removed. Remaining SpanOK calls belong to explicit callback/result owners.
+New AAA tests cover SDK/public-only wrappers, Unset/Error/Ok, repeat End and noop.
+Copied regressions into isolated pre-change HEAD archive: Unset/sdk,
+Unset/public and Error/public fail with actual Ok, confirming old violations.
+Root `go test -race ./...` passed; root lint passed with 0 issues using writable
+temporary caches. Independent `t02_completeness` accepted 100%, no gaps;
+`t02_correctness` accepted with no findings. Both independently ran targeted
+tests and audited explicit result owners; neither repeated full race, lint or
+pre-change reproduction. No remaining T02 findings.

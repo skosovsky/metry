@@ -4,7 +4,6 @@ package traceutil
 import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/skosovsky/metry/diagnostic"
@@ -53,20 +52,4 @@ func MutateRecordingSpan(span trace.Span, fn func(trace.Span)) {
 		return
 	}
 	fn(span)
-}
-
-// SpanOKIfUnset sets Ok only when span status is still Unset.
-func SpanOKIfUnset(span trace.Span) {
-	if rs, ok := span.(interface {
-		Status() sdktrace.Status
-	}); ok && rs.Status().Code != codes.Unset {
-		return
-	}
-	SpanOK(span)
-}
-
-// EndSpanOKIfUnset sets Ok when status is Unset, then ends the span.
-func EndSpanOKIfUnset(span trace.Span) {
-	MutateRecordingSpan(span, SpanOKIfUnset)
-	span.End()
 }

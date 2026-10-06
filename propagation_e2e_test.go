@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/metrytest"
@@ -59,9 +60,9 @@ func TestPropagation_ProtocolCarrierBoundary(t *testing.T) {
 	producer := spans[0]
 	consumer := spans[1]
 	assert.Equal(t, "send", producer.Name)
-	testutil.AssertSpanStubOkStatus(t, producer)
+	assert.Equal(t, codes.Unset, producer.Status.Code)
 	assert.Equal(t, "receive", consumer.Name)
-	testutil.AssertSpanStubOkStatus(t, consumer)
+	assert.Equal(t, codes.Unset, consumer.Status.Code)
 	assert.Equal(t, producer.SpanContext.TraceID(), consumer.SpanContext.TraceID())
 	assert.Equal(t, producer.SpanContext.SpanID(), consumer.Parent.SpanID())
 }

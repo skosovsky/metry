@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/codes"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -35,10 +34,6 @@ func (m *mockSpan) SetStatus(code codes.Code, description string) {
 
 func (m *mockSpan) IsRecording() bool {
 	return true
-}
-
-func (m *mockSpan) Status() sdktrace.Status {
-	return sdktrace.Status{Code: m.statusCode, Description: m.statusDesc}
 }
 
 func TestMutateRecordingSpan_NotRecording_NoOp(t *testing.T) {
@@ -82,24 +77,4 @@ func TestSpanError_NonNilError_SetsErrorStatusAndRecordsError(t *testing.T) {
 	require.False(t, m.recordErrorCalled, "original error must never reach RecordError")
 	require.Equal(t, codes.Error, m.statusCode, "span status must be Error")
 	require.Equal(t, "error", m.statusDesc, "safe categorical description")
-}
-
-func TestSpanOKIfUnset_Unset_SetsOk(t *testing.T) {
-	m := &mockSpan{}
-	SpanOKIfUnset(m)
-	require.Equal(t, codes.Ok, m.statusCode)
-}
-
-func TestSpanOKIfUnset_AlreadyError_NoOverwrite(t *testing.T) {
-	m := &mockSpan{statusCode: codes.Error, statusDesc: "failed"}
-	SpanOKIfUnset(m)
-	require.Equal(t, codes.Error, m.statusCode)
-	require.Equal(t, "failed", m.statusDesc)
-}
-
-func TestSpanOKIfUnset_AlreadyOk_NoOverwrite(t *testing.T) {
-	m := &mockSpan{statusCode: codes.Ok}
-	SpanOKIfUnset(m)
-	require.Equal(t, codes.Ok, m.statusCode)
-	require.False(t, m.setStatusCalled, "SetStatus must not be called when already Ok")
 }

@@ -6,10 +6,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/skosovsky/metry"
 	"github.com/skosovsky/metry/metrytest"
-	"github.com/skosovsky/metry/testutil"
 )
 
 func TestNew_ProviderWorksAndShutdownIsIdempotent(t *testing.T) {
@@ -67,18 +67,21 @@ func TestNew_WithSampler_OverridesTraceRatio(t *testing.T) {
 	require.Equal(t, "span-always", memAlways.GetSpans()[0].Name)
 }
 
-func TestProvider_StartSpan_Success_SetsOkStatus(t *testing.T) {
+func TestProvider_StartSpan_UnknownOutcomeStaysUnset(t *testing.T) {
+	// Arrange.
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("test-svc"))
 
-	_, end, err := provider.StartSpan(ctx, "metry-test", "span-ok")
+	// Act.
+	_, end, err := provider.StartSpan(ctx, "metry-test", "span-unknown")
 	require.NoError(t, err)
 	end()
 
 	require.NoError(t, provider.ForceFlush(ctx))
 	spans := mem.GetSpans()
 	require.Len(t, spans, 1)
-	testutil.AssertSpanStubOkStatus(t, spans[0])
+	// Assert.
+	require.Equal(t, codes.Unset, spans[0].Status.Code)
 }
 
 func TestNew_DoesNotMutateGlobalOTelState(t *testing.T) {

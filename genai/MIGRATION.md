@@ -4,6 +4,13 @@ This is a clear break. There are no scalar-usage wrappers or legacy evaluation
 entry points. Host adapters must translate their own types at the composition
 root; metry does not own execution, retry decisions, storage or pricing.
 
+Generic `Provider.StartSpan` completion now preserves the explicitly assigned
+OTel status and leaves unknown outcomes Unset. Calling its returned `SpanEnd`
+does not establish success. Hosts that know a successful result may explicitly
+set Ok through their OTel span; error status remains intact through public-only
+span wrappers. This does not change explicit outcome owners in instrumentation
+such as executor callbacks or GenAI operation handles.
+
 | Previous contract | Current contract | Names / units / boundary | Consumer action |
 |---|---|---|---|
 | Scalar `Usage`, zero treated as missing | Typed `Measurement[int]` / `Measurement[float64]` with explicit presence/source/unit | Existing total/component attributes remain; each present measurement adds `metry.gen_ai.measurement.<field>.source` and `.unit` | Replace literals with `Observe`; use zero-value measurement for absence and present zero for a known zero |
