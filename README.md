@@ -161,7 +161,20 @@ Use `genai.Runtime` as the application boundary:
 - `RecordAsyncResult(ctx, AsyncHandle, AsyncResult)`
 - `RecordAsyncTokenResult(ctx, token, AsyncResult)`
 
-`genai.NoopRuntime()` and `genai.RuntimeFromProvider(...)` are safe for optional telemetry wiring.
+Select `genai.NoopRuntime()` explicitly when telemetry is disabled. Enabled
+telemetry uses `genai.NewRuntimeFromProvider(...)`; configuration and instrument
+creation errors must reach the host. There is no automatic fallback on error.
+
+```go
+var runtime genai.Runtime = genai.NoopRuntime()
+if telemetryEnabled {
+    var err error
+    runtime, err = genai.NewRuntimeFromProvider(provider)
+    if err != nil {
+        return err
+    }
+}
+```
 
 Application/business code should use `Runtime`; do not build a local compatibility facade over lower-level tracker methods. Bind provider context in the composition root with `runtime.ForProvider(...)` so business services record operation intent, not vendor labels. Framework code that owns SDK translation can use adapter-level APIs behind its own package boundary.
 

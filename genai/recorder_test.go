@@ -117,7 +117,7 @@ func TestRuntime_RecordOperation_WithoutPayloadPolicySkipsPayload(t *testing.T) 
 }
 
 func TestNoopRuntime_DropsOperationsWithoutPanic(t *testing.T) {
-	rec := RuntimeFromProvider(nil)
+	rec := NoopRuntime()
 
 	require.NoError(t, rec.RecordOperation(
 		context.Background(),

@@ -146,21 +146,14 @@ func (t *Tracker) Runtime() Runtime {
 }
 
 // NewRuntimeFromProvider creates a runtime backed by provider.
+// Configuration and instrument creation errors are returned to the caller.
+// Optional telemetry must select NoopRuntime explicitly at the composition root.
 func NewRuntimeFromProvider(p *metry.Provider, opts ...Option) (Runtime, error) {
 	tracker, err := NewTrackerFromProvider(p, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return tracker.Runtime(), nil
-}
-
-// RuntimeFromProvider creates a runtime, returning a no-op runtime when provider setup is incomplete.
-func RuntimeFromProvider(p *metry.Provider, opts ...Option) Runtime {
-	runtime, err := NewRuntimeFromProvider(p, opts...)
-	if err != nil {
-		return NoopRuntime()
-	}
-	return runtime
 }
 
 func (noopRuntime) ForProvider(string) Runtime {

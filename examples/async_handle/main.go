@@ -23,7 +23,12 @@ func run() int {
 		return 1
 	}
 	defer func() { _ = provider.Shutdown(ctx) }()
-	runtime := genai.RuntimeFromProvider(provider).ForProvider("worker")
+	runtime, err := genai.NewRuntimeFromProvider(provider)
+	if err != nil {
+		log.Println("create telemetry:", err)
+		return 1
+	}
+	runtime = runtime.ForProvider("worker")
 
 	ctx, end, err := provider.StartSpan(ctx, "producer", "enqueue")
 	if err != nil {

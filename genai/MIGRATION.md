@@ -11,6 +11,12 @@ set Ok through their OTel span; error status remains intact through public-only
 span wrappers. This does not change explicit outcome owners in instrumentation
 such as executor callbacks or GenAI operation handles.
 
+`RuntimeFromProvider` has been removed. Replace it with
+`NewRuntimeFromProvider` and handle the returned error. For intentionally disabled
+telemetry, select `NoopRuntime` at the host composition root. Invalid budgets,
+profile/policy mismatches and SDK instrument creation failures never select noop
+implicitly.
+
 | Previous contract | Current contract | Names / units / boundary | Consumer action |
 |---|---|---|---|
 | Scalar `Usage`, zero treated as missing | Typed `Measurement[int]` / `Measurement[float64]` with explicit presence/source/unit | Existing total/component attributes remain; each present measurement adds `metry.gen_ai.measurement.<field>.source` and `.unit` | Replace literals with `Observe`; use zero-value measurement for absence and present zero for a known zero |
