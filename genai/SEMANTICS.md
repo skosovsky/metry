@@ -69,7 +69,7 @@ attribute with a checked structured value.
 | `metry.usage.mapping`, `metry.usage.price_reference` | string | E inclusive mapping and external price reference |
 | `metry.causal.run_id`, `parent_run_id`, `operation_id`, `step_id`, `attempt_id`, `kind`, `prompt_identity`, `predecessor` | string | E caller-owned span-only causal identity/evidence |
 | `metry.observation.kind`, `metry.dimension.overflow` | string, bool | E completed observation and cardinality overflow evidence |
-| `metry.evaluation.status`, `observation_id`, `experiment_id`, `dataset_reference`, `case_id`, `trial_id`, `target_reference`, `grader_reference`, `artifact_reference` | string | E result associations; no dataset/artifact retrieval or grader execution |
+| `metry.evaluation.status`, `observation_id`, `experiment_id`, `dataset_reference`, `case_id`, `trial_id`, `target_reference`, `grader_reference`, `artifact_reference` | string | E result identity, optional complete experiment tuple and independent target/grader provenance; no dataset/artifact retrieval or grader execution |
 | `metry.diagnostic.field`, `metry.diagnostic.rule` | string | E bounded rejected-observation diagnostic |
 | `metry.gen_ai.payload.<channel>.truncated`, `metry.gen_ai.retrieval.documents.truncated` | bool | E separate truncation evidence for array channels |
 

@@ -20,6 +20,7 @@ const (
 	demoOperationDuration = 25 * time.Millisecond
 	demoInputTokens       = 12
 	demoOutputTokens      = 6
+	demoEvaluationScore   = 0.91
 )
 
 func main() {
@@ -159,13 +160,19 @@ func resumeExampleConsumer(provider *metry.Provider, token string) error {
 }
 
 func recordExampleEvaluation(recorder *genai.EvaluationRecorder, origin metry.AsyncHandle) error {
-	return recorder.Record(context.Background(), genai.Evaluation{
-		ObservationID:  "evaluation-one",
-		Metric:         genai.EvaluationFaithfulness,
-		Status:         genai.EvaluationSucceeded,
-		Outcome:        "pass",
-		TraceReference: &origin,
-	})
+	// Ready host result projected from one metric. No experiment tuple exists
+	// in this online path.
+	observation, err := evaluationFromReadyGrade(readyGrade{
+		ObservationID:   "evaluation-one",
+		Metric:          genai.EvaluationFaithfulness,
+		Status:          "scored",
+		Value:           demoEvaluationScore,
+		GraderReference: "grader-revision-digest",
+	}, &origin)
+	if err != nil {
+		return err
+	}
+	return recorder.Record(context.Background(), observation)
 }
 
 func hasRecorderOperationSpan(spans tracetest.SpanStubs) bool {

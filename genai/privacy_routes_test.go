@@ -92,9 +92,8 @@ func TestPrivacyBeforeFanoutProtectsBothIndependentSinks(t *testing.T) {
 				DatasetReference: secret,
 				CaseID:           secret,
 				TrialID:          secret,
-				TargetReference:  secret,
-				GraderReference:  secret,
 			}
+			evaluation.Provenance = EvaluationProvenance{TargetReference: secret, GraderReference: secret}
 			require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
 			retrievalCtx, finishRetrieval, retrievalErr := tracker.StartRetrieval(context.Background(), secret,
 				RetrievalRequest{Locality: ExecutionRemote, Provider: secret, Source: secret, Query: secret})

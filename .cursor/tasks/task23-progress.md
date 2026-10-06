@@ -23,7 +23,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | accepted |
 | T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | accepted |
 | T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | accepted |
-| T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | pending |
+| T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | accepted |
 | T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | pending |
 | T13 OTLP semantic fixture | integration checklist | Real serialized resource/scope/schema, known-zero vs unknown usage, histogram/cost, parent/link, error outcome, no raw sentinel; evidence limits documented | `test: otlp semantics` | pending |
 | T14 Full acceptance | complete DoD | `make test`, `make lint`, `make test-examples` across modules; targeted races and isolated release checks; two independent whole-DoD reviews; source/ledger statuses backed by evidence | `chore: remediation checks` | pending |
@@ -234,3 +234,26 @@ the handle mutex. Normal validation errors stay correctable. Diagnostic-policy
 guarded fail-closed behavior and its existing tests are unchanged. API/README/
 migration document the contract. Limits: no external collector or faulty SDK/
 exporter guarantee, no absolute absence-of-bugs claim; final acceptance is T14.
+
+T11 accepted by independent `t11_completeness` (100%, no gaps) and
+`t11_correctness` (no unresolved findings). Both inspected actual consumer
+`../evaly/grader.go` Assess (graders/view factory, no experiment dependency) and
+`../evaly/workflow_integration_test.go` TestWorkflowOnlinePartialAssessment (ready
+partial results). Both independently ran GenAI/example adapter race tests;
+correctness used `-count=1`. Parent full root race passed before test-only helper
+refactor/example score constant; final targeted races, root lint (0 issues),
+gRPC/OTLP module tests, all 9 executable examples and diff check passed.
+Isolated old-HEAD reproduction rejects grader-only online provenance with
+incomplete_experiment. New EvaluationProvenance separates independently optional
+grader/target from optional complete four-field experiment/dataset/case/trial
+Association. Legacy association reference fields removed without aliases.
+AAA export matrix proves online/experiment with neither/grader/target/both in
+default/raw modes, existing span/event keys, absent identities, protected raw
+sentinels even with payload recording disabled, repeat reference equality;
+enabled/noop reject malformed UTF-8/bounds and all 14 partial experiment tuples,
+accept exact limits. Existing trial/repeat/privacy tests migrated. BYOT host
+ready-grade adapter records a caller-selected metric, preserves known zero,
+maps failed/skipped without score and rejects unknown states; no evaly dependency,
+runner or fabricated experiment identity. README/MIGRATION/SEMANTICS updated.
+Limits: adjacent evaly suite and external collectors/host adapters not exercised;
+no absolute absence-of-bugs claim, serialized OTLP/final acceptance remain T13/T14.

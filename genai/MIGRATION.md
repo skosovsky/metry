@@ -4,6 +4,16 @@ This is a clear break. There are no scalar-usage wrappers or legacy evaluation
 entry points. Host adapters must translate their own types at the composition
 root; metry does not own execution, retry decisions, storage or pricing.
 
+`EvaluationAssociation.TargetReference` and `.GraderReference` move to
+`Evaluation.Provenance` (`EvaluationProvenance`) without aliases. Each provenance
+reference is independently optional, including for online results outside an
+experiment. `Association` remains an optional, complete four-field experiment/
+dataset/case/trial tuple. Move the two reference fields to `Provenance`; the
+exported target/grader keys and privacy treatment stay unchanged. Never invent
+experiment IDs just to record an online result. References are bounded opaque
+caller identities; metry does not import evaly or run assessments. See the
+host-owned [ready-grade adapter](../examples/genai_recorder/evaluation_adapter.go).
+
 Generic `Provider.StartSpan` completion now preserves the explicitly assigned
 OTel status and leaves unknown outcomes Unset. Calling its returned `SpanEnd`
 does not establish success. Hosts that know a successful result may explicitly

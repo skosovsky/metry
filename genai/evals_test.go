@@ -118,14 +118,15 @@ func TestEvaluationTrialsReferencesAndRepeatDelivery(t *testing.T) {
 	evaluation := successfulEvaluation()
 	evaluation.Association = EvaluationAssociation{
 		ExperimentID: "experiment", DatasetReference: "dataset-digest", CaseID: "case",
-		TrialID: "trial-one", TargetReference: "target-digest", GraderReference: "grader-digest",
+		TrialID: "trial-one",
 	}
+	evaluation.Provenance = EvaluationProvenance{TargetReference: "target-digest", GraderReference: "grader-digest"}
 	evaluation.ArtifactReference = "opaque-artifact-digest"
 	// Act: repeated delivery is not a deduplication promise.
 	require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
 	require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
 	evaluation.Association.TrialID = "trial-two"
-	evaluation.Association.TargetReference = "changed-target"
+	evaluation.Provenance.TargetReference = "changed-target"
 	require.NoError(t, tracker.EvaluationRecorder().Record(context.Background(), evaluation))
 	flushTestProvider(t, provider)
 	// Assert.

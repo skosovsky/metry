@@ -508,8 +508,10 @@ if err := recorder.Record(ctx, genai.Evaluation{
         DatasetReference: "dataset-content-digest",
         CaseID:           "case-1",
         TrialID:          "trial-2",
-        TargetReference:  "target-content-digest",
-        GraderReference:  "grader-content-digest",
+    },
+    Provenance: genai.EvaluationProvenance{
+        TargetReference: "target-content-digest",
+        GraderReference: "grader-content-digest",
     },
     ArtifactReference: "opaque-artifact-identity",
 }); err != nil {
@@ -517,9 +519,18 @@ if err := recorder.Record(ctx, genai.Evaluation{
 }
 ```
 
+`Provenance` references are independently optional. An online result may identify
+only its grader, only its target, both or neither. Leave `Association` empty
+when there is no experiment; if present, supply all four experiment/dataset/case/
+trial fields. References remain bounded and fingerprinted by default even with
+payload recording disabled. These DTOs record caller facts and never run evaly,
+infer missing IDs or fetch artifacts. The host-owned ready-grade adapter in
+[`examples/genai_recorder`](examples/genai_recorder/evaluation_adapter.go)
+illustrates online results without an experiment tuple.
+
 `metry` does not provide trace mutation / PATCH APIs for updating finished spans—use Span Links for post-hoc feedback and evaluations.
 
-`ObservationID`, a static machine-readable `Metric`, and `Status` are required. A successful result has exactly one of finite `Score` (including zero; no universal range) or bounded `Outcome`. Failed/skipped results have neither, so they cannot silently become score zero. All six association fields are required when any experiment association field is supplied; otherwise association is optional. Dataset/target/grader references are opaque caller identities or content digests, not resources fetched by the library.
+`ObservationID`, a static machine-readable `Metric`, and `Status` are required. A successful result has exactly one of finite `Score` (including zero; no universal range) or bounded `Outcome`. Failed/skipped results have neither, so they cannot silently become score zero. All four association fields are required when any experiment association field is supplied; otherwise association is optional. Dataset/target/grader references are opaque caller identities or content digests, not resources fetched by the library.
 
 Recording always creates a new root, optionally linked to a valid trace reference; an invalid supplied reference is rejected before export. The target need not have been sampled/exported. The recorder obeys normal sampling and never forces export. It does not infer execution absence, store artifacts or deduplicate deliveries. Repeated deliveries retain their observation identity, while trial/content identities distinguish changed inputs.
 

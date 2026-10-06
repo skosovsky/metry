@@ -34,16 +34,21 @@ const (
 	EvaluationSkipped   EvaluationStatus = "skipped"
 )
 
-// EvaluationAssociation is optional outside experiment mode. In experiment
-// mode all fields are required. References are opaque identities/content digests;
-// metry never fetches datasets, targets, graders or artifacts.
+// EvaluationAssociation is an optional experiment tuple. All four fields must
+// be supplied together. Online results need no experiment/dataset/case/trial.
 type EvaluationAssociation struct {
 	ExperimentID     string
 	DatasetReference string
 	CaseID           string
 	TrialID          string
-	TargetReference  string
-	GraderReference  string
+}
+
+// EvaluationProvenance identifies the caller's grader and target independently
+// of experiment membership. Either reference may be absent. References are
+// opaque identities/content digests; metry never fetches or executes them.
+type EvaluationProvenance struct {
+	TargetReference string
+	GraderReference string
 }
 
 // Evaluation is a completed result, never an instruction to run a grader.
@@ -60,6 +65,7 @@ type Evaluation struct {
 	Outcome           string
 	Reasoning         string
 	Association       EvaluationAssociation
+	Provenance        EvaluationProvenance
 	TraceReference    *metry.AsyncHandle
 	ArtifactReference string
 }
@@ -94,6 +100,9 @@ func (e Evaluation) Validate() error {
 	if err := e.Association.validate(); err != nil {
 		return err
 	}
+	if !boundedIdentity(e.Provenance.TargetReference) || !boundedIdentity(e.Provenance.GraderReference) {
+		return invalidObservation("evaluation_provenance", "malformed")
+	}
 	if e.TraceReference != nil && !e.TraceReference.IsValid() {
 		return invalidObservation("evaluation_trace", "invalid_reference")
 	}
@@ -106,8 +115,6 @@ func (a EvaluationAssociation) validate() error {
 		a.DatasetReference,
 		a.CaseID,
 		a.TrialID,
-		a.TargetReference,
-		a.GraderReference,
 	}
 	populated := 0
 	for _, value := range values {
@@ -184,8 +191,8 @@ func (r *EvaluationRecorder) attributes(e Evaluation) []attribute.KeyValue {
 		{evaluationDatasetKey, e.Association.DatasetReference},
 		{evaluationCaseKey, e.Association.CaseID},
 		{evaluationTrialKey, e.Association.TrialID},
-		{evaluationTargetKey, e.Association.TargetReference},
-		{evaluationGraderKey, e.Association.GraderReference},
+		{evaluationTargetKey, e.Provenance.TargetReference},
+		{evaluationGraderKey, e.Provenance.GraderReference},
 		{evaluationArtifactKey, e.ArtifactReference},
 	} {
 		if item.value != "" {
