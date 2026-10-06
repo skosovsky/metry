@@ -17,7 +17,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T02 Generic span completion | R01 | AAA real SDK/public-only wrapper/noop; Error retained, unknown remains Unset; all shared helper callers audited | `fix: span status` | accepted |
 | T03 Isolated release workflow | R02, D16 | Temporary repo/bare remote: clean-state rejection, explicit manifests, only run-created tags, failure cleanup, portable edits; release/recovery docs | `fix: release staging` | accepted |
 | T04 Explicit recorder construction | R03 | Catch-all constructor removed; invalid budgets/profile/policy/instruments reach caller; explicit noop; composition examples updated | `fix: recorder errors` | accepted |
-| T05 Durable trace restoration | R04 | Own W3C decoding across W3C/baggage/custom transports, exact reference restore over foreign ctx; policy rejection returns error and original ctx | `fix: trace restore` | pending |
+| T05 Durable trace restoration | R04 | Own W3C decoding across W3C/baggage/custom transports, exact reference restore over foreign ctx; policy rejection returns error and original ctx | `fix: trace restore` | accepted |
 | T06 Raw enrichment and bounded propagation | R05, D12, D13 | Raw string span/log/private/transport AAA, literal percent stability, invalid keys; ordinary allowlisted W3C strings; deterministic byte/member overflow tests | `fix: baggage values` | pending |
 | T07 Private GenAI scope | R06 | Package/Tracker scope and direct Meta sentinel privacy across parent/child/logs; originals survive merge, safe/raw opt-in, local precedence/remote trust | `fix: scope privacy` | pending |
 | T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | pending |
@@ -132,3 +132,12 @@ convenience constructor. Current AAA covers budgets, unsupported profile,
 policy mismatch/raw permission, nil provider, failures at all 13 instrument
 registrations and export presence for enabled/disabled composition. No live
 backend failure testing; no evidence claimed beyond SDK boundary and local exports.
+
+T05 accepted: `t05_completeness` 100%, `t05_correctness` no findings; both ran
+independent snapshot/root/propagation targeted tests. Parent root race suite and
+lint (0 issues) passed. Old-HEAD archive failed new baggage-only restoration
+tests over both empty and foreign contexts. Current tests prove exact W3C
+reference (IDs/flags/state/remote), transport independence including panic-on-use
+custom transport, retained caller baggage/private values, owned+borrowed policy
+rejection with identical original ctx, nil/zero defaults. Existing parser/size
+and capture-without-baggage tests retained. No external backend or fuzz proof.

@@ -33,10 +33,11 @@ var (
 
 // Provider is the stateless runtime object created by New.
 type Provider struct {
-	otelTracer       trace.TracerProvider
-	otelMeter        metric.MeterProvider
-	propagator       propagation.TextMapPropagator
-	diagnosticPolicy diagnostic.Policy
+	otelTracer        trace.TracerProvider
+	otelMeter         metric.MeterProvider
+	propagator        propagation.TextMapPropagator
+	propagationPolicy metryprop.Policy
+	diagnosticPolicy  diagnostic.Policy
 
 	tp *sdktrace.TracerProvider
 	mp *sdkmetric.MeterProvider
@@ -146,14 +147,15 @@ func New(ctx context.Context, opts ...Option) (*Provider, error) {
 	)
 
 	return &Provider{ //nolint:exhaustruct_v5 // executor instruments are initialized lazily.
-		otelTracer:       tp,
-		otelMeter:        activeMeter,
-		propagator:       metryprop.Wrap(propagator, cfg.PropagationPolicy),
-		diagnosticPolicy: cfg.DiagnosticPolicy,
-		tp:               tp,
-		mp:               mp,
-		shutdownOnce:     sync.Once{},
-		shutdownErr:      nil,
+		otelTracer:        tp,
+		otelMeter:         activeMeter,
+		propagator:        metryprop.Wrap(propagator, cfg.PropagationPolicy),
+		propagationPolicy: cfg.PropagationPolicy,
+		diagnosticPolicy:  cfg.DiagnosticPolicy,
+		tp:                tp,
+		mp:                mp,
+		shutdownOnce:      sync.Once{},
+		shutdownErr:       nil,
 	}, nil
 }
 

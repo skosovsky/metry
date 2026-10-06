@@ -43,10 +43,11 @@ func FromSDK(deps SDKDependencies, opts ...SDKOption) (*Provider, error) {
 		opt(&cfg)
 	}
 	return &Provider{ //nolint:exhaustruct_v5 // borrowed providers have no owned SDK resources.
-		otelTracer:       deps.TracerProvider,
-		otelMeter:        deps.MeterProvider,
-		propagator:       metryprop.Wrap(deps.Propagator, cfg.propagationPolicy),
-		diagnosticPolicy: cfg.diagnosticPolicy,
+		otelTracer:        deps.TracerProvider,
+		otelMeter:         deps.MeterProvider,
+		propagator:        metryprop.Wrap(deps.Propagator, cfg.propagationPolicy),
+		propagationPolicy: cfg.propagationPolicy,
+		diagnosticPolicy:  cfg.diagnosticPolicy,
 	}, nil
 }
 

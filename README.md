@@ -346,6 +346,11 @@ defer end()
 ```
 
 `TraceSnapshot` carries trace continuation only. It does not capture baggage or application fields.
+Restoration decodes the snapshot's W3C format independently of the network
+propagator and retains the caller's existing baggage and local enrichment.
+`RejectRemoteTrace` also rejects durable restoration: the method returns
+`ErrTraceSnapshotRejected` and the original context. A nil error means the
+captured trace/span reference, flags and tracestate were restored.
 
 ## Adapter-level trace context propagation (map carrier)
 

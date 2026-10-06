@@ -22,6 +22,8 @@ var (
 	ErrInvalidTraceSnapshot = errors.New("metry: invalid trace snapshot")
 	// ErrTraceSnapshotTokenTooLarge is returned when a trace snapshot token exceeds the size limit.
 	ErrTraceSnapshotTokenTooLarge = errors.New("metry: trace snapshot token too large")
+	// ErrTraceSnapshotRejected is returned when the provider forbids remote continuation.
+	ErrTraceSnapshotRejected = errors.New("metry: trace snapshot rejected by propagation policy")
 )
 
 // TraceSnapshot is an opaque durable token for restoring trace continuation.
@@ -92,16 +94,19 @@ func (s TraceSnapshot) IsValid() bool {
 	return trace.SpanContextFromContext(ctx).IsValid()
 }
 
-// ContextWithTraceSnapshot restores trace continuation from snapshot.
+// ContextWithTraceSnapshot restores the snapshot's W3C trace reference independently
+// of the provider's network propagator. It preserves caller baggage and enrichment.
+// The provider's remote-trace policy applies: rejection returns the original ctx
+// with ErrTraceSnapshotRejected. Nil/zero providers accept trace continuation.
 func (p *Provider) ContextWithTraceSnapshot(ctx context.Context, snapshot TraceSnapshot) (context.Context, error) {
 	if !snapshot.IsValid() {
 		return ctx, ErrInvalidTraceSnapshot
 	}
-	propagator := propagation.TextMapPropagator(propagation.TraceContext{})
-	if p != nil {
-		propagator = p.textMapPropagator()
+	if p != nil && !p.propagationPolicy.AllowsRemoteTrace() {
+		return ctx, ErrTraceSnapshotRejected
 	}
-	return propagator.Extract(ctx, snapshotCarrier(snapshot)), nil
+	decoded := propagation.TraceContext{}.Extract(context.Background(), snapshotCarrier(snapshot))
+	return trace.ContextWithRemoteSpanContext(ctx, trace.SpanContextFromContext(decoded)), nil
 }
 
 func newTraceSnapshot(traceParent, traceState string) (TraceSnapshot, error) {

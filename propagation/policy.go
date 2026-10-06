@@ -49,6 +49,10 @@ func NewPolicy(cfg PolicyConfig) (Policy, error) {
 	return p, nil
 }
 
+// AllowsRemoteTrace reports whether remote trace continuation may be accepted.
+// It applies to durable continuation as well as transport extraction.
+func (p Policy) AllowsRemoteTrace() bool { return !p.reject }
+
 func reserved(key string) bool {
 	switch key {
 	case "msg", "time", "level", "source", "trace_id", "span_id":

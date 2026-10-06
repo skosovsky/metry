@@ -7,7 +7,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric/noop"
+	otelprop "go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/skosovsky/metry/internal/enrichment"
+	metryprop "github.com/skosovsky/metry/propagation"
 )
 
 func TestTraceSnapshot_RoundTripRestoresTraceContinuation(t *testing.T) {
@@ -33,6 +39,108 @@ func TestTraceSnapshot_RoundTripRestoresTraceContinuation(t *testing.T) {
 	require.Len(t, spans, 2)
 	assert.Equal(t, spans[0].SpanContext.TraceID(), spans[1].SpanContext.TraceID())
 	assert.True(t, trace.SpanContextFromContext(childCtx).IsRemote())
+}
+
+type snapshotTransport struct{}
+
+func (snapshotTransport) Fields() []string { return []string{"custom-trace"} }
+func (snapshotTransport) Inject(context.Context, otelprop.TextMapCarrier) {
+	panic("snapshot must not invoke transport injection")
+}
+func (snapshotTransport) Extract(context.Context, otelprop.TextMapCarrier) context.Context {
+	panic("snapshot must not invoke transport extraction")
+}
+
+func snapshotTestReference(t *testing.T, last byte) trace.SpanContext {
+	t.Helper()
+	state, err := trace.ParseTraceState("vendor=value")
+	require.NoError(t, err)
+	return trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{1, 2, 3, last}, SpanID: trace.SpanID{4, 5, 6, last},
+		TraceFlags: trace.FlagsSampled, TraceState: state, Remote: false,
+	})
+}
+
+func TestTraceSnapshotRestoreIndependentOfTransport(t *testing.T) {
+	for name, transport := range map[string]otelprop.TextMapPropagator{
+		"w3c": otelprop.TraceContext{}, "baggage": otelprop.Baggage{},
+		"custom": snapshotTransport{},
+	} {
+		for _, existing := range []bool{false, true} {
+			suffix := "/empty"
+			if existing {
+				suffix = "/foreign"
+			}
+			t.Run(name+suffix, func(t *testing.T) {
+				// Arrange: captured trace differs from an existing foreign trace.
+				reference := snapshotTestReference(t, 7)
+				snapshot, err := TraceSnapshotFromContext(trace.ContextWithSpanContext(context.Background(), reference))
+				require.NoError(t, err)
+				provider, err := FromSDK(SDKDependencies{
+					TracerProvider: tracenoop.NewTracerProvider(),
+					MeterProvider:  noop.NewMeterProvider(),
+					Propagator:     transport,
+				})
+				require.NoError(t, err)
+				ctx := Enrich(context.Background(), TenantID("caller-tenant"))
+				if existing {
+					ctx = trace.ContextWithSpanContext(ctx, snapshotTestReference(t, 8))
+				}
+				// Act.
+				restored, err := provider.ContextWithTraceSnapshot(ctx, snapshot)
+				// Assert: exact captured reference and caller context values survive.
+				require.NoError(t, err)
+				actual := trace.SpanContextFromContext(restored)
+				require.True(t, actual.Equal(reference.WithRemote(true)))
+				require.Equal(t, "caller-tenant", BaggageMember(restored, "tenant_id"))
+				require.Equal(t, "caller-tenant", enrichment.String(restored, "tenant_id"))
+			})
+		}
+	}
+}
+
+func TestTraceSnapshotPolicyRejectionPreservesContext(t *testing.T) {
+	// Arrange: both owned and borrowed constructors must retain the same policy.
+	policy, err := metryprop.NewPolicy(metryprop.PolicyConfig{RejectRemoteTrace: true})
+	require.NoError(t, err)
+	owned, _ := newTestProvider(t, WithPropagationPolicy(policy))
+	borrowed, err := FromSDK(SDKDependencies{
+		TracerProvider: tracenoop.NewTracerProvider(), MeterProvider: noop.NewMeterProvider(),
+		Propagator: otelprop.Baggage{},
+	}, WithSDKPropagationPolicy(policy))
+	require.NoError(t, err)
+	reference := snapshotTestReference(t, 7)
+	snapshot, err := TraceSnapshotFromContext(trace.ContextWithSpanContext(context.Background(), reference))
+	require.NoError(t, err)
+	for _, provider := range []*Provider{owned, borrowed} {
+		for _, existing := range []bool{false, true} {
+			ctx := Enrich(context.Background(), TenantID("original"))
+			if existing {
+				ctx = trace.ContextWithSpanContext(ctx, snapshotTestReference(t, 8))
+			}
+			// Act.
+			restored, err := provider.ContextWithTraceSnapshot(ctx, snapshot)
+			// Assert: no successful noop and no replacement of existing trace/value.
+			require.ErrorIs(t, err, ErrTraceSnapshotRejected)
+			require.Same(t, ctx, restored)
+			require.True(t, trace.SpanContextFromContext(restored).Equal(trace.SpanContextFromContext(ctx)))
+			require.Equal(t, "original", BaggageMember(restored, "tenant_id"))
+		}
+	}
+}
+
+func TestTraceSnapshotNilAndZeroProviderRestore(t *testing.T) {
+	// Arrange.
+	reference := snapshotTestReference(t, 7)
+	snapshot, err := TraceSnapshotFromContext(trace.ContextWithSpanContext(context.Background(), reference))
+	require.NoError(t, err)
+	for _, provider := range []*Provider{nil, {}} {
+		// Act.
+		restored, err := provider.ContextWithTraceSnapshot(context.Background(), snapshot)
+		// Assert.
+		require.NoError(t, err)
+		require.True(t, trace.SpanContextFromContext(restored).Equal(reference.WithRemote(true)))
+	}
 }
 
 func TestTraceSnapshot_InvalidTokenDoesNotMutateContext(t *testing.T) {

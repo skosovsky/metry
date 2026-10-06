@@ -17,6 +17,13 @@ telemetry, select `NoopRuntime` at the host composition root. Invalid budgets,
 profile/policy mismatches and SDK instrument creation failures never select noop
 implicitly.
 
+Durable `ContextWithTraceSnapshot` decodes its W3C reference independently of
+network propagators, including baggage-only/custom transports. The provider's
+remote-trace policy governs restoration: rejection returns
+`ErrTraceSnapshotRejected` and the original context. Success replaces any foreign
+trace reference with the captured reference while retaining the caller's baggage
+and local enrichment. Snapshot tokens themselves never carry baggage.
+
 | Previous contract | Current contract | Names / units / boundary | Consumer action |
 |---|---|---|---|
 | Scalar `Usage`, zero treated as missing | Typed `Measurement[int]` / `Measurement[float64]` with explicit presence/source/unit | Existing total/component attributes remain; each present measurement adds `metry.gen_ai.measurement.<field>.source` and `.unit` | Replace literals with `Observe`; use zero-value measurement for absence and present zero for a known zero |
