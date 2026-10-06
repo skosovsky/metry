@@ -37,18 +37,11 @@ type handlePayload struct {
 // Handle is a serializable token linking deferred outcomes to an originating interaction.
 type Handle struct {
 	spanContext trace.SpanContext
+	disabled    bool
 }
 
-// NewNoopHandle returns a valid synthetic handle for disabled telemetry paths.
-func NewNoopHandle() Handle {
-	return Handle{spanContext: trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    trace.TraceID{14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14},
-		SpanID:     trace.SpanID{15, 15, 15, 15, 15, 15, 15, 15},
-		TraceFlags: 0,
-		TraceState: trace.TraceState{},
-		Remote:     true,
-	})}
-}
+// NewNoopHandle returns a disabled handle with no trace identity.
+func NewNoopHandle() Handle { return Handle{spanContext: trace.SpanContext{}, disabled: true} }
 
 // NewHandle captures the current span context from ctx as a portable handle.
 func NewHandle(ctx context.Context) (Handle, error) {
@@ -56,7 +49,7 @@ func NewHandle(ctx context.Context) (Handle, error) {
 	if !sc.IsValid() {
 		return Handle{}, ErrNoSpanContext
 	}
-	return Handle{spanContext: sc}, nil
+	return Handle{spanContext: sc, disabled: false}, nil
 }
 
 // newHandleFromSpanContext builds a handle when the span context is already known (tests and internal use).
@@ -64,20 +57,28 @@ func newHandleFromSpanContext(sc trace.SpanContext) (Handle, error) {
 	if !sc.IsValid() {
 		return Handle{}, ErrInvalidHandle
 	}
-	return Handle{spanContext: sc}, nil
+	return Handle{spanContext: sc, disabled: false}, nil
 }
+
+// IsDisabled distinguishes an explicit noop from an invalid zero handle internally.
+func (h Handle) IsDisabled() bool { return h.disabled }
 
 // IsValid reports whether the handle references a valid span context.
 func (h Handle) IsValid() bool {
-	return h.spanContext.IsValid()
+	return !h.disabled && h.spanContext.IsValid()
 }
 
 // SpanContext exposes the reference only to internal instrumentation adapters.
-func (h Handle) SpanContext() trace.SpanContext { return h.spanContext }
+func (h Handle) SpanContext() trace.SpanContext {
+	if h.disabled {
+		return trace.SpanContext{}
+	}
+	return h.spanContext
+}
 
 // Marshal encodes the handle as a portable string token.
 func (h Handle) Marshal() (string, error) {
-	if !h.spanContext.IsValid() {
+	if !h.IsValid() {
 		return "", ErrInvalidHandle
 	}
 	if len(h.spanContext.TraceState().String()) > traceutil.MaxTraceStateBytes {
@@ -142,5 +143,5 @@ func ParseHandle(token string) (Handle, error) {
 	if !sc.IsValid() {
 		return Handle{}, ErrInvalidHandle
 	}
-	return Handle{spanContext: sc}, nil
+	return Handle{spanContext: sc, disabled: false}, nil
 }

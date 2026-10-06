@@ -192,6 +192,9 @@ func recordingLinks(ctx context.Context, options RecordingOptions) ([]trace.Link
 		if err != nil {
 			return nil, err
 		}
+		if !spanContext.IsValid() {
+			continue
+		} // Disabled references never create links.
 		duplicate := false
 		for _, link := range links {
 			if link.SpanContext.TraceID() == spanContext.TraceID() &&

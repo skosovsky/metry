@@ -12,7 +12,13 @@ import (
 func init() {
 	genaiwire.AsyncSpanContext = func(value any) (trace.SpanContext, error) {
 		handle, ok := value.(AsyncHandle)
-		if !ok || !handle.IsValid() {
+		if !ok {
+			return trace.SpanContext{}, ErrInvalidAsyncHandle
+		}
+		if handle.h.IsDisabled() {
+			return trace.SpanContext{}, nil
+		}
+		if !handle.IsValid() {
 			return trace.SpanContext{}, ErrInvalidAsyncHandle
 		}
 		return handle.h.SpanContext(), nil

@@ -146,12 +146,6 @@ func TenantID(id string) Attribute { return newAttribute("tenant_id", id) }
 // SubjectID records a subject identifier in unified observability context.
 func SubjectID(id string) Attribute { return newAttribute("subject_id", id) }
 
-// DoctorID records a doctor identifier in unified observability context.
-func DoctorID(id string) Attribute { return newAttribute("doctor_id", id) }
-
-// PatientID records a patient identifier in unified observability context.
-func PatientID(id string) Attribute { return newAttribute("patient_id", id) }
-
 // StringAttribute records an arbitrary string key-value pair in observability context.
 func StringAttribute(key, value string) Attribute { return newAttribute(key, value) }
 

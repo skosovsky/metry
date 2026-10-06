@@ -70,7 +70,12 @@ func TestRunLinkedSpan_PanicSafeDefault(t *testing.T) {
 	original := &unformattedPanic{&calls}
 	func() {
 		defer func() { require.Same(t, original, recover()) }()
-		_ = NewNoopHandle().RunLinkedSpan(context.Background(), tp.Tracer("test"), "linked", func(trace.Span) error { panic(original) })
+		handle, err := newHandleFromSpanContext(trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1},
+		}))
+		require.NoError(t, err)
+		_ = handle.RunLinkedSpan(context.Background(), tp.Tracer("test"), "linked",
+			func(trace.Span) error { panic(original) })
 	}()
 	require.Zero(t, calls)
 	spans := mem.GetSpans()

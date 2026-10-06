@@ -33,7 +33,7 @@ func TestEnrich_SkipsEmptySemanticIDs(t *testing.T) {
 }
 
 func TestEnrich_UpdatesBaggage(t *testing.T) {
-	ctx := Enrich(context.Background(), TenantID("t-1"), PatientID("p-9"))
+	ctx := Enrich(context.Background(), TenantID("t-1"), StringAttribute("patient_id", "p-9"))
 	assert.Equal(t, "t-1", BaggageMember(ctx, "tenant_id"))
 	assert.Equal(t, "p-9", BaggageMember(ctx, "patient_id"))
 }
@@ -122,7 +122,7 @@ func TestEnrich_ActiveSpan_ReceivesAttributes(t *testing.T) {
 	provider, mem := newTestProvider(t)
 	ctx, end, err := provider.StartSpan(context.Background(), "test", "req")
 	require.NoError(t, err)
-	Enrich(ctx, DoctorID("d-7"))
+	Enrich(ctx, StringAttribute("doctor_id", "d-7"))
 	end()
 	require.NoError(t, provider.ForceFlush(context.Background()))
 
@@ -141,7 +141,7 @@ func TestEnrich_ActiveSpan_ReceivesAttributes(t *testing.T) {
 
 func TestEnrich_AccumulatesBaggageAcrossCalls(t *testing.T) {
 	ctx := Enrich(context.Background(), TenantID("t-1"))
-	ctx = Enrich(ctx, PatientID("p-1"))
+	ctx = Enrich(ctx, StringAttribute("patient_id", "p-1"))
 
 	assert.Equal(t, "t-1", BaggageMember(ctx, "tenant_id"))
 	assert.Equal(t, "p-1", BaggageMember(ctx, "patient_id"))
@@ -149,7 +149,7 @@ func TestEnrich_AccumulatesBaggageAcrossCalls(t *testing.T) {
 
 func TestEnrich_WithoutReassignment_DoesNotUpdateBaggage(t *testing.T) {
 	ctx := Enrich(context.Background(), TenantID("t-1"))
-	Enrich(ctx, PatientID("p-1"))
+	Enrich(ctx, StringAttribute("patient_id", "p-1"))
 
 	assert.Equal(t, "t-1", BaggageMember(ctx, "tenant_id"))
 	assert.Empty(t, BaggageMember(ctx, "patient_id"))

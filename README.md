@@ -13,7 +13,7 @@ go get github.com/skosovsky/metry
 go get github.com/skosovsky/metry/middleware/grpc
 ```
 
-Use matching versions of `metry` and `metry/middleware/grpc` after the stateless API break.
+Use matching versions of `metry` and `metry/middleware/grpc` after the provider API break.
 
 **Migration (task16):** use `genai.Recorder`, explicit `PayloadPolicy`, `TraceSnapshot` for durable resume, recorder-owned async outcomes, and typed tool error classes. Historical task14 notes live in [`.cursor/docs/task14-migration.md`](.cursor/docs/task14-migration.md), but task16 supersedes carrier-map queue guidance and narrow recorder wiring.
 
@@ -54,7 +54,7 @@ func setup(ctx context.Context) (*metry.Provider, genai.Recorder, error) {
 }
 ```
 
-`metry.New(...)` is stateless and does not mutate global OTel providers.
+`metry.New(...)` owns its SDK pipeline, lazy instruments and terminal shutdown state. It does not mutate global OTel providers.
 The default sampler inherits a valid parent decision and uses the ratio for roots.
 `WithSampler(...)` accepts an SDK sampler as supplied and takes precedence over `WithTraceRatio(...)`.
 
@@ -301,7 +301,7 @@ Use typed attributes once for trusted local span and slog context. Network propa
 
 ```go
 logger := slog.New(metry.ContextHandler{Handler: slog.NewJSONHandler(os.Stdout, nil)})
-ctx = metry.Enrich(ctx, metry.TenantID("t-1"), metry.PatientID("p-9"))
+ctx = metry.Enrich(ctx, metry.TenantID("t-1"), metry.StringAttribute("patient_id", "p-9"))
 logger.InfoContext(ctx, "request started")
 ```
 
@@ -309,12 +309,12 @@ Each `Enrich` call returns an updated context. **Always reassign** `ctx` when ad
 
 ```go
 ctx = metry.Enrich(ctx, metry.TenantID("t-1"))
-ctx = metry.Enrich(ctx, metry.PatientID("p-9")) // retain the returned enrichment context
+ctx = metry.Enrich(ctx, metry.StringAttribute("patient_id", "p-9")) // retain the returned enrichment context
 ```
 
 `ContextHandler` uses provenance stored in the local context. A wire `metry.attr.type` marker describes a type and never proves trust. Remote and manually inserted OTel baggage do not enrich logs or GenAI scope by default. Explicit ingress keys can be trusted at the transport boundary; trusted local values win and reserved log keys cannot be imported.
 
-`SetBaggageValue` / raw string baggage keys are removed (clear break). Use `metry.Enrich` and semantic constructors (`TenantID`, `PatientID`, `DoctorID`, `SubjectID`).
+`SetBaggageValue` / raw string baggage keys are removed (clear break). Use `metry.Enrich` and semantic constructors (`TenantID`, `SubjectID`, `StringAttribute`).
 
 ## Trace snapshot for durable resume
 
@@ -623,6 +623,36 @@ conn, err := grpc.NewClient(addr, metrygrpc.ClientDialOption(
 ## Testing
 
 `make test` runs tests for all modules. `make test-examples` runs the examples above.
+
+## Core lifecycle and disabled async contracts
+
+`DoctorID` and `PatientID` helpers are removed. Define domain helpers in the host
+service using `StringAttribute`; generic `TenantID` and `SubjectID` remain.
+
+`NoopAsyncHandle()` represents explicitly disabled telemetry. It has no valid
+trace identity: `IsValid()` is false and `Marshal()` returns
+`ErrInvalidAsyncHandle` with no token. Linked recording drops it without calling
+the telemetry callback, even with an enabled provider. GenAI async results and
+feedback also drop disabled handles. GenAI causal `Links`
+ignore disabled handles, retaining real references; evaluation `TraceReference`
+requires a real valid handle and rejects a disabled one. A zero handle remains
+invalid and returns an error. Noop serialization cannot stand in for a real origin;
+unsigned real tokens require a trusted carrier or host signing.
+
+`LinkedSpanWriter` copies share synchronized state. Callback workers may write
+concurrently, but must be joined before the callback returns. The first non-nil
+`SetError` wins; nil does nothing. A callback return error remains the returned
+error and controls the failure outcome. After callback return or panic, writer
+calls are inert. A zero writer safely drops calls. Callbacks only configure
+telemetry; they must not perform business work because disabled paths skip them.
+
+`Provider.Shutdown(ctx)` is terminal and idempotent. Concurrent callers wait for
+the first call and receive its same result, including failure. The first context
+controls an upper timeout of ten seconds, respecting an earlier deadline. An
+already cancelled first call remains terminal; a later live context does not
+retry shutdown. Use a fresh live context after request cancellation. `FromSDK`
+borrows dependencies and never shuts down or implicitly flushes host pipelines;
+the host owns their lifecycle. Do not copy a Provider after first use.
 
 ## License
 

@@ -59,6 +59,33 @@ caller-owned state when a worker needs them.
 | Retrieval output attributes written without validation | `RetrievalHandle.Finish` returns an error before invalid writes | Finite optional relevance; bounded document array; nonnegative count; no imposed score scale | Handle telemetry diagnostics separately from business results; check returned errors |
 | Completed observation or standalone streaming completion without operation name silently dropped usage metrics | Effective operation name required, resolved from caller scope when omitted | Required `gen_ai.operation.name`; malformed name rejected before span/metric writes, including noop paths | Supply an operation name or `Scope.Operation`; model/purpose alone is insufficient |
 
+## Core helpers, async and lifecycle clear break
+
+`metry.DoctorID` and `metry.PatientID` are removed; declare domain helpers in the
+consumer using `StringAttribute`. Generic `TenantID` and `SubjectID` remain.
+`NoopAsyncHandle` now has an explicit private disabled state with no trace IDs.
+`IsValid` is false; `Marshal` returns `ErrInvalidAsyncHandle` and an empty token.
+Root linked recording and GenAI async-result/feedback recording drop disabled handles,
+including with an enabled provider. Causal `Links` omit disabled references;
+`Evaluation.TraceReference` rejects them because it must reference a real origin.
+Zero invalid handles still report errors. Persist caller business state without
+inventing a trace token when telemetry is disabled. Discard previously persisted
+synthetic noop tokens; capture an actual observed origin when a real link is needed.
+Parsing validates token syntax and limits, not proof of origin; the host owns
+reference authenticity.
+
+`LinkedSpanWriter` supports concurrent callback workers that the caller joins
+before return. Its copies share synchronized state; first non-nil `SetError`
+wins, nil does nothing, callback return error takes precedence. After callback
+return or panic, writer operations are inert. Zero writers safely drop calls.
+Callbacks must not own business work: disabled handles do not run them.
+
+Provider owns configuration, lazy instruments and shutdown state. Owned shutdown
+is terminal/idempotent; concurrent callers await the same first result even on
+failure. The first cancelled context remains terminal. Use a fresh live shutdown
+context, bounded by the ten-second limit and any earlier caller deadline.
+Borrowed SDK dependencies retain host-owned shutdown/flush lifetime.
+
 ## Recorder and byte-budget API clear break
 
 `Runtime` is renamed to `Recorder`, `Tracker.Runtime()` to `Tracker.Recorder()`,

@@ -15,24 +15,18 @@ var ErrDuplicateMetric = errors.New("metry: duplicate metric name")
 
 // MetricsRegistry registers domain metrics at init time.
 type MetricsRegistry struct {
-	meter      metric.Meter
-	mu         sync.Mutex
-	names      map[string]struct{}
-	histograms map[string]metric.Float64Histogram
-	counters   map[string]metric.Int64Counter
-	gauges     map[string]metric.Float64Gauge
+	meter metric.Meter
+	mu    sync.Mutex
+	names map[string]struct{}
 }
 
 var ErrMetricsRegistryNotConfigured = errors.New("metry: metrics registry is not configured")
 
 func newEmptyMetricsRegistry() *MetricsRegistry {
 	return &MetricsRegistry{
-		meter:      nil,
-		names:      make(map[string]struct{}),
-		histograms: make(map[string]metric.Float64Histogram),
-		counters:   make(map[string]metric.Int64Counter),
-		gauges:     make(map[string]metric.Float64Gauge),
-		mu:         sync.Mutex{},
+		meter: nil,
+		names: make(map[string]struct{}),
+		mu:    sync.Mutex{},
 	}
 }
 
@@ -42,12 +36,9 @@ func NewMetricsRegistry(p *Provider) *MetricsRegistry {
 		return newEmptyMetricsRegistry()
 	}
 	return &MetricsRegistry{
-		meter:      p.otelMeter.Meter("metry/domain"),
-		names:      make(map[string]struct{}),
-		histograms: make(map[string]metric.Float64Histogram),
-		counters:   make(map[string]metric.Int64Counter),
-		gauges:     make(map[string]metric.Float64Gauge),
-		mu:         sync.Mutex{},
+		meter: p.otelMeter.Meter("metry/domain"),
+		names: make(map[string]struct{}),
+		mu:    sync.Mutex{},
 	}
 }
 
@@ -135,7 +126,6 @@ func (r *MetricsRegistry) NewHistogram(name string, buckets []float64) (Histogra
 		delete(r.names, name)
 		return HistogramMetric{}, fmt.Errorf("metry: create histogram %q: %w", name, err)
 	}
-	r.histograms[name] = hist
 	return HistogramMetric{hist: hist}, nil
 }
 
@@ -154,7 +144,6 @@ func (r *MetricsRegistry) NewCounter(name string) (CounterMetric, error) {
 		delete(r.names, name)
 		return CounterMetric{}, fmt.Errorf("metry: create counter %q: %w", name, err)
 	}
-	r.counters[name] = cnt
 	return CounterMetric{cnt: cnt}, nil
 }
 
@@ -173,7 +162,6 @@ func (r *MetricsRegistry) NewGauge(name string) (GaugeMetric, error) {
 		delete(r.names, name)
 		return GaugeMetric{}, fmt.Errorf("metry: create gauge %q: %w", name, err)
 	}
-	r.gauges[name] = gauge
 	return GaugeMetric{gauge: gauge}, nil
 }
 

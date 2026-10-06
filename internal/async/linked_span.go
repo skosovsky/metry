@@ -18,6 +18,9 @@ func StartLinkedSpan(
 	name string,
 	opts ...trace.SpanStartOption,
 ) (context.Context, trace.Span, error) {
+	if h.IsDisabled() {
+		return ctx, trace.SpanFromContext(context.Background()), nil
+	}
 	if tracer == nil {
 		return ctx, nil, ErrNilTracer
 	}
@@ -41,6 +44,9 @@ func (h Handle) RunLinkedSpan(
 	fn func(span trace.Span) error,
 	opts ...trace.SpanStartOption,
 ) error {
+	if h.IsDisabled() {
+		return nil
+	}
 	_, span, err := StartLinkedSpan(ctx, tracer, h, name, opts...)
 	if err != nil {
 		return err

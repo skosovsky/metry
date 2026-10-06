@@ -12,7 +12,12 @@ import (
 )
 
 func FuzzParseAsyncHandle(f *testing.F) {
-	valid, err := metry.NoopAsyncHandle().Marshal()
+	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})
+	handle, err := metry.NewAsyncHandle(trace.ContextWithSpanContext(context.Background(), sc))
+	if err != nil {
+		f.Fatal(err)
+	}
+	valid, err := handle.Marshal()
 	if err != nil {
 		f.Fatal(err)
 	}

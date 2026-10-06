@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/internal/genaiwire"
 )
 
 // RecordAsyncFeedback records delayed user feedback as a new span linked to the original interaction.
@@ -16,8 +17,12 @@ func (t *Tracker) RecordAsyncFeedback(
 	feedbackText string,
 	opts ...LinkedSpanOption,
 ) error {
-	if !handle.IsValid() {
+	spanContext, err := genaiwire.AsyncSpanContext(handle)
+	if err != nil {
 		return ErrInvalidAsyncHandle
+	}
+	if !spanContext.IsValid() {
+		return nil
 	}
 	if math.IsNaN(score) || math.IsInf(score, 0) || len(feedbackText) > maxPayloadInputBytes ||
 		!utf8.ValidString(feedbackText) {

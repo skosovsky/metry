@@ -30,9 +30,12 @@ zero Provider exposes noop providers and a secure W3C propagation wrapper for op
 instrumentation; this is not a constructor for an owned pipeline.
 
 New validates service name, finite trace ratio in [0,1], nil options, and explicitly
-supplied nil exporters/sampler before SDK construction. Successful shutdown is
-idempotent and uses a ten-second upper timeout, respecting an earlier caller
-deadline. An explicit custom sampler is used as supplied. The default inherits a
+supplied nil exporters/sampler before SDK construction. Shutdown is terminal and idempotent, including failure. Concurrent callers
+wait for the first call and receive the same first result. Its context controls
+a ten-second upper timeout, respecting an earlier deadline. An already cancelled
+first call cannot be retried with a live context; supply a fresh live context for
+shutdown after request cancellation. Provider owns lifecycle state and must not
+be copied after first use. An explicit custom sampler is used as supplied. The default inherits a
 valid parent's sampling decision and applies the ratio only to new roots. Links
 do not count as parents. GenAI keep sampling is an explicit head-sampler opt-in.
 

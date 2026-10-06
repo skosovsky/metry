@@ -128,11 +128,16 @@ func TestLinkedDiagnosticPanicEndsBeforeReraise(t *testing.T) {
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tp.Shutdown(ctx)) })
+	originCtx, origin := tp.Tracer("test").Start(ctx, "origin")
+	handle, err := metry.NewAsyncHandle(originCtx)
+	require.NoError(t, err)
+	origin.End()
+	sink.Reset()
 	formats := 0
 	original := &privacyPanic{&formats}
 	func() {
 		defer func() { require.Same(t, original, recover()) }()
-		_ = metry.NoopAsyncHandle().
+		_ = handle.
 			RecordLinkedSpan(ctx, provider, "linked", func(metry.LinkedSpanWriter) error { panic(original) })
 	}()
 	require.Zero(t, formats)
@@ -141,7 +146,7 @@ func TestLinkedDiagnosticPanicEndsBeforeReraise(t *testing.T) {
 	require.NotContains(t, fmt.Sprint(spans[0].Status, spans[0].Events), "SENTINEL_SECRET")
 	require.Len(t, spans[0].Events, 1)
 	business := errors.New("SENTINEL_SECRET")
-	err = metry.NoopAsyncHandle().
+	err = handle.
 		RecordLinkedSpan(ctx, provider, "linked-error", func(metry.LinkedSpanWriter) error { return business })
 	require.Same(t, business, err)
 	spans = sink.GetSpans()

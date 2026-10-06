@@ -21,7 +21,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T06 Raw enrichment and bounded propagation | R05, D12, D13 | Raw string span/log/private/transport AAA, literal percent stability, invalid keys; ordinary allowlisted W3C strings; deterministic byte/member overflow tests | `fix: baggage values` | accepted |
 | T07 Private GenAI scope | R06 | Package/Tracker scope and direct Meta sentinel privacy across parent/child/logs; originals survive merge, safe/raw opt-in, local precedence/remote trust | `fix: scope privacy` | accepted |
 | T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | accepted |
-| T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | pending |
+| T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | accepted |
 | T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | pending |
 | T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | pending |
 | T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | pending |
@@ -190,3 +190,23 @@ MeterTracer bridge and obsolete errors/tests removed, private async bridge kept.
 Migration records exact removals/renames and unchanged wire semantics. Limits:
 no external backend proof or absolute absence-of-bugs claim; complete cross-module
 release/final acceptance remains T14.
+
+T09 accepted after unifying disabled GenAI feedback with async-result emission.
+First completeness review found that feedback rejected disabled handles; fixed
+via the private bridge and added disabled/invalid feedback export regression.
+Repeat independent reviews: `t09_completeness` 100%, no gaps;
+`t09_correctness` no unresolved findings. Both independently passed root/GenAI/
+internal async race tests; correctness used `-count=1`. Parent full root race
+suite and root lint (0 issues) passed on the final diff. gRPC/OTLP module tests
+and all 9 examples passed before the feedback-only correction. Diff check passed.
+Isolated old-HEAD regression tests reproduce synthetic noop identity, nil clearing
+the writer error, and an actual concurrent SetError data race. Current AAA tests
+cover disabled serialization/emission/links/evaluation, invalid zero handles,
+shared concurrent writer state, first error, callback precedence, late inert
+writes, zero writer, terminal concurrent shutdown, cancelled-first/no-retry and
+earlier deadline. Existing borrowed SDK lifecycle coverage remains. Domain
+helpers and unread instrument maps removed; generic helpers/collision registry
+retained. Provider ownership, callback lifetime, disabled and migration contracts
+documented. Limits: no absolute absence-of-bugs claim; deadline enforcement needs
+SDK dependencies to honor context, and unsigned origin authenticity belongs to
+the host. Cross-module final acceptance remains T14.

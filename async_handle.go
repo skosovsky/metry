@@ -3,6 +3,7 @@ package metry
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -19,7 +20,8 @@ var ErrNilProvider = errors.New("metry: provider is nil")
 // ErrNilTracerProvider is returned when a provider has no tracer configured.
 var ErrNilTracerProvider = errors.New("metry: tracer provider is nil")
 
-// AsyncHandle is a serializable token linking deferred outcomes to an originating interaction.
+// AsyncHandle references an originating interaction or explicit disabled telemetry.
+// Real references serialize; disabled handles cannot produce an origin token.
 type AsyncHandle struct {
 	h async.Handle
 }
@@ -52,37 +54,74 @@ func ParseAsyncHandle(token string) (AsyncHandle, error) {
 	return AsyncHandle{h: h}, nil
 }
 
-// NoopAsyncHandle returns a valid synthetic handle for disabled telemetry paths.
+// NoopAsyncHandle returns a disabled handle without a trace identity.
+// Linked recording is dropped, IsValid is false and Marshal returns an error.
 func NoopAsyncHandle() AsyncHandle {
 	return AsyncHandle{h: async.NewNoopHandle()}
 }
 
 // LinkedSpanWriter configures a linked span without exposing OpenTelemetry types.
-type LinkedSpanWriter struct {
-	setAttrs func(...Attribute)
-	addEvent func(name string, attrs ...Attribute)
-	setError func(error)
+// Copies share state. Concurrent use is supported only while the callback runs;
+// join all workers before returning. Writes after callback completion are inert.
+type LinkedSpanWriter struct{ state *linkedSpanWriterState }
+
+type linkedSpanWriterState struct {
+	mu        sync.Mutex
+	span      trace.Span
+	active    bool
+	statusErr error
 }
 
 // SetAttributes sets span attributes from typed metry attributes.
 func (w LinkedSpanWriter) SetAttributes(attrs ...Attribute) {
-	if w.setAttrs != nil {
-		w.setAttrs(attrs...)
+	if w.state == nil {
+		return
 	}
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if !w.state.active {
+		return
+	}
+	traceutil.MutateRecordingSpan(w.state.span, func(span trace.Span) {
+		if kv := attributesToOTel(attrs); len(kv) > 0 {
+			span.SetAttributes(kv...)
+		}
+	})
 }
 
 // AddEvent adds a named event with typed metry attributes.
 func (w LinkedSpanWriter) AddEvent(name string, attrs ...Attribute) {
-	if w.addEvent != nil {
-		w.addEvent(name, attrs...)
+	if w.state == nil {
+		return
+	}
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if !w.state.active {
+		return
+	}
+	traceutil.MutateRecordingSpan(w.state.span, func(span trace.Span) {
+		span.AddEvent(name, trace.WithAttributes(attributesToOTel(attrs)...))
+	})
+}
+
+// SetError retains the first non-nil error without making the callback fail.
+// Nil is a no-op. A callback return error takes precedence over this status.
+func (w LinkedSpanWriter) SetError(err error) {
+	if w.state == nil || err == nil {
+		return
+	}
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	if w.state.active && w.state.statusErr == nil {
+		w.state.statusErr = err
 	}
 }
 
-// SetError records an error status on the linked span without making the callback fail.
-func (w LinkedSpanWriter) SetError(err error) {
-	if w.setError != nil {
-		w.setError(err)
-	}
+func (w LinkedSpanWriter) close() error {
+	w.state.mu.Lock()
+	defer w.state.mu.Unlock()
+	w.state.active = false
+	return w.state.statusErr
 }
 
 // Marshal encodes the handle as a portable string token.
@@ -121,6 +160,8 @@ func linkedSpanOptionsToOTel(opts ...LinkedSpanOption) []trace.SpanStartOption {
 }
 
 // RecordLinkedSpan starts a linked root span and runs fn with a typed writer.
+// The callback must join concurrent writer workers before returning. Disabled
+// handles do not call fn or create telemetry; callbacks must not own business work.
 func (h AsyncHandle) RecordLinkedSpan(
 	ctx context.Context,
 	provider *Provider,
@@ -128,6 +169,9 @@ func (h AsyncHandle) RecordLinkedSpan(
 	fn func(LinkedSpanWriter) error,
 	opts ...LinkedSpanOption,
 ) error {
+	if h.h.IsDisabled() {
+		return nil
+	}
 	if !h.IsValid() {
 		return ErrInvalidAsyncHandle
 	}
@@ -152,29 +196,15 @@ func (h AsyncHandle) RecordLinkedSpan(
 		}
 	}()
 
-	var statusErr error
-	writer := LinkedSpanWriter{
-		setAttrs: func(attrs ...Attribute) {
-			traceutil.MutateRecordingSpan(span, func(span trace.Span) {
-				kv := attributesToOTel(attrs)
-				if len(kv) > 0 {
-					span.SetAttributes(kv...)
-				}
-			})
-		},
-		addEvent: func(eventName string, attrs ...Attribute) {
-			traceutil.MutateRecordingSpan(span, func(span trace.Span) {
-				kv := attributesToOTel(attrs)
-				span.AddEvent(eventName, trace.WithAttributes(kv...))
-			})
-		},
-		setError: func(err error) {
-			statusErr = err
-		},
-	}
-	if err := fn(writer); err != nil {
-		traceutil.SpanErrorWithPolicy(span, err, provider.DiagnosticPolicy())
-		return err
+	writer := LinkedSpanWriter{state: &linkedSpanWriterState{
+		mu: sync.Mutex{}, span: span, active: true, statusErr: nil,
+	}}
+	defer func() { _ = writer.close() }()
+	callbackErr := fn(writer)
+	statusErr := writer.close()
+	if callbackErr != nil {
+		traceutil.SpanErrorWithPolicy(span, callbackErr, provider.DiagnosticPolicy())
+		return callbackErr
 	}
 	if statusErr != nil {
 		traceutil.SpanErrorWithPolicy(span, statusErr, provider.DiagnosticPolicy())
@@ -191,6 +221,9 @@ func (h AsyncHandle) RecordLinkedOutcomeWithProvider(
 	spanName string,
 	attrs ...Attribute,
 ) error {
+	if h.h.IsDisabled() {
+		return nil
+	}
 	if !h.IsValid() {
 		return ErrInvalidAsyncHandle
 	}

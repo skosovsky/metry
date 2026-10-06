@@ -31,7 +31,9 @@ var (
 	ErrServiceNameRequired = errors.New("metry: ServiceName is required")
 )
 
-// Provider is the stateless runtime object created by New.
+// Provider owns instrumentation configuration, lazy instruments and lifecycle
+// state. New owns its SDK pipeline; FromSDK borrows host-owned dependencies.
+// A Provider must not be copied after first use.
 type Provider struct {
 	otelTracer        trace.TracerProvider
 	otelMeter         metric.MeterProvider
@@ -173,7 +175,11 @@ func (p *Provider) ForceFlush(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Shutdown releases resources owned by this Provider.
+// Shutdown is terminal and idempotent for resources owned by this Provider.
+// Concurrent callers wait and receive the same first result, including failure.
+// The first context bounds shutdown by its deadline and a ten-second upper limit;
+// an already cancelled first context is terminal, not a request to retry. Use a
+// live shutdown context. Borrowed dependencies remain under host ownership.
 func (p *Provider) Shutdown(ctx context.Context) error {
 	if p == nil {
 		return nil

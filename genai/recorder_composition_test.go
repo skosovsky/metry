@@ -255,16 +255,17 @@ func TestRecorder_AsyncTokenResult_ParseFailureReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, metry.ErrInvalidAsyncHandle)
 }
 
-func TestNoopRecorder_StartAsyncReturnsSerializableHandle(t *testing.T) {
+func TestNoopRecorder_StartAsyncReturnsDisabledHandle(t *testing.T) {
 	recorder := NoopRecorder()
 
 	handle, err := recorder.StartAsync(context.Background(), "enqueue")
 
 	require.NoError(t, err)
 	token, err := handle.Marshal()
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-	require.NoError(t, recorder.RecordAsyncTokenResult(context.Background(), token, AsyncResult{Name: "done"}))
+	require.ErrorIs(t, err, metry.ErrInvalidAsyncHandle)
+	assert.Empty(t, token)
+	assert.False(t, handle.IsValid())
+	require.NoError(t, recorder.RecordAsyncResult(context.Background(), handle, AsyncResult{Name: "done"}))
 	require.ErrorIs(
 		t,
 		recorder.RecordAsyncResult(context.Background(), metry.AsyncHandle{}, AsyncResult{Name: "done"}),

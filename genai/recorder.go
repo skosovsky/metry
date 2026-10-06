@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/skosovsky/metry"
+	"github.com/skosovsky/metry/internal/genaiwire"
 )
 
 const (
@@ -238,7 +239,7 @@ func (noopRecorder) StartAsync(context.Context, string, ...AsyncOption) (metry.A
 }
 
 func (noopRecorder) RecordAsyncResult(_ context.Context, handle metry.AsyncHandle, _ AsyncResult) error {
-	if !handle.IsValid() {
+	if _, err := genaiwire.AsyncSpanContext(handle); err != nil {
 		return ErrInvalidAsyncHandle
 	}
 	return nil
@@ -400,7 +401,7 @@ func (r trackerRecorder) StartAsync(
 	opts ...AsyncOption,
 ) (metry.AsyncHandle, error) {
 	if r.tracker == nil {
-		return metry.AsyncHandle{}, nil
+		return metry.NoopAsyncHandle(), nil
 	}
 
 	spanName := strings.TrimSpace(name)
@@ -429,8 +430,12 @@ func (r trackerRecorder) RecordAsyncResult(
 	if r.tracker == nil {
 		return nil
 	}
-	if !handle.IsValid() {
+	spanContext, err := genaiwire.AsyncSpanContext(handle)
+	if err != nil {
 		return ErrInvalidAsyncHandle
+	}
+	if !spanContext.IsValid() {
+		return nil
 	}
 
 	status, class := r.asyncStatusAndClass(result)

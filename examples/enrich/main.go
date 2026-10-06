@@ -36,7 +36,7 @@ func run() int {
 	}
 	defer end()
 	const exampleScore = 0.91
-	ctx = metry.Enrich(ctx, metry.TenantID("tenant-1"), metry.PatientID("patient-9"),
+	ctx = metry.Enrich(ctx, metry.TenantID("tenant-1"), metry.StringAttribute("patient_id", "patient-9"),
 		metry.FloatAttribute("score", exampleScore), metry.BoolAttribute("passed", true))
 	logger.InfoContext(ctx, "enriched request")
 
