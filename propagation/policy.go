@@ -10,6 +10,7 @@ import (
 	otelprop "go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/skosovsky/metry/internal/baggageutil"
 	"github.com/skosovsky/metry/internal/enrichment"
 )
 
@@ -95,7 +96,8 @@ func (p policyPropagator) Inject(ctx context.Context, carrier otelprop.TextMapCa
 			members = append(members, member)
 		}
 	}
-	bag, _ := baggage.New(members...)
+	bag, dropped := baggageutil.Build(members)
+	baggageutil.Report(ctx, "egress", dropped)
 	clean := baggage.ContextWithBaggage(ctx, bag)
 	for _, field := range p.Fields() {
 		carrier.Set(field, "")
@@ -131,7 +133,7 @@ func (p policyPropagator) Extract(ctx context.Context, carrier otelprop.TextMapC
 		if !p.policy.ingress[m.Key()] || reserved(m.Key()) || p.policy.reserved[m.Key()] {
 			continue
 		}
-		kind := ""
+		kind := "string"
 		for _, prop := range m.Properties() {
 			if prop.Key() == enrichment.TypeKey {
 				kind, _ = prop.Value()
@@ -153,7 +155,8 @@ func (p policyPropagator) Extract(ctx context.Context, carrier otelprop.TextMapC
 			members = append(members, m)
 		}
 	}
-	bag, _ := baggage.New(members...)
+	bag, dropped := baggageutil.Build(members)
+	baggageutil.Report(ctx, "ingress", dropped)
 	return baggage.ContextWithBaggage(extracted, bag)
 }
 

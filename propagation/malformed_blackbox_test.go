@@ -32,7 +32,6 @@ func TestMapMalformedWireDoesNotImportBusinessValues(t *testing.T) {
 		{name: "Inf", carrier: map[string]any{"baggage": "score=Inf;metry.attr.type=float"}},
 		{name: "negative Inf", carrier: map[string]any{"baggage": "score=-Inf;metry.attr.type=float"}},
 		{name: "unknown marker", carrier: map[string]any{"baggage": "metry.genai.model=SECRET;metry.attr.type=object"}},
-		{name: "missing marker", carrier: map[string]any{"baggage": "metry.genai.model=SECRET"}},
 		{name: "non-string fields", carrier: map[string]any{"traceparent": 123, "baggage": 456}},
 		{name: "empty fields", carrier: map[string]any{"traceparent": "", "baggage": ""}},
 		{name: "empty map", carrier: map[string]any{}},

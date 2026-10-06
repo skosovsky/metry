@@ -7,13 +7,16 @@ import (
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/skosovsky/metry/internal/baggageutil"
 	"github.com/skosovsky/metry/internal/enrichment"
 	"github.com/skosovsky/metry/internal/traceutil"
 )
 
 // Enrich updates unified observability context: OTel baggage and active span attributes.
 // Reassign ctx = metry.Enrich(...) on each call when accumulating attributes across multiple steps.
-// Invalid baggage members for individual attributes are skipped without failing the whole call.
+// Values are raw UTF-8 strings; wire percent encoding belongs to propagation.
+// Invalid keys/values are skipped. Visible baggage retains a sorted fitting
+// prefix within transport limits; private provenance and span/log values survive.
 // ContextHandler reads the private provenance ledger for slog correlation.
 func Enrich(ctx context.Context, attrs ...Attribute) context.Context {
 	if len(attrs) == 0 {
@@ -33,7 +36,7 @@ func Enrich(ctx context.Context, attrs ...Attribute) context.Context {
 		)
 	}
 	ctx = enrichment.Put(ctx, values...)
-	ctx = enrichBaggage(ctx, valid)
+	ctx = enrichBaggage(ctx)
 	enrichSpan(ctx, valid)
 	return ctx
 }
@@ -46,7 +49,11 @@ func validAttribute(attr Attribute) bool {
 	if attr.f64 == nil && attr.b == nil && attr.i64 == nil && attr.value == "" {
 		return false
 	}
-	_, err := baggage.NewMember(attr.key, strVal)
+	// Preserve the existing W3C key contract without encoding the real value here.
+	if _, err := baggage.NewMember(attr.key, "valid"); err != nil {
+		return false
+	}
+	_, err := baggage.NewMemberRaw(attr.key, strVal)
 	return err == nil
 }
 
@@ -60,28 +67,27 @@ func filterValidAttributes(attrs []Attribute) []Attribute {
 	return out
 }
 
-func enrichBaggage(ctx context.Context, attrs []Attribute) context.Context {
-	b := baggage.FromContext(ctx)
-	for _, attr := range attrs {
-		strVal := attributeStringValue(attr)
-		typeProp, err := baggage.NewKeyValuePropertyRaw(baggageAttrTypeKey, attr.attrType())
+func enrichBaggage(ctx context.Context) context.Context {
+	members := baggage.FromContext(ctx).Members()
+	// Rebuild from the full ledger, including values omitted by earlier overflow.
+	// Foreign baggage stays transport-only and is never promoted to provenance.
+	for _, value := range enrichment.Values(ctx) {
+		typeProp, err := baggage.NewKeyValuePropertyRaw(baggageAttrTypeKey, value.Type)
 		if err != nil {
 			continue
 		}
 		member, err := baggage.NewMemberRaw(
-			attr.key,
-			strVal,
+			value.Key,
+			value.Text,
 			typeProp,
 		)
 		if err != nil {
 			continue
 		}
-		next, err := b.SetMember(member)
-		if err != nil {
-			continue
-		}
-		b = next
+		members = append(members, member)
 	}
+	b, dropped := baggageutil.Build(members)
+	baggageutil.Report(ctx, "local", dropped)
 	return baggage.ContextWithBaggage(ctx, b)
 }
 

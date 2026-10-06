@@ -49,6 +49,24 @@ custom handlers may implement additional behavior under host control. Plain
 manual OTel baggage and its type markers cannot create provenance. Local Enrich
 is not content sanitation and should receive host-approved values.
 
+Allowlisted ordinary W3C members without `metry.attr.type` are admitted as
+strings. An explicitly supplied invalid/empty marker is rejected; an allowlist
+is still required. `Enrich` takes raw UTF-8 values: spaces, Unicode, commas and
+literal percent escapes survive local spans/logs and permitted wire roundtrips.
+Keys remain W3C tokens; invalid keys and invalid UTF-8 values are skipped.
+
+Visible baggage and egress select a lexicographically sorted key prefix after
+last-wins deduplication, stopping at the first member that would exceed 64 members
+or 8192 encoded bytes (commas and properties included). These are the pinned OTel
+v1.47.0 bounds. The SDK/transport may serialize the selected members in any order.
+The trusted private ledger keeps omitted values for local spans/logs and later
+allowlisted egress. A recording span receives one `metry.baggage.dropped` event
+per affected call with only a channel and dropped count; diagnostics contain no
+keys, values or SDK error text. With no recording span no event is emitted.
+Extraction reports on the original recording span, if present; it never mutates
+a remote span. Library-owned overflow does not delegate retention to an unordered
+SDK partial result.
+
 Provider SDK composition exposes a wrapped propagator. Map, HTTP and gRPC paths
 apply the same local ingress/egress policy. Custom propagator declared Fields are
 used coherently for both directions; injection clears only those declared fields

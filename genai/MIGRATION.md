@@ -24,6 +24,13 @@ remote-trace policy governs restoration: rejection returns
 trace reference with the captured reference while retaining the caller's baggage
 and local enrichment. Snapshot tokens themselves never carry baggage.
 
+`Enrich` now accepts raw strings consistently; callers must stop pre-encoding
+values. Literal `%20` stays literal and transport encoding occurs once. Allowlisted
+ordinary W3C baggage without a private type marker is imported as string;
+invalid explicit markers and reserved collisions remain rejected. Visible/egress
+baggage uses a deterministic sorted fitting prefix within pinned SDK limits.
+Overflow no longer removes trusted values from private span/log context.
+
 | Previous contract | Current contract | Names / units / boundary | Consumer action |
 |---|---|---|---|
 | Scalar `Usage`, zero treated as missing | Typed `Measurement[int]` / `Measurement[float64]` with explicit presence/source/unit | Existing total/component attributes remain; each present measurement adds `metry.gen_ai.measurement.<field>.source` and `.unit` | Replace literals with `Observe`; use zero-value measurement for absence and present zero for a known zero |
