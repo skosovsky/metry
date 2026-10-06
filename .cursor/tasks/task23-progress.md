@@ -26,7 +26,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | accepted |
 | T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | accepted |
 | T13 OTLP semantic fixture | integration checklist | Real serialized resource/scope/schema, known-zero vs unknown usage, histogram/cost, parent/link, error outcome, no raw sentinel; evidence limits documented | `test: otlp semantics` | accepted |
-| T14 Full acceptance | complete DoD | `make test`, `make lint`, `make test-examples` across modules; targeted races and isolated release checks; two independent whole-DoD reviews; source/ledger statuses backed by evidence | `chore: remediation checks` | pending |
+| T14 Full acceptance | complete DoD | `make test`, `make lint`, `make test-examples` across modules; targeted races and isolated release checks; two independent whole-DoD reviews; source/ledger statuses backed by evidence | `chore: remediation checks` | accepted |
 
 ## Planned public contracts
 
@@ -311,3 +311,49 @@ evidence from conformance expectations and unsupported counter write-count claim
 Limits: loopback HTTP and specified controlled routes; no arbitrary host/custom
 exporter/downstream collector guarantee or absolute absence-of-bugs claim. Runtime
 unchanged; final whole-DoD/make/release acceptance remains T14.
+
+
+## T14 whole-DoD validation
+
+Full current checkout gates PASS: `make test` (race in root, gRPC and OTLP),
+`make lint` (0 issues in all three modules), `make test-examples` (all 9),
+`make test-release` (isolated temporary repositories/local bare remote only).
+Logs: `/tmp/metry-t14-test.log`, `/tmp/metry-t14-lint.log`,
+`/tmp/metry-t14-examples.log`, `/tmp/metry-t14-release.log`.
+Additional PASS: release suite with `/bin/bash` 3.2 and Homebrew Bash 5.3
+(`/tmp/metry-t14-release-bash32.log`, `/tmp/metry-t14-release-bash5.log`);
+uncached targeted race paths for linked writer, shutdown, callbacks, scope,
+disabled async, snapshot, baggage/enrichment and cancellation
+(`/tmp/metry-t14-targeted-race.log`). The internal/async targeted filter matched
+no tests; its disabled tests ran in the full root race suite. Linux release
+portability was independently exercised during accepted T03; scripts/release.sh,
+release_test.sh and RELEASE.md have no changes since that commit.
+
+No dependency manifests changed relative to review baseline `9b6bd14` (root
+Go module/sum and gRPC/OTLP module manifests). Removed public Go API names have no
+remaining implementation/callers; migration preserves historical names explicitly.
+The source task now separates historical findings from implemented requirement
+mapping and marks evidence-backed documentation checklist complete. Both whole-DoD
+independent verdicts accepted the current implementation; T14 is complete.
+
+
+T14 accepted by independent `t14_completeness` (100%, no gaps) and
+`t14_correctness` (no unresolved findings). Neither implemented the task or read
+the counterpart report. Completeness independently ran the full uncached root
+race suite, full OTLP race suite and isolated Bash 3.2 release suite; checked 33
+consumer links/anchors, removed Go APIs, dependency manifests and all R/D mappings.
+It independently reproduced R01/R04/R05 on unpacked baseline 9b6bd14 with current
+regression cases: erroneous Ok, baggage-only restore without reference and lost
+raw values. Logs: `/tmp/metry-t14-completeness-baseline-status.log` and
+`/tmp/metry-t14-completeness-baseline-raw-snapshot.log`; existing D08/D09/D14/D15
+baseline evidence inspected. Correctness independently ran make test, uncached
+root/GenAI/propagation/async/baggage races, full OTLP race count=5 under hostile
+interval/delta/exponential/gzip settings, all 9 examples and isolated Bash 3.2
+release checks. Both checked diff and final source mapping; lint gates were
+confirmed from current parent logs. Linux acceptance relies on unchanged T03
+scripts and its independently accepted actual Linux run. Only acceptance status
+and report bookkeeping follows these verdicts; no implementation changes.
+All R01–R08 and D01–D16, documentation and migration, integration fixture and
+required validation gates are complete. No production release or push performed.
+Limits remain controlled library/loopback scenarios and exercised interleavings,
+not external backends, published artifacts or proof of universal absence of bugs.
