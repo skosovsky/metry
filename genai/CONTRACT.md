@@ -31,9 +31,6 @@ values or fixture error messages. A passing report establishes conformance of th
 covered composition and scenarios; it does not certify arbitrary host exporters
 or prove absence of PII in all host telemetry.
 
-There is no compatibility path for the former profile/raw-flag checker arguments,
-JSON-only payload evidence or `metry.genai.presence` profile identity.
-
 JSON numbers are decoded with `UseNumber` and retain their numeric spelling,
 including integers beyond float64 precision and decimal/exponent notation.
 Upstream array channels retain a complete-element prefix with separate truncation
@@ -49,7 +46,7 @@ numeric lexemes without converting them to floating point. Adjacent integers abo
 have different fingerprints; fingerprints are not a proof against hash collisions
 or anonymity. Redaction intentionally replaces values rather than retaining them.
 
-Metric assertions now take `metrytest.MetricSelector` in place of a bare name.
+Metric assertions take `metrytest.MetricSelector`.
 Use the complete exported instrumentation scope to select a known scope;
 version, schema URL and attributes also participate in exact scope matching. A nil
 scope requires one unique name across all scopes. Typed helpers verify aggregation;

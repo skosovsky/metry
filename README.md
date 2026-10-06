@@ -15,7 +15,11 @@ go get github.com/skosovsky/metry/middleware/grpc
 
 Use matching versions of `metry` and `metry/middleware/grpc` after the provider API break.
 
-**Migration (task16):** use `genai.Recorder`, explicit `PayloadPolicy`, `TraceSnapshot` for durable resume, recorder-owned async outcomes, and typed tool error classes. Historical task14 notes live in [`.cursor/docs/task14-migration.md`](.cursor/docs/task14-migration.md), but task16 supersedes carrier-map queue guidance and narrow recorder wiring.
+Current consumer contracts: [SDK ownership and concurrency](INTEGRATION.md),
+[privacy boundaries](PRIVACY.md), [GenAI semantics and schema version](genai/SEMANTICS.md),
+[effective contract and conformance](genai/CONTRACT.md), [outcomes and streaming](genai/OUTCOMES.md),
+and [breaking-change migration](genai/MIGRATION.md).
+Maintainers: [isolated release, supported platforms and recovery](scripts/RELEASE.md).
 
 HTTP and generic execution use root `metry.HTTPHandler` and `metry.ExecutorWrap`. gRPC is an optional integration module; core does not import gRPC. See [integration and clear-break migration](INTEGRATION.md).
 
@@ -46,7 +50,7 @@ func setup(ctx context.Context) (*metry.Provider, genai.Recorder, error) {
 
     recorder, err := genai.NewRecorderFromProvider(provider, genai.WithPayloadPolicy(genai.RedactPayloadPolicy()))
     if err != nil {
-        _ = provider.Shutdown(ctx)
+        _ = provider.Shutdown(context.Background()) // terminal cleanup, independent of request cancellation
         return nil, nil, err
     }
 
@@ -79,7 +83,12 @@ if err != nil {
     _ = exporter.Shutdown(ctx) // failed construction retains caller ownership
     return err
 }
-defer provider.Shutdown(ctx) // successful construction owns its exporter
+defer func() {
+    // The request context may be cancelled; shutdown needs a fresh live context.
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    _ = provider.Shutdown(shutdownCtx)
+}() // successful construction owns its exporter
 ```
 
 Metric exporters use `metry.WithMetricExporter(exporter)`. To reuse an existing
@@ -99,7 +108,12 @@ provider, recorder, err := setup(ctx)
 if err != nil {
     return err
 }
-defer provider.Shutdown(ctx)
+defer func() {
+    // The request context may be cancelled; shutdown needs a fresh live context.
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    _ = provider.Shutdown(shutdownCtx)
+}()
 
 ctx, end, err := provider.StartSpan(ctx, "app/handler", "request")
 if err != nil {
@@ -215,26 +229,13 @@ Constructors snapshot the profile. `tracker.Profile()` returns a detached copy. 
 
 `genai.CheckConformance(tracker.Contract(), declarations, fixtures...)` checks adapter declarations before running exporter-derived fixtures. It rejects ownership conflicts, unsupported profile/mapping, incompatible units and unpermitted raw mode. Its report uses bounded categorical mismatches and never includes fixture error messages or rejected payload values. Fixtures cover their controlled composition only; passing them does not certify arbitrary host/exporter code.
 
-Adapter units bind a specific field to its canonical unit through
-`FieldUnitDeclaration`; an empty declaration inherits the profile catalogue.
-Every observed boundary requires `AccountingEvidence`: independently established
-scenario expectations and actual exported span/measurement counts and totals.
-Observation count is not series count: known zero counts once, while logical
-boundaries must not produce accounting measurements. Integer instruments use
-`IntegerTotal` without floating-point conversion; others use `Total`. For counters
-whose exporter only supplies sums, fixtures need separate write witnesses to
-prove count, including zero writes and duplicate writes. Fixtures must project
-all controlled writes, actual enum values, events with their instrumentation
-owner, and named JSON payloads. Missing JSON-channel evidence is rejected.
-Do not copy recording inputs into the actual-evidence side of a fixture.
-
-`Schema().Events()` declares controlled event names, instrumentation ownership,
-stability and allowed fields; `Enumerations()` and `PayloadChannels()` declare
-wire values and input/encoding/budget boundaries. Returned declarations are
-detached copies. Canonical boundary names, operations and accounting semantics
-cannot be reinterpreted under the supported profile identity. Conformance also
-rejects observations whose boundary has no declared adapter owner. The synthetic
-two-adapter fixtures exercise sync, streaming, cancellation and detached resume.
+`Tracker.Contract()` exposes the installed settings; `genai.NewContract(options...)`
+validates them without SDK registration. `Contract.PayloadChannels()` resolves
+output budgets and input bounds. Fixtures must derive named `PayloadEvidence.Value`
+and `ObservedEvent.Payloads` from controlled exports, alongside independent
+accounting/write expectations. See [CONTRACT.md](genai/CONTRACT.md) for evidence
+requirements and scope limits; a transport-name test alone does not establish
+numeric, outcome or privacy conformance.
 
 `Usage` uses typed `Measurement[int]` and `Measurement[float64]` fields. A zero-value measurement is absent. `Observe(0, UnitTokens, SourceMeasured)` is a known zero and creates a zero histogram observation. Sources are `SourceMeasured`, `SourceProvider`, and `SourceEstimated`; an estimate stays distinguishable in both spans and metrics. `SourceUnknown` is valid only for an absent measurement.
 
@@ -263,7 +264,7 @@ An active context can supply the parent. With `Detached: true`, recording create
 
 Request and observed response models are separate. `Operation.Model` and request scope supply the request model. Supply `OperationResult.Response: ResponseMetadata{Model: actualModel}` only when a response was observed. Completed `Meta.ResponseModel` has the same caller-evidence requirement. Missing response metadata is omitted, including errors before response. Stateless `ProviderAdapter.ParseResponse(any) (ResponseObservation, error)` returns payload, usage, response metadata, status and bounded error class; it never needs to retain request state.
 
-For streaming, `ValidateStreamingUpdate` validates intermediate cumulative usage without recording or storing totals. Only successful `Finish` commits final usage and cost. An aborted stream with missing final usage stays missing even if earlier updates contained counts. `OperationResult.Streaming` supplies TTFT measured from the same local start; `FirstTokenPresent` distinguishes unknown TTFT from a known zero. Impossible intervals are rejected before finalization and may be corrected. Concurrent successful finalization records once; further calls return `ErrFinalized`.
+For streaming, `ValidateStreamingUpdate` validates intermediate cumulative usage without recording or storing totals. Only successful `Finish` commits final usage and cost. An aborted stream with missing final usage stays missing even if earlier updates contained counts. `OperationResult.Streaming` supplies TTFT measured from the same local start; `FirstTokenPresent` distinguishes unknown TTFT from a known zero. Cancellation after the first token preserves TTFT even when final usage is absent; cancellation before it records no TTFT. See [streaming presence](genai/OUTCOMES.md#streaming-presence-and-cancellation). Impossible intervals are rejected before finalization and may be corrected. Concurrent successful finalization records once; further calls return `ErrFinalized`.
 
 `RecordStreamingCompletion` accepts a standalone final DTO with explicit usage and total duration. It is a stateless completed observation, not a deduplication handle: the producer must deliver it once. Use `StartOperation`/`Finish` when local duplicate-finalization protection is needed. TTFT is recorded only from final presence-aware timing; do not emit the same usage through both recording paths.
 
@@ -635,57 +636,16 @@ conn, err := grpc.NewClient(addr, metrygrpc.ClientDialOption(
 
 `make test` runs tests for all modules. `make test-examples` runs the examples above.
 
-## Core lifecycle and disabled async contracts
+## Disabled async recording
 
-`DoctorID` and `PatientID` helpers are removed. Define domain helpers in the host
-service using `StringAttribute`; generic `TenantID` and `SubjectID` remain.
-
-`NoopAsyncHandle()` represents explicitly disabled telemetry. It has no valid
-trace identity: `IsValid()` is false and `Marshal()` returns
-`ErrInvalidAsyncHandle` with no token. Linked recording drops it without calling
-the telemetry callback, even with an enabled provider. GenAI async results and
-feedback also drop disabled handles. GenAI causal `Links`
-ignore disabled handles, retaining real references; evaluation `TraceReference`
-requires a real valid handle and rejects a disabled one. A zero handle remains
-invalid and returns an error. Noop serialization cannot stand in for a real origin;
-unsigned real tokens require a trusted carrier or host signing.
-
-`LinkedSpanWriter` copies share synchronized state. Callback workers may write
-concurrently, but must be joined before the callback returns. The first non-nil
-`SetError` wins; nil does nothing. A callback return error remains the returned
-error and controls the failure outcome. After callback return or panic, writer
-calls are inert. A zero writer safely drops calls. Callbacks only configure
-telemetry; they must not perform business work because disabled paths skip them.
-
-Host `PayloadPolicy` and `ToolErrorClassifier` panics propagate unchanged. During
-an interval handle's `Finish`, a panic terminates that recording with error
-outcome, `error.type=unknown` and a categorical callback-failure event; later
-`Finish`/`Close` returns `ErrFinalized`. Raw panic values are never exported by
-this path, even with raw diagnostic opt-in. Normal validation errors remain
-correctable. Start/completed-result helpers sanitize and classify before creating
-their span, so a callback panic creates no observation. `RecordTraceIO` borrows
-the context span and leaves its outcome and lifetime to the host.
-
-`Provider.Shutdown(ctx)` is terminal and idempotent. Concurrent callers wait for
-the first call and receive its same result, including failure. The first context
-controls an upper timeout of ten seconds, respecting an earlier deadline. An
-already cancelled first call remains terminal; a later live context does not
-retry shutdown. Use a fresh live context after request cancellation. `FromSDK`
-borrows dependencies and never shuts down or implicitly flushes host pipelines;
-the host owns their lifecycle. Do not copy a Provider after first use.
-
-## License
-
-MIT
-
-Effective GenAI settings are available through `Tracker.Contract()` or validated without
-SDK registration by `genai.NewContract(options...)`. `Contract.PayloadChannels()` resolves
-output budgets alongside input byte, depth and entry bounds; getters return detached copies.
-Export-derived fixtures provide `PayloadEvidence.Value` for controlled span attributes and
-`ObservedEvent.Payloads` for controlled event text, rather than copying recording inputs.
-The schema identity is `metry.genai.effective`; previous profile/raw-flag checker arguments
-and JSON-only evidence are removed.
-
+`NoopAsyncHandle()` has no valid trace identity: `IsValid()` is false and
+`Marshal()` returns `ErrInvalidAsyncHandle` with no token. Linked recording,
+GenAI async results and feedback drop it without invoking telemetry callbacks.
+Causal `Links` omit disabled references; evaluation `TraceReference` requires a
+real valid reference. A zero handle remains invalid and returns an error.
+See [ownership, concurrency and nil contracts](INTEGRATION.md) and
+[handle outcomes and callback failures](genai/OUTCOMES.md). Domain helpers belong
+in the host; use `StringAttribute` to define them.
 
 ## Diagnostic privacy and security observations
 
@@ -716,3 +676,7 @@ bound; arbitrary reason text uses the provider diagnostic policy. A block action
 does not set the span to error. Recording obeys sampling: an unsampled event may
 be absent. It is not guaranteed audit storage or delivery. The old scalar
 `RecordSecurityEventWithProvider` signature is removed without wrappers.
+
+## License
+
+MIT

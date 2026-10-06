@@ -12,10 +12,12 @@ with the host. Direct host SDK writes and framework error logs are host-owned.
 |---|---|---|
 | GenAI message/tool/retrieval payload | Capture disabled until an explicit payload policy or raw opt-in; bounded JSON/text before and after sanitation | GenAI contract governs these channels; diagnostic policy does not replace it |
 | GenAI references, labels and IDs | Declared safe labels or bounded fingerprints according to reference policy | Hashing is not anonymity; host controls original labels and artifact storage |
+| GenAI metadata (operation/model/provider/server/purpose) | Declared safe values stay literal; other bounded values are fingerprinted in non-raw spans; metric labels use finite allowlists | Local scope retains originals privately; direct host attributes bypass this route |
 | Executor/HTTP panic and RPC completion error text | Neutral diagnostic policy suppresses arbitrary text; explicit sanitizer or raw mode required | Original error/result/panic identity remains with caller; default does not format arbitrary objects |
 | Exception message, stacktrace, trace status, slog err/panic | The same processed diagnostic result reaches every library-owned sink | Sanitation precedes fanout; exporter-side masking is not the library privacy mechanism |
 | Security reason | Same diagnostic policy; suppressed by default | Action/validator/code/severity are host-supplied bounded machine metadata, not content-scanned text |
 | Local Enrich span/log fields | Trusted local typed values copied into context | Host must choose safe values; local logging permission does not imply network permission |
+| HTTP URL/path, route and user-agent attributes | Upstream HTTP instrumentation behavior; these ordinary request fields do not pass through diagnostic.Policy | Host must choose safe routes/formatters and review/redact request metadata; default panic/error sanitation does not sanitize every HTTP attribute |
 | Inbound baggage and GenAI scope | No imported trust by default; explicit ingress key allowlist | A typed marker or manual OTel baggage is not evidence of trusted local origin |
 | GenAI WithScope defaults | Stored privately without span/log/baggage writes; each tracker applies metadata policy at emission | Local trust does not grant raw export; explicit Meta wins over defaults |
 | Outbound baggage | No business keys by default; explicit egress allowlist | Trace acceptance/rejection is independent of business baggage permissions |

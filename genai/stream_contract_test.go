@@ -188,3 +188,60 @@ func TestCompletedOperationEmitsFinalStreamingQuality(t *testing.T) {
 		1e-9,
 	)
 }
+
+func TestCancelledStreamPreservesObservedFirstTokenWithoutFinalUsage(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before first token", true: "after first token"}[present], func(t *testing.T) {
+			// Arrange: caller-observed stream cancellation at 100ms. First token, when
+			// observed, arrived at 20ms. Completed DTOs need no wall-clock sleeps.
+			tracker, provider, metricExporter, traceExporter := newTestTrackerWithMetrics(t)
+			streamCtx, cancel := context.WithCancel(t.Context())
+			cancel()
+			event := StreamingCompletion{
+				Meta: Meta{
+					Operation: profileChatOperation,
+					Status:    OperationStatusError,
+					ErrorType: string(ErrorClassCancelled),
+				},
+				TotalDuration:     100 * time.Millisecond,
+				FirstTokenPresent: present,
+			}
+			if present {
+				event.TTFT = 20 * time.Millisecond
+			}
+			// Act: the cancelled context still supplies explicit telemetry facts.
+			require.NoError(t, tracker.Recorder().RecordStreamingCompletion(streamCtx, event))
+			flushTestProvider(t, provider)
+			metrics := metrytest.CollectResourceMetrics(t, provider, metricExporter)
+			// Assert: outcome and final measurement presence are independent of TTFT.
+			spans := traceExporter.GetSpans()
+			require.Len(t, spans, 1)
+			require.Equal(t, "Error", spans[0].Status.Code.String())
+			require.Equal(t, string(ErrorClassCancelled), testutil.SpanStubStringAttr(t, spans[0], ErrorType))
+			for _, key := range []string{InputTokens, OutputTokens, UsageCost} {
+				require.False(t, testutil.SpanStubHasAttr(spans[0], key))
+			}
+			for _, name := range []string{InputTokenUsageMetricName, OutputTokenUsageMetricName, CostMetricName, DerivedOutputTokensPerSecondMetricName, DerivedMeanOutputTokenIntervalMetricName} {
+				metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: name})
+			}
+			require.InDelta(
+				t,
+				0.100,
+				metrytest.Float64HistogramSum(
+					t,
+					metrics,
+					metrytest.MetricSelector{Name: ObservedOperationDurationMetricName},
+				),
+				1e-9,
+			)
+			if present {
+				histogram := metrytest.FindFloat64Histogram(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName})
+				require.Len(t, histogram.DataPoints, 1)
+				require.Equal(t, uint64(1), histogram.DataPoints[0].Count)
+				require.InDelta(t, 0.020, histogram.DataPoints[0].Sum, 1e-9)
+			} else {
+				metrytest.AssertMetricAbsent(t, metrics, metrytest.MetricSelector{Name: TTFTMetricName})
+			}
+		})
+	}
+}

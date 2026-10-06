@@ -24,7 +24,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | accepted |
 | T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | accepted |
 | T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | accepted |
-| T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | pending |
+| T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | accepted |
 | T13 OTLP semantic fixture | integration checklist | Real serialized resource/scope/schema, known-zero vs unknown usage, histogram/cost, parent/link, error outcome, no raw sentinel; evidence limits documented | `test: otlp semantics` | pending |
 | T14 Full acceptance | complete DoD | `make test`, `make lint`, `make test-examples` across modules; targeted races and isolated release checks; two independent whole-DoD reviews; source/ledger statuses backed by evidence | `chore: remediation checks` | pending |
 
@@ -257,3 +257,33 @@ maps failed/skipped without score and rejects unknown states; no evaly dependenc
 runner or fabricated experiment identity. README/MIGRATION/SEMANTICS updated.
 Limits: adjacent evaly suite and external collectors/host adapters not exercised;
 no absolute absence-of-bugs claim, serialized OTLP/final acceptance remain T13/T14.
+
+T12 accepted after correcting first-review documentation findings: shared schema
+error enum includes paused but model validation rejects it; OUTCOMES now lists
+the exact model subset separately. Returned validation errors are distinguished
+from bounded malformed-tool-payload diagnostics that may finalize a valid outcome.
+Repeat independent `t12_completeness` 100%, no gaps; `t12_correctness` no unresolved
+findings. Correctness independently ran the full uncached GenAI race suite;
+completeness ran uncached stream/conformance/outcome/noop/finalization races and
+repeated affected outcome/tool/cancellation tests. Both verified 33 local prose
+links/anchors, terminal License and diff check. Parent full root race suite, root
+lint (0 issues), all 9 executable examples and targeted uncached stream/contract/
+conformance race tests passed. Only documentation changed after those checks.
+README now navigates current versioned contracts, keeps useful examples and
+release/platform/recovery link, removes ignored task14/task16 links/history and
+post-License normative duplication. One normative exported schema identity;
+conformance detail remains in CONTRACT/MIGRATION. OUTCOMES rewritten as versioned
+consumer material, covering handle/error/model/stream lifecycle and callback
+failure. INTEGRATION documents supported shared objects, host callback/DTO
+responsibility, terminal shutdown/borrowed ownership, method lifetime and precise
+nil/zero/noop distinctions. PRIVACY separates GenAI metadata, direct trusted
+Enrich, exceptions and ordinary HTTP path/user-agent channels. Conformance and
+transport-name evidence limits are explicit; real semantic wire fixture remains
+T13. StreamTimings comment now preserves known first-token timing after failure.
+AAA completed-stream fixture uses observed first token 20ms and cancellation
+100ms with an actually cancelled context, proving error/cancelled, duration
+0.100s, TTFT 0.020s or absent before first token, absent usage/cost/derived metrics.
+Same test passes on isolated old HEAD: runtime already permitted the correct
+behavior; baseline README/StreamTimings sources demonstrate contradictory
+guidance rather than a runtime regression. Limits: no external collector proof,
+all-module final/release acceptance remains T14; no absolute bug-free claim.

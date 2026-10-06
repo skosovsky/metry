@@ -44,7 +44,9 @@ type OperationResult struct {
 }
 
 // StreamTimings describes first-token timing measured by the producer from this
-// operation's start. Unknown/aborted streams leave FirstTokenPresent false.
+// operation's start. FirstTokenPresent is false only when the first token was
+// not observed or its timing is unknown. Failure/cancellation after observing
+// that token preserves its TTFT; final usage presence is independent.
 type StreamTimings struct {
 	TTFT              time.Duration
 	FirstTokenPresent bool

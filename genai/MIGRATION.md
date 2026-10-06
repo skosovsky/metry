@@ -135,6 +135,11 @@ change: these are API/declaration renames with unchanged wire semantics.
 
 ## Outcome and handle clear break
 
+`StreamTimings.FirstTokenPresent` describes observation, independently of stream
+outcome. Cancellation after a known first token preserves TTFT; missing final
+usage stays absent. The earlier aborted-stream comment was incorrect guidance,
+not a runtime restriction. See [streaming presence](OUTCOMES.md#streaming-presence-and-cancellation).
+
 The following signatures are removed, with no compatibility wrappers:
 
 - `Runtime.StartTool(ctx, call, opts...) (context.Context, ToolEnd)` and `Runtime.RecordToolResult(ctx, result)` become `Recorder.StartTool(ctx, call, opts...) (context.Context, *ToolHandle, error)` and `ToolHandle.Finish(result) error`.
