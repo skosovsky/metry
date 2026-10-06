@@ -60,9 +60,11 @@ func TestPublicAPI_ExportsTraceAndMetricOverOTLPHTTP(t *testing.T) {
 	t.Cleanup(receiver.Close)
 	ctx := context.Background()
 	endpoint := strings.TrimPrefix(receiver.URL, "http://")
-	traces, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure())
+	traces, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure(),
+		otlptracehttp.WithCompression(otlptracehttp.NoCompression), otlptracehttp.WithURLPath("/v1/traces"))
 	require.NoError(t, err)
-	metrics, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpoint(endpoint), otlpmetrichttp.WithInsecure())
+	metrics, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpoint(endpoint), otlpmetrichttp.WithInsecure(),
+		otlpmetrichttp.WithCompression(otlpmetrichttp.NoCompression), otlpmetrichttp.WithURLPath("/v1/metrics"))
 	if err != nil {
 		_ = traces.Shutdown(ctx)
 	}

@@ -25,7 +25,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | accepted |
 | T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | accepted |
 | T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | accepted |
-| T13 OTLP semantic fixture | integration checklist | Real serialized resource/scope/schema, known-zero vs unknown usage, histogram/cost, parent/link, error outcome, no raw sentinel; evidence limits documented | `test: otlp semantics` | pending |
+| T13 OTLP semantic fixture | integration checklist | Real serialized resource/scope/schema, known-zero vs unknown usage, histogram/cost, parent/link, error outcome, no raw sentinel; evidence limits documented | `test: otlp semantics` | accepted |
 | T14 Full acceptance | complete DoD | `make test`, `make lint`, `make test-examples` across modules; targeted races and isolated release checks; two independent whole-DoD reviews; source/ledger statuses backed by evidence | `chore: remediation checks` | pending |
 
 ## Planned public contracts
@@ -287,3 +287,27 @@ Same test passes on isolated old HEAD: runtime already permitted the correct
 behavior; baseline README/StreamTimings sources demonstrate contradictory
 guidance rather than a runtime regression. Limits: no external collector proof,
 all-module final/release acceptance remains T14; no absolute bug-free claim.
+
+T13 accepted after independent reviews identified environment-dependent test
+shape: very short periodic interval caused extra cumulative snapshots; exponential
+histogram and gzip settings changed the expected protobuf shape. The semantic
+fixture now fixes interval/cumulative/explicit histogram settings before SDK
+construction and explicitly selects uncompressed signal paths. Existing wire-name
+consumer also explicitly selects uncompressed paths, resolving its pre-existing
+gzip dependency. Final independent `t13_completeness` 100%, no gaps and
+`t13_correctness` no unresolved findings. Both ran the whole OTLP module under
+simultaneous external interval=1/delta/exponential/gzip with race (count=5 and
+count=20 respectively); parent whole module race count=20 and module lint
+(0 issues) passed on final diff. Diff check passed. New public external consumer
+imports neither metrytest nor internal packages and receives actual serialized
+protobuf via real OTLP HTTP exporters. One compact three-span scenario proves
+owned service/version/resource schema and GenAI scope/version/schema for both
+signals, known native integer zero vs absent final input/output/cost, histogram
+count/sum/unit/source/temporality/bucket accounting, cost double/currency/source,
+child parent and detached actual origin link, error/cancelled outcome, redaction
+and fingerprint, no raw sentinel in all serialized trace/metric requests. Cleanup
+shuts SDK down before restoring environment. INTEGRATION distinguishes this wire
+evidence from conformance expectations and unsupported counter write-count claims.
+Limits: loopback HTTP and specified controlled routes; no arbitrary host/custom
+exporter/downstream collector guarantee or absolute absence-of-bugs claim. Runtime
+unchanged; final whole-DoD/make/release acceptance remains T14.

@@ -104,8 +104,16 @@ drops it, while evaluation requires a real trace reference.
 
 The loopback OTLP consumer in `integration/otlp` exercises real SDK exporters and
 serialized protobuf names through the public API. A transport-name assertion
-alone does not establish numeric values, status, privacy or accounting. GenAI
-export-oracle/conformance fixtures cover their declared scenarios; neither layer
+alone does not establish numeric values, status, privacy or accounting.
+
+`TestPublicAPI_OTLPGenAISemantics` adds receiver-byte checks for the owned resource,
+GenAI scope/version/schema, known-zero vs absent usage, histogram counts/sums,
+currency/cost, a child parent and detached link, failed outcome and absence of a
+raw sentinel in serialized trace/metric requests. This compact fixture is an
+external public consumer and uses real OTLP exporters, not in-memory test SDKs.
+OTLP sums alone cannot prove how many counter Add calls occurred, and this fixture
+does not cover arbitrary host attributes or downstream collector transformations.
+GenAI export-oracle/conformance fixtures cover their declared scenarios; neither layer
 certifies arbitrary host attributes, custom exporters or external collector
 transformations. [CONTRACT.md](genai/CONTRACT.md) defines independent expected
 facts and exported witnesses for schema `metry.genai.semconv.e07f4eb.v1`.
