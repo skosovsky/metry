@@ -18,6 +18,8 @@ const (
 )
 
 // ToolErrorClassifier maps tool execution errors onto bounded error classes.
+// A host classifier panic propagates unchanged. An existing interval span is
+// finalized as a categorical error without exporting the panic value.
 type ToolErrorClassifier interface {
 	ClassifyToolError(error) ErrorClass
 }

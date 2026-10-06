@@ -120,6 +120,7 @@ func (h *RetrievalHandle) Finish(result RetrievalResult) error {
 	if h.finished {
 		return ErrFinalized
 	}
+	defer endRecordingOnPanic(h.span, &h.finished)
 	documents, err := prepareRetrievalDocuments(result)
 	if err != nil {
 		return err

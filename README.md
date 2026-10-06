@@ -646,6 +646,15 @@ error and controls the failure outcome. After callback return or panic, writer
 calls are inert. A zero writer safely drops calls. Callbacks only configure
 telemetry; they must not perform business work because disabled paths skip them.
 
+Host `PayloadPolicy` and `ToolErrorClassifier` panics propagate unchanged. During
+an interval handle's `Finish`, a panic terminates that recording with error
+outcome, `error.type=unknown` and a categorical callback-failure event; later
+`Finish`/`Close` returns `ErrFinalized`. Raw panic values are never exported by
+this path, even with raw diagnostic opt-in. Normal validation errors remain
+correctable. Start/completed-result helpers sanitize and classify before creating
+their span, so a callback panic creates no observation. `RecordTraceIO` borrows
+the context span and leaves its outcome and lifetime to the host.
+
 `Provider.Shutdown(ctx)` is terminal and idempotent. Concurrent callers wait for
 the first call and receive its same result, including failure. The first context
 controls an upper timeout of ten seconds, respecting an earlier deadline. An

@@ -32,14 +32,18 @@ func (t *Tracker) RecordAsyncFeedback(
 	spanOpts := append([]LinkedSpanOption{
 		metry.WithLinkedAttributes(metry.FloatAttribute(EvaluationScore, score)),
 	}, opts...)
+	// Run host sanitization before creating telemetry owned by this call.
+	if t.cfg.RecordPayloads() && feedbackText != "" {
+		feedbackText = sanitizeTextWithConfig(feedbackText, t.cfg)
+		feedbackText = truncateContextWithLimit(feedbackText, t.cfg.EventTextByteLimit())
+	}
 
 	return handle.RecordLinkedSpan(ctx, t.provider, "user_feedback", func(w metry.LinkedSpanWriter) error {
 		if t.cfg.RecordPayloads() && feedbackText != "" {
-			feedbackText = sanitizeTextWithConfig(feedbackText, t.cfg)
 			w.SetAttributes(
 				metry.StringAttribute(
 					EvaluationExplanation,
-					truncateContextWithLimit(feedbackText, t.cfg.EventTextByteLimit()),
+					feedbackText,
 				),
 			)
 		}

@@ -27,6 +27,9 @@ const (
 )
 
 // PayloadPolicy sanitizes GenAI payload before it is exported as span attributes.
+// A host policy panic propagates unchanged. If an interval handle already owns
+// a span, it is finalized with a categorical error before the panic reaches the
+// host. No raw panic value is exported, including when raw diagnostics are enabled.
 type PayloadPolicy interface {
 	SanitizePayload(payload Payload) Payload
 	SanitizeToolCall(call ToolCall) ToolCall

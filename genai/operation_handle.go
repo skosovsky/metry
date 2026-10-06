@@ -225,6 +225,7 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 	if h.finished {
 		return ErrFinalized
 	}
+	defer endRecordingOnPanic(h.span, &h.finished)
 	status, class, outcomeErr := resolveModelOutcome(result.Status, result.ErrorType)
 	if outcomeErr != nil {
 		return outcomeErr

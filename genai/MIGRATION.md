@@ -80,6 +80,16 @@ wins, nil does nothing, callback return error takes precedence. After callback
 return or panic, writer operations are inert. Zero writers safely drop calls.
 Callbacks must not own business work: disabled handles do not run them.
 
+Host payload policies and tool-error classifiers retain their panic values for
+the host. A panic during interval `Finish` now finalizes telemetry as error with
+bounded `unknown` error class and a categorical callback-failure event, without
+raw panic text even under raw diagnostic opt-in. The handle becomes terminal;
+later `Finish` or `Close` returns `ErrFinalized`. Ordinary validation errors stay
+correctable. Callbacks in start/completed-result paths, including async feedback
+sanitization, run before a new span is created. `RecordTraceIO` does not own the
+borrowed span and never ends it on callback failure. Diagnostic-policy sanitizer
+failures retain their existing guarded, fail-closed behavior.
+
 Provider owns configuration, lazy instruments and shutdown state. Owned shutdown
 is terminal/idempotent; concurrent callers await the same first result even on
 failure. The first cancelled context remains terminal. Use a fresh live shutdown

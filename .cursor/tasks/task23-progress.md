@@ -22,7 +22,7 @@ reports. Any fix triggers both reviews again. Record reports and validation here
 | T07 Private GenAI scope | R06 | Package/Tracker scope and direct Meta sentinel privacy across parent/child/logs; originals survive merge, safe/raw opt-in, local precedence/remote trust | `fix: scope privacy` | accepted |
 | T08 GenAI API cleanup | D01–D06 | Schema descriptor separate from runtime settings, intact conformance/introspection, typed SDK scope/schema/version, recorder naming, validation-only updates, single presence-aware TTFT owner, byte-limit names; removals migrated everywhere | `refactor: genai contracts` | accepted |
 | T09 Core API and lifecycle cleanup | D07–D11 | Domain helpers and unused maps removed; disabled async cannot cause fake links; concurrent writer AAA/race and nil behavior; terminal shutdown/lifetime docs and tests | `refactor: core lifecycle` | accepted |
-| T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | pending |
+| T10 Callback failure safety | D14 | All host callback paths audited; panic preserves host panic, completes owned span with bounded categorical error, never raw panic/success; regression evidence | `fix: callback lifetime` | accepted |
 | T11 Independent evaluation provenance | D15 | Online grader/target references without fabricated experiment tuple; experiment tuple remains complete; validation/export privacy and BYOT adapter example | `fix: evaluation provenance` | pending |
 | T12 Consumer documentation and stream semantics | R07, R08, documentation checklist | One normative schema ID, useful docs consolidated, stable versioned links, migration and all examples accurate; privacy matrix and concurrency/lifetime/nil/noop ownership; cancelled stream with/without observed TTFT AAA | `docs: telemetry contracts` | pending |
 | T13 OTLP semantic fixture | integration checklist | Real serialized resource/scope/schema, known-zero vs unknown usage, histogram/cost, parent/link, error outcome, no raw sentinel; evidence limits documented | `test: otlp semantics` | pending |
@@ -210,3 +210,27 @@ retained. Provider ownership, callback lifetime, disabled and migration contract
 documented. Limits: no absolute absence-of-bugs claim; deadline enforcement needs
 SDK dependencies to honor context, and unsigned origin authenticity belongs to
 the host. Cross-module final acceptance remains T14.
+
+T10 accepted by independent `t10_completeness` (100%, no gaps) and
+`t10_correctness` (no unresolved findings). Completeness independently ran
+GenAI/diagnostic and full root race suites; correctness ran uncached GenAI race
+tests and checked the baseline failure log. Parent full root race, final
+GenAI/diagnostic race, root lint (0 issues), gRPC/OTLP module tests, all 9 examples
+and diff check passed. Isolated pre-change HEAD reproduces six unended interval
+spans and a feedback linked span exporting raw panic under diagnostic raw opt-in.
+Current AAA matrix covers tool payload/classifier, operation payload, retrieval/
+agent/workflow classifier failures; six prestart paths and three borrowed-origin
+paths. Owned interval handles terminate with error/unknown and the existing
+declared rejected-observation event (callback/panic); original panic reaches host,
+no raw value exported, later calls return ErrFinalized. End uses a closure to
+avoid SDK's automatic raw exception capture on a directly deferred End.
+Callback audit: tool-call and retrieval-query sanitation precede start; completed
+interaction/operation, completion adapters and streaming completion sanitize
+before their new span; evaluation reasoning precedes start; async-result
+classification precedes linked span; feedback sanitation now precedes linked
+span; TraceIO borrows host span without ending/mutating outcome on panic. Tool,
+operation, retrieval and invocation Finish are guarded before callbacks under
+the handle mutex. Normal validation errors stay correctable. Diagnostic-policy
+guarded fail-closed behavior and its existing tests are unchanged. API/README/
+migration document the contract. Limits: no external collector or faulty SDK/
+exporter guarantee, no absolute absence-of-bugs claim; final acceptance is T14.

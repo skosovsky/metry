@@ -88,6 +88,7 @@ func (h *ToolHandle) Finish(result ToolResult) error {
 	if h.finished {
 		return ErrFinalized
 	}
+	defer endRecordingOnPanic(h.span, &h.finished)
 	status, errorType, err := resolveToolOutcome(h.tracker, result.Status, result.Err, result.ErrorClass)
 	if err != nil {
 		return err
