@@ -22,7 +22,9 @@ Signing configuration is honored; signing failure aborts the isolated release.
 The workflow uses Bash 3.2+, Git, Go and portable awk/sed/sort utilities on macOS
 and Linux. No BSD-only in-place sed option or GNU version-sort extension is used.
 `make test-release` exercises a temporary local repo and bare remote without
-network publication. macOS Bash 3.2 and current Bash can run the same suite;
+network publication. The suite discards inherited process-level Git configuration
+overrides and permits only the file transport, preventing host remote/credential
+overrides from reaching synthetic repositories. macOS Bash 3.2 and current Bash can run the same suite;
 the Linux CI job runs it as well. A local macOS pass alone is not Linux evidence.
 
 On failure or cancellation the temporary checkout is removed. No development

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # AAA regression scenarios; uses only temporary local repositories and bare remotes.
 set -euo pipefail
+# Never inherit process-level remote/credential overrides into synthetic repos.
+# Even an accidental remote URL must not permit network publication from fixtures.
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_CONFIG GIT_CONFIG_SYSTEM
+export GIT_ALLOW_PROTOCOL=file
 SCRIPT=$(cd "$(dirname "$0")" && pwd)/release.sh
 SUITE=$(mktemp -d "${TMPDIR:-/tmp}/metry-release-tests.XXXXXX")
 trap 'rm -rf "$SUITE"' EXIT
