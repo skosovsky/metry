@@ -610,6 +610,7 @@ Primary examples (run via `make test-examples`):
 | `examples/executor`         | Root `metry.ExecutorWrap` for generic executors                           |
 | `examples/genai_recorder`   | `genai.Recorder` + payload policy + trace snapshot + tool lifecycle        |
 | `examples/genai_standalone` | Model/tool/retrieval without causal IDs, experiments or execution store |
+| `examples/observation_mapping` | Host types, explicit usage/outcome/evaluation mapping and atomic terminal metadata |
 | `examples/agent_workflow` | Standalone, local/hosted agents, two-agent workflow, fan-in, detached resume, retrieval references and late evaluation |
 
 Adapter-level examples, kept to exercise low-level APIs:
@@ -680,3 +681,5 @@ be absent. It is not guaranteed audit storage or delivery. The old scalar
 ## License
 
 MIT
+
+Host-owned usage/outcome/evaluation mapping and portable consumer gates: [integration mapping](genai/INTEGRATION_MAPPING.md).

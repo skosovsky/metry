@@ -287,3 +287,13 @@ keeps whole documents and leaves the count intact; no URI fetching or body stora
 Default references remain protected independently of content capture permission.
 `Contract.RawEnabled()` describes permitted raw content capture, not the separate
 `Contract.ReferenceRawEnabled()` fact. Passing fixture checks covers observed scenarios only.
+
+## Terminal host metadata
+
+Change custom interfaces or method values from `Finish(OperationResult) error`
+to `Finish(OperationResult, ...metry.Attribute) error`. Move terminal SDK
+attribute writes into `handle.Finish(result, checkedHostAttributes...)` so status,
+usage and host metadata belong to the same accepted result under concurrency.
+Single-argument calls still compile; no legacy method or wrapper is retained.
+Host attributes still require host-owned sanitation. Operation outcome, provider
+outcome and domain success remain separate; see [mapping](INTEGRATION_MAPPING.md).

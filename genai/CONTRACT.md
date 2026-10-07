@@ -56,3 +56,5 @@ exact OTel types, including when expected values are zero, false or empty.
 Channel `BudgetSetting` names are `payload_byte_limit` and `event_text_byte_limit`,
 matching `WithPayloadByteLimit` and `WithEventTextByteLimit`. These declaration
 names do not change the fixed schema or exported telemetry names.
+
+Host-owned usage/outcome/evaluation mapping and portable consumer gates: [integration mapping](INTEGRATION_MAPPING.md).

@@ -134,3 +134,5 @@ facts and exported witnesses for schema `metry.genai.semconv.e07f4eb.v1`.
 No deprecated aliases, legacy token-format branch, or compatibility package is
 provided. Tokens retain their JSON shape; HTML escaping is disabled before base64
 encoding so every supported W3C tracestate fits the corrected bounds.
+
+Host-owned usage/outcome/evaluation mapping and portable consumer gates: [integration mapping](genai/INTEGRATION_MAPPING.md).

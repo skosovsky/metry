@@ -28,7 +28,7 @@ test:
 	done
 
 test-examples:
-	@for d in examples/enrich examples/propagation_map examples/async_handle examples/metrics_registry examples/scope examples/executor examples/genai_recorder examples/genai_standalone examples/agent_workflow; do \
+	@for d in examples/enrich examples/propagation_map examples/async_handle examples/metrics_registry examples/scope examples/executor examples/genai_recorder examples/genai_standalone examples/agent_workflow examples/observation_mapping; do \
 		echo "test-example - $$d"; \
 		(cd "$$d" && $(GO) run .) || exit 1; \
 	done
@@ -69,3 +69,7 @@ release-patch: lint test test-release ## v0.5.0 -> v0.5.1
 release-break: lint test test-release ## v0.5.1 -> v0.6.0
 	@chmod +x ./scripts/release.sh
 	@./scripts/release.sh break "$(RELEASE_MODULES)"
+
+.PHONY: test-observation-published
+test-observation-published:
+	@bash scripts/test_observation_published.sh

@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    tags: [ "v*" ]
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
@@ -60,3 +61,15 @@ jobs:
       - name: Test isolated release workflow
         if: matrix.module == '.'
         run: make test-release
+
+  published-observation-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Test the published dependency set without workspace replacements
+        env:
+          METRY_RELEASE_REF: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+        run: make test-observation-published

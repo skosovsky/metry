@@ -151,3 +151,5 @@ when content capture is disabled, including retrieval provenance and invocation
 IDs. `Contract.RawEnabled()` describes content capture permission; `Contract.ReferenceRawEnabled()` reports reference raw
 permission independently. Raw or custom callbacks do not certify anonymity.
 See [CONTRACT.md](CONTRACT.md), [MIGRATION.md](MIGRATION.md) and root [PRIVACY.md](../PRIVACY.md).
+
+Host-owned usage/outcome/evaluation mapping and portable consumer gates: [integration mapping](INTEGRATION_MAPPING.md).

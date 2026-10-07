@@ -79,3 +79,5 @@ or direct host SDK/exporter writes remain outside this wrapper's guarantee.
 
 There is no authentication, authorization, token cryptography, moderation,
 validator execution, durable audit store or framework-specific policy engine.
+
+Host-owned usage/outcome/evaluation mapping and portable consumer gates: [integration mapping](genai/INTEGRATION_MAPPING.md).

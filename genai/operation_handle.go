@@ -216,7 +216,10 @@ func recordingLinks(ctx context.Context, options RecordingOptions) ([]trace.Link
 // Finish validates a final result before any outcome/usage writes. Concurrent
 // successful finishes record once; later callers receive ErrFinalized. Business
 // execution results remain the caller's responsibility even on telemetry error.
-func (h *OperationHandle) Finish(result OperationResult) error {
+// Host attributes are committed with the accepted result after validation, never
+// by rejected/repeated callers. As with RecordOperation, callers must sanitize
+// extra attributes themselves; they are outside the controlled payload policy.
+func (h *OperationHandle) Finish(result OperationResult, attrs ...metry.Attribute) error {
 	if h == nil || h.started.IsZero() {
 		return invalidObservation("recording", "missing")
 	}
@@ -262,6 +265,9 @@ func (h *OperationHandle) Finish(result OperationResult) error {
 		return err
 	}
 	h.finished = true
+	if extra := metryAttributesToOTel(attrs); len(extra) > 0 {
+		h.span.SetAttributes(extra...)
+	}
 	meta.Status = Outcome(status)
 	meta.ErrorType = class
 	meta.ResponseModel = result.Response.Model

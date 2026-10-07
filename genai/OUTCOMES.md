@@ -90,3 +90,10 @@ case invents token usage or cost; derived throughput requires known final output
 tokens and a positive generation window. Timing presence and final usage presence
 are independent. Record these facts explicitly; cancelling a context alone does
 not finalize a recording handle or infer an error outcome.
+
+Host-owned usage/outcome/evaluation mapping and portable consumer gates: [integration mapping](INTEGRATION_MAPPING.md).
+
+`OperationHandle.Finish(result, attrs...)` commits optional host terminal metadata
+under the finalization mutex after validation. Repeated/rejected callers do not
+write these fields. Host attributes are outside payload policy and must be
+sanitized before calling. See the mapping example for finite provider/domain facts.
