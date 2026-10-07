@@ -12,6 +12,10 @@
 
 version: "2"
 
+run:
+  # Wait for another local runner instead of failing a release on lock contention.
+  allow-serial-runners: true
+
 issues:
   # Maximum count of issues with the same text.
   # Set to 0 to disable.
