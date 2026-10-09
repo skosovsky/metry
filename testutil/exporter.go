@@ -190,6 +190,7 @@ func deepCopyMetrics(m metricdata.Metrics) metricdata.Metrics {
 		Name:        m.Name,
 		Description: m.Description,
 		Unit:        m.Unit,
+		Data:        nil,
 	}
 	switch d := m.Data.(type) {
 	case metricdata.Sum[int64]:
@@ -212,8 +213,11 @@ func deepCopyMetrics(m metricdata.Metrics) metricdata.Metrics {
 
 func deepCopyExemplar[N int64 | float64](ex metricdata.Exemplar[N]) metricdata.Exemplar[N] {
 	exCopy := metricdata.Exemplar[N]{
-		Time:  ex.Time,
-		Value: ex.Value,
+		FilteredAttributes: nil,
+		Time:               ex.Time,
+		Value:              ex.Value,
+		SpanID:             nil,
+		TraceID:            nil,
 	}
 	if len(ex.FilteredAttributes) > 0 {
 		exCopy.FilteredAttributes = make([]attribute.KeyValue, len(ex.FilteredAttributes))
@@ -234,6 +238,7 @@ func deepCopyDataPointInt64(dp metricdata.DataPoint[int64]) metricdata.DataPoint
 		StartTime:  dp.StartTime,
 		Time:       dp.Time,
 		Value:      dp.Value,
+		Exemplars:  nil,
 	}
 	if len(dp.Exemplars) > 0 {
 		out.Exemplars = make([]metricdata.Exemplar[int64], len(dp.Exemplars))
@@ -250,6 +255,7 @@ func deepCopyDataPointFloat64(dp metricdata.DataPoint[float64]) metricdata.DataP
 		StartTime:  dp.StartTime,
 		Time:       dp.Time,
 		Value:      dp.Value,
+		Exemplars:  nil,
 	}
 	if len(dp.Exemplars) > 0 {
 		out.Exemplars = make([]metricdata.Exemplar[float64], len(dp.Exemplars))
@@ -297,6 +303,7 @@ func deepCopyHistogramDataPointFloat64(
 		Min:          dp.Min,
 		Max:          dp.Max,
 		Sum:          dp.Sum,
+		Exemplars:    nil,
 	}
 	if len(dp.Exemplars) > 0 {
 		out.Exemplars = make([]metricdata.Exemplar[float64], len(dp.Exemplars))
@@ -318,6 +325,7 @@ func deepCopyHistogramDataPointInt64(dp metricdata.HistogramDataPoint[int64]) me
 		Min:          dp.Min,
 		Max:          dp.Max,
 		Sum:          dp.Sum,
+		Exemplars:    nil,
 	}
 	if len(dp.Exemplars) > 0 {
 		out.Exemplars = make([]metricdata.Exemplar[int64], len(dp.Exemplars))

@@ -578,7 +578,7 @@ func metryAttributesToOTel(attrs []metry.Attribute) []attribute.KeyValue {
 			if value, ok := attr.Int64Value(); ok {
 				out = append(out, attribute.Int64(key, value))
 			}
-		default:
+		case metry.AttributeKindString:
 			if value, ok := attr.StringValue(); ok {
 				out = append(out, attribute.String(key, value))
 			}

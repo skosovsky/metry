@@ -1,3 +1,5 @@
+//go:build integration
+
 package metry_test
 
 import (
@@ -11,7 +13,7 @@ import (
 	"github.com/skosovsky/metry/metrytest"
 )
 
-func TestNew_NoMetricExporter_TrackerWorksViaPublicAPI(t *testing.T) {
+func TestIntegrationNew_NoMetricExporter_TrackerWorksViaPublicAPI(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("test-no-metrics-tracker"))
 
@@ -34,7 +36,7 @@ func TestNew_NoMetricExporter_TrackerWorksViaPublicAPI(t *testing.T) {
 	require.NoError(t, provider.Shutdown(ctx))
 }
 
-func TestNew_WithHintSampler_RequiresKeepHintToExport(t *testing.T) {
+func TestIntegrationNew_WithHintSampler_RequiresKeepHintToExport(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t,
 		metry.WithServiceName("test-hint-sampler"),
@@ -57,7 +59,7 @@ func TestNew_WithHintSampler_RequiresKeepHintToExport(t *testing.T) {
 	require.Equal(t, "span-with-hint", spans[0].Name)
 }
 
-func TestNew_WithHintSampler_PropagatesSampledParentDecision(t *testing.T) {
+func TestIntegrationNew_WithHintSampler_PropagatesSampledParentDecision(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t,
 		metry.WithServiceName("test-hint-parent"),

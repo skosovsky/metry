@@ -1,3 +1,5 @@
+//go:build e2e
+
 package metry_test
 
 import (
@@ -12,7 +14,7 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestMetricsRegistry_TraceSnapshotWorkerFlow(t *testing.T) {
+func TestE2EMetricsRegistry_TraceSnapshotWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	memMetric := testutil.NewInMemoryMetricExporter()
 	provider, err := metry.New(ctx,

@@ -37,5 +37,5 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 )
 
-// This module is a local external-consumer test fixture, never a published integration.
+// Development tests use the local root; release candidates use the matching module version.
 replace github.com/skosovsky/metry => ../..

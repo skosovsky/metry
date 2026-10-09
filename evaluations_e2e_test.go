@@ -1,3 +1,5 @@
+//go:build e2e
+
 package metry_test
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestEvaluations_TraceSnapshotWorkerFlow(t *testing.T) {
+func TestE2EEvaluations_TraceSnapshotWorkerFlow(t *testing.T) {
 	// Arrange.
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("evaluations-e2e"))

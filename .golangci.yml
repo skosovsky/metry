@@ -1,7 +1,7 @@
 # This file is licensed under the terms of the MIT license https://opensource.org/license/mit
 # Copyright (c) 2021-2025 Marat Reimers
 
-## Golden config for golangci-lint v2.11.3
+## Golden config for golangci-lint v2.14.0
 #
 # This is the best config for golangci-lint based on my experience and opinion.
 # It is very strict, but not extremely strict.
@@ -11,10 +11,6 @@
 # Based on https://github.com/maratori/golangci-lint-config
 
 version: "2"
-
-run:
-  # Wait for another local runner instead of failing a release on lock contention.
-  allow-serial-runners: true
 
 issues:
   # Maximum count of issues with the same text.
@@ -39,6 +35,7 @@ formatters:
       # A list of prefixes, which, if set, checks import paths
       # with the given prefixes are grouped after 3rd-party packages.
       # Default: []
+      # Project-specific import grouping; keep shared lint rules unchanged.
       local-prefixes:
         - github.com/skosovsky/metry
 
@@ -242,8 +239,6 @@ linters:
       check:
         - switch
         - map
-      # A default branch is enough for switches over open sets (e.g. reflect.Kind).
-      default-signifies-exhaustive: true
 
     exhaustruct_v5:
       # List of regular expressions to match type names that should be excluded from processing.
@@ -277,8 +272,6 @@ linters:
         - ^golang.org/x/tools/go/analysis.Analyzer$
         - ^google.golang.org/protobuf/.+Options$
         - ^gopkg.in/yaml.v3.Node$
-        # OTel SDK metric snapshots: fields evolve with SDK releases; testutil deep-copies intentionally.
-        - ^go\.opentelemetry\.io/otel/sdk/metric/metricdata\..+$
       # Allows empty structures in return statements.
       # Default: false
       allow-empty-returns: true
@@ -308,6 +301,11 @@ linters:
       # Default: 30 (but we recommend 10-20)
       min-complexity: 20
 
+    gomoddirectives:
+      # Nested middleware and OTLP modules use `replace ... => ../..`;
+      # `make lint` runs golangci per module with cwd = that directory, so path-based issue excludes for go.mod do not apply.
+      replace-local: true
+
     gocritic:
       # Settings passed to gocritic.
       # The settings key is the name of a supported gocritic checker.
@@ -321,11 +319,6 @@ linters:
           # Whether to skip (*x).method() calls where x is a pointer receiver.
           # Default: true
           skipRecvDeref: false
-
-    gomoddirectives:
-      # Root go.work + nested modules (adapters/*, contracts/*) use `replace ... => ../..`;
-      # `make lint` runs golangci per module with cwd = that directory, so path-based issue excludes for go.mod do not apply.
-      replace-local: true
 
     godoclint:
       # List of rules to enable in addition to the default set.
@@ -383,6 +376,7 @@ linters:
         - os.WriteFile
         - prometheus.ExponentialBuckets.*
         - prometheus.LinearBuckets
+        # Explicit histogram cutoffs are declarative metric schema data.
         - metric.WithExplicitBucketBoundaries
 
     nakedret:
@@ -485,7 +479,9 @@ linters:
       - path: '.*_test\.go$'
         linters: [ forbidigo ]
       - path: 'examples/'
-        linters: [ forbidigo, exhaustruct_v5 ]
+        linters:
+          - forbidigo
+          - exhaustruct_v5
       - path: '_test\.go'
         linters:
           - bodyclose
@@ -497,21 +493,9 @@ linters:
           - noctx
           - wrapcheck
           - exhaustruct_v5
-      # Adapter modules use replace github.com/skosovsky/ragy => ../.. for local workspace dev.
-      - path: '^adapters/.*/go\.mod$'
-        linters: [ gomoddirectives ]
-      # contracts/* submodules use replace github.com/skosovsky/toolsy => ../.. for local workspace dev.
-      - path: '^contracts/.*/go\.mod$'
-        linters: [ gomoddirectives ]
-      # Public OTel attribute.Key globals and init/session infrastructure are intentional API surface.
-      - path: '(genai|security)/attributes\.go$'
+      # Public OTel attribute keys are intentional package-level API declarations.
+      - path: '^(genai|security)/attributes\.go$'
         linters: [ gochecknoglobals ]
-      - path: 'init_session\.go$'
-        linters: [ gochecknoglobals ]
-      - path: 'internal/defaultslot/slot\.go$'
-        linters: [ gochecknoglobals ]
-      # Import-cycle break: wire hooks assigned once from wire_init.go; type assertions are test-only bridges.
-      - path: '(wire_init\.go|internal/genaiwire/wire\.go|internal/metrytestwire/wire\.go)$'
+      # Initialization hooks break package import cycles and are assigned once.
+      - path: '^(wire_init\.go|internal/(genaiwire|metrytestwire)/wire\.go)$'
         linters: [ gochecknoglobals, gochecknoinits, reassign ]
-      - path: 'metrytest/provider_deps\.go$'
-        linters: [ errcheck ]

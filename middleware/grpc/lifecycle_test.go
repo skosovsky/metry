@@ -1,3 +1,5 @@
+//go:build integration
+
 package grpc
 
 import (
@@ -44,7 +46,7 @@ func (h *observedHealth) Watch(_ *healthpb.HealthCheckRequest, stream healthpb.H
 	return status.FromContextError(stream.Context().Err()).Err()
 }
 
-func TestGRPCLifecycle_UnaryErrorAndStreamingCancellation(t *testing.T) {
+func TestIntegrationGRPCLifecycle_UnaryErrorAndStreamingCancellation(t *testing.T) {
 	// Arrange.
 	provider, exporter := metrytest.NewTestProvider(t)
 	ctx, end, err := provider.StartSpan(context.Background(), "test", "caller")

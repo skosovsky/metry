@@ -19,7 +19,7 @@ Current consumer contracts: [SDK ownership and concurrency](INTEGRATION.md),
 [privacy boundaries](PRIVACY.md), [GenAI semantics and schema version](genai/SEMANTICS.md),
 [effective contract and conformance](genai/CONTRACT.md), [outcomes and streaming](genai/OUTCOMES.md),
 and [breaking-change migration](genai/MIGRATION.md).
-Maintainers: [isolated release, supported platforms and recovery](scripts/RELEASE.md).
+Maintainers: [isolated release, supported platforms and recovery](docs/release/runbook.md).
 
 HTTP and generic execution use root `metry.HTTPHandler` and `metry.ExecutorWrap`. gRPC is an optional integration module; core does not import gRPC. See [integration and clear-break migration](INTEGRATION.md).
 
@@ -600,7 +600,7 @@ Metrics use meter scope `github.com/skosovsky/metry/middleware/executor`:
 
 A minimal runnable sample lives in `examples/executor`.
 
-Primary examples (run via `make test-examples`):
+Primary examples (run by `make test-integration`):
 
 | Example                     | Demonstrates                                                              |
 | --------------------------- | ------------------------------------------------------------------------- |
@@ -635,7 +635,12 @@ conn, err := grpc.NewClient(addr, metrygrpc.ClientDialOption(
 
 ## Testing
 
-`make test` runs tests for all modules. `make test-examples` runs the examples above.
+`make test` runs fresh unit race tests for every discovered module.
+`make test-integration` runs real OTLP/gRPC transports, SDK composition, executable
+examples and external consumers of current source artifacts. `make test-e2e` runs
+worker/snapshot flows. Profiles use matching build tags and test-name prefixes.
+See [verification commands and prerequisites](docs/verification.md) and the
+[release runbook](docs/release/runbook.md).
 
 ## Disabled async recording
 

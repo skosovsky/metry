@@ -1,3 +1,5 @@
+//go:build integration
+
 package otlp_test
 
 import (
@@ -20,7 +22,7 @@ import (
 )
 
 // This consumer deliberately imports neither metrytest nor metry/internal.
-func TestPublicAPI_ExportsTraceAndMetricOverOTLPHTTP(t *testing.T) {
+func TestIntegrationPublicAPI_ExportsTraceAndMetricOverOTLPHTTP(t *testing.T) {
 	// Arrange: a real loopback OTLP protobuf receiver.
 	var mu sync.Mutex
 	var traceNames, metricNames []string

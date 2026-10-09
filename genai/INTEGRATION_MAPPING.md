@@ -121,14 +121,14 @@ writing. See [privacy](../PRIVACY.md) and [SDK ownership](../INTEGRATION.md).
 
 ## Consumer gates and migration
 
-`make test-observation-published` copies the same portable consumer fixtures to
-a clean temporary module, resolves the published modules with `GOWORK=off`, and
-rejects local replaces. `METRY_RELEASE_REF` selects an exact published release;
-CI resolves the latest published root module by default and records the resolved
-module graph. The checkout and published gates have independent results. After
-release, repeat the gate with the published tag explicitly selected. Expectations
-are literals justified by this contract; changing a dependency cannot regenerate
-expected output. No source protocol JSON is introduced by these examples.
+`make test-integration` prepares module artifacts from the current source and
+runs the same observation mapping and OTLP/gRPC semantics against fresh consumers
+with `GOWORK=off` and no replacements. Every discovered module participates.
+`make test-live` separately verifies an explicit published baseline (`v0.10.0`);
+`METRY_PUBLISHED_VERSION` selects another published version. Historical baseline
+success does not certify the current candidate. Expectations are literals justified
+by this contract; changing dependencies cannot regenerate them. See
+[verification](../docs/verification.md). No source protocol JSON is introduced.
 
 Consumers should replace status casts with the outcome table, pass explicit
 measurements, assign one owner per attempt, and finish streams on terminal events.
@@ -151,5 +151,5 @@ No compatibility wrapper or second recording path is introduced.
 | Checkout / newly published contract | All mapping and OTLP fixtures pass |
 | Older contract lacking variadic Finish | Live terminal fixture does not compile; this is the declared API break |
 
-The published CI gate must pass against the newly published contract; older-set
-failure is not counted as new-release evidence and expectations are not relaxed.
+The source artifact gate must pass against the current contract; historical published
+baselines are separate evidence and expectations are not relaxed.

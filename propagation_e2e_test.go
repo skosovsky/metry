@@ -1,3 +1,5 @@
+//go:build e2e
+
 package metry_test
 
 import (
@@ -14,7 +16,7 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestPropagation_ProtocolCarrierBoundary(t *testing.T) {
+func TestE2EPropagation_ProtocolCarrierBoundary(t *testing.T) {
 	ctx := context.Background()
 	policy, policyErr := propagation.NewPolicy(
 		propagation.PolicyConfig{
@@ -67,7 +69,7 @@ func TestPropagation_ProtocolCarrierBoundary(t *testing.T) {
 	assert.Equal(t, producer.SpanContext.SpanID(), consumer.Parent.SpanID())
 }
 
-func TestAsyncHandle_LinkedSpanCallback(t *testing.T) {
+func TestE2EAsyncHandle_LinkedSpanCallback(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("async-handle-e2e"))
 

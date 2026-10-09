@@ -1,3 +1,5 @@
+//go:build integration
+
 package grpc
 
 import (
@@ -47,7 +49,7 @@ func (h *trustHealth) Check(
 	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
 }
 
-func TestGRPCTrust_RealTransportBaggageSamplingAndLogs(t *testing.T) {
+func TestIntegrationGRPCTrust_RealTransportBaggageSamplingAndLogs(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
 		allow, sampled, reject bool

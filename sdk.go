@@ -90,12 +90,12 @@ func nilDependency(dep any) bool {
 		return true
 	}
 	v := reflect.ValueOf(dep)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+	kind := v.Kind()
+	if kind == reflect.Chan || kind == reflect.Func || kind == reflect.Interface ||
+		kind == reflect.Map || kind == reflect.Pointer || kind == reflect.Slice {
 		return v.IsNil()
-	default:
-		return false
 	}
+	return false
 }
 
 // newProviderFromDeps is a test-only partial provider: it deliberately permits nil dependencies.

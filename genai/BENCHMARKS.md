@@ -24,5 +24,6 @@ performance threshold. Repeated runs depend on machine load and SDK batching.
 `make fuzz FUZZTIME=2s` executed all four targets independently:
 `FuzzParseAsyncHandle`, `FuzzParseTraceSnapshot`, `FuzzBoundedJSON`, and
 `FuzzPayloadSanitizer`. The smoke run passed, as did the complete race-test,
-lint and example gates. Longer campaigns use the same target with a longer
-`FUZZTIME`; `FUZZPARALLEL` defaults to 2.
+lint and example gates. These are historical command options. The current `make fuzz` uses the standard
+30-second campaign per discovered target; longer campaigns use explicit `go test`
+arguments. See [verification](../docs/verification.md).

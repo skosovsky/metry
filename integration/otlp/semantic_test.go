@@ -1,3 +1,5 @@
+//go:build integration
+
 package otlp_test
 
 import (
@@ -61,7 +63,7 @@ func (s *semanticReceiver) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-protobuf")
 }
 
-func TestPublicAPI_OTLPGenAISemantics(t *testing.T) {
+func TestIntegrationPublicAPI_OTLPGenAISemantics(t *testing.T) {
 	// Arrange: external public consumer, real exporters and loopback protobuf wire.
 	// Explicit flush supplies the single cumulative snapshot under assertion.
 	// External exporter settings must not schedule extra snapshots or change it.

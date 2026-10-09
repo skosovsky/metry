@@ -1,3 +1,5 @@
+//go:build e2e
+
 package metry_test
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
+func TestE2EGenAIScope_TraceSnapshotWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("genai-scope-e2e"))
 

@@ -44,9 +44,10 @@ func (a Attribute) attrType() string {
 		return "bool"
 	case AttributeKindInt:
 		return "int"
-	default:
+	case AttributeKindString:
 		return "string"
 	}
+	return "string"
 }
 
 // Kind returns the typed kind of the attribute value.

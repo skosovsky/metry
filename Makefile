@@ -1,75 +1,103 @@
-GO      := go
-FUZZTIME ?= 30s
-FUZZPARALLEL ?= 2
-MODULES := $(shell find . -type d \( -name ".*" -not -name "." -o -name "vendor" \) -prune -o -type f -name "go.mod" -exec dirname {} \;)
-# Consumer fixtures are tested and linted but are not published modules.
-RELEASE_MODULES := $(filter-out ./integration/%,$(MODULES))
+export GOWORK := off
+MODULES := $(sort $(patsubst ./%,%,$(shell find . -type d \( -name '.*' ! -name '.' -o -name vendor \) -prune -o -type f -name go.mod -exec dirname {} \;)))
 
-.PHONY: lint fix test test-examples test-release bench bench-hotpath fuzz cover release-patch release-break
+.PHONY: test test-integration test-e2e test-live cover bench fuzz
+.PHONY: lint fix modules
+.PHONY: release-patch release-break release-inspect release-resume release-finish
 
-lint:
-	@for dir in $(MODULES); do \
-		echo "golangci-lint - $$dir"; \
-		(cd "$$dir" && golangci-lint run ./...) || exit 1; \
-	done
-
-fix:
-	@if [ -f "go.work" ]; then $(GO) work sync; fi
-	@for dir in $(MODULES); do \
-		echo "fix & tidy - $$dir"; \
-		(cd "$$dir" && $(GO) fix ./... && $(GO) mod tidy) || exit 1; \
-		(cd "$$dir" && golangci-lint run --fix ./...) || exit 1; \
-	done
-
+# Run fresh unit tests with the race detector.
 test:
-	@for dir in $(MODULES); do \
-		echo "test - $$dir"; \
-		(cd "$$dir" && $(GO) test -v -race ./...) || exit 1; \
+	@for module in $(MODULES); do \
+		printf '\n[test] %s\n' "$$module"; \
+		(cd "$$module" && go test -race -count=1 ./...) || exit $$?; \
 	done
 
-test-examples:
-	@for d in examples/enrich examples/propagation_map examples/async_handle examples/metrics_registry examples/scope examples/executor examples/genai_recorder examples/genai_standalone examples/agent_workflow examples/observation_mapping; do \
-		echo "test-example - $$d"; \
-		(cd "$$d" && $(GO) run .) || exit 1; \
+# Run integration tests (integration tag, TestIntegration prefix).
+test-integration:
+	@for module in $(MODULES); do \
+		printf '\n[integration] %s\n' "$$module"; \
+		(cd "$$module" && go test -race -count=1 -timeout=30m -tags=integration -run='^TestIntegration' ./...) || exit $$?; \
 	done
 
-bench:
-	@for dir in $(MODULES); do \
-		echo "bench - $$dir"; \
-		(cd "$$dir" && $(GO) test -bench=. -run=^$$ ./...) || exit 1; \
+# Run end-to-end tests (e2e tag, TestE2E prefix).
+test-e2e:
+	@for module in $(MODULES); do \
+		printf '\n[e2e] %s\n' "$$module"; \
+		(cd "$$module" && go test -race -count=1 -timeout=30m -tags=e2e -run='^TestE2E' ./...) || exit $$?; \
 	done
 
-fuzz:
-	@for dir in $(MODULES); do \
-		echo "fuzz - $$dir"; \
-		(cd "$$dir" && \
-			for pkg in $$($(GO) list -tags=fuzz ./...); do \
-				targets=$$($(GO) test -tags=fuzz -list '^Fuzz' "$$pkg") || exit 1; \
-				for target in $$(printf '%s\n' "$$targets" | sed -n '/^Fuzz[A-Za-z0-9_]*$$/p'); do \
-					echo "fuzz - $$pkg/$$target"; \
-					$(GO) test -tags=fuzz -run='^$$' -fuzz="^$$target$$" -fuzztime=$(FUZZTIME) -parallel=$(FUZZPARALLEL) "$$pkg" || exit 1; \
-				done; \
-			done \
-		) || exit 1; \
+# Run live-provider tests; may incur API charges.
+test-live:
+	@for module in $(MODULES); do \
+		printf '\n[live] %s\n' "$$module"; \
+		(cd "$$module" && go test -race -count=1 -tags=live -run='^TestLive' ./...) || exit $$?; \
 	done
 
+# Write coverage.out and print coverage for each module.
 cover:
-	@for dir in $(MODULES); do \
-		echo "cover - $$dir"; \
-		(cd "$$dir" && $(GO) test -coverprofile=coverage.out ./... && $(GO) tool cover -func=coverage.out) || exit 1; \
+	@for module in $(MODULES); do \
+		printf '\n[cover] %s\n' "$$module"; \
+		(cd "$$module" && go test -count=1 -coverprofile=coverage.out ./... && go tool cover -func=coverage.out) || exit $$?; \
 	done
 
-test-release:
-	@bash scripts/release_test.sh
+# Run benchmarks with allocation statistics.
+bench:
+	@for module in $(MODULES); do \
+		printf '\n[bench] %s\n' "$$module"; \
+		(cd "$$module" && go test -run='^$$' -bench=. -benchmem ./...) || exit $$?; \
+	done
 
-release-patch: lint test test-release ## v0.5.0 -> v0.5.1
-	@chmod +x ./scripts/release.sh
-	@./scripts/release.sh patch "$(RELEASE_MODULES)"
+# Fuzz each discovered target for 30 seconds.
+fuzz:
+	@for module in $(MODULES); do \
+		printf '\n[fuzz] %s\n' "$$module"; \
+		(cd "$$module" || exit $$?; \
+			packages=$$(go list -tags=fuzz ./...) || exit $$?; \
+			for package in $$packages; do \
+				names=$$(go test -tags=fuzz -list='^Fuzz' "$$package") || exit $$?; \
+				printf '%s\n' "$$names" | while IFS= read -r name; do \
+					case "$$name" in Fuzz*) ;; *) continue;; esac; \
+					case "$$name" in *[[:space:]]*) continue;; esac; \
+					go test -tags=fuzz -run='^$$' -fuzz="^$${name}$$" -fuzztime=30s -timeout=90s "$$package" || exit $$?; \
+				done || exit $$?; \
+			done) || exit $$?; \
+	done
 
-release-break: lint test test-release ## v0.5.1 -> v0.6.0
-	@chmod +x ./scripts/release.sh
-	@./scripts/release.sh break "$(RELEASE_MODULES)"
+# Check formatting and lint without modifying files.
+lint:
+	@golangci-lint config verify
+	@for module in $(MODULES); do \
+		printf '\n[lint] %s\n' "$$module"; \
+		(cd "$$module" && golangci-lint fmt --diff && golangci-lint run --allow-serial-runners ./...) || exit $$?; \
+	done
 
-.PHONY: test-observation-published
-test-observation-published:
-	@bash scripts/test_observation_published.sh
+# Apply Go fixes, formatting and automatic lint fixes.
+fix:
+	@for module in $(MODULES); do \
+		printf '\n[fix] %s\n' "$$module"; \
+		(cd "$$module" && go fix ./... && golangci-lint fmt && golangci-lint run --fix ./...) || exit $$?; \
+	done
+
+# List all discovered modules used by tests and releases.
+modules:
+	@printf '%s\n' $(MODULES)
+
+# Prepare and publish the next patch release after confirmation.
+release-patch:
+	@./scripts/release.sh patch '$(RELEASE_SOURCE)'
+
+# Prepare a breaking release; v2+ requires an import-path migration.
+release-break:
+	@./scripts/release.sh break '$(RELEASE_SOURCE)'
+
+# Inspect the saved release and remote refs.
+release-inspect:
+	@./scripts/release.sh inspect
+
+# Resume the saved release without changing its version or candidate.
+release-resume:
+	@./scripts/release.sh resume
+
+# Archive a successfully published and verified release.
+release-finish:
+	@./scripts/release.sh finish

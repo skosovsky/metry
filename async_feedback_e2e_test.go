@@ -1,3 +1,5 @@
+//go:build e2e
+
 package metry_test
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/skosovsky/metry/testutil"
 )
 
-func TestAsyncFeedback_TraceSnapshotWorkerFlow(t *testing.T) {
+func TestE2EAsyncFeedback_TraceSnapshotWorkerFlow(t *testing.T) {
 	ctx := context.Background()
 	provider, mem := metrytest.NewTestProvider(t, metry.WithServiceName("async-feedback-e2e"))
 
