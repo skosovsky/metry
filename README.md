@@ -421,7 +421,7 @@ queueDepth.Record(ctx, float64(len(queue)), metry.Labels{"queue": "jobs"})
 
 **Footgun (duplicate names):** metric names are unique across instrument types — registering the same name as histogram and counter returns `ErrDuplicateMetric`.
 
-**Footgun (labels):** empty keys and empty values are skipped in `LabelsOf`, `copyLabels`, and metric attribute conversion.
+**Footgun (labels):** empty keys and empty values are skipped in `LabelsOf` and metric attribute conversion.
 
 **Footgun (GenAI scope metrics):** token/TTFT/streaming histograms require an `Operation` in scope or `Meta`. Provider is bound by `Recorder.ForProvider(...)` or defaults to `unknown`; do not push provider labels through business scope just to make metrics appear.
 

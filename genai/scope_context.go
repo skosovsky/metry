@@ -37,12 +37,18 @@ func (t *Tracker) WithScope(ctx context.Context, scope Scope) context.Context {
 // or explicitly admitted enrichment fallback. Arbitrary OTel baggage is ignored.
 func ScopeFromContext(ctx context.Context) (Scope, bool) {
 	scope, _ := ctx.Value(scopeContextKey{}).(Scope)
-	scope = mergeScope(scope, Scope{
-		Provider:  enrichment.String(ctx, scopeBaggageProvider),
-		Model:     enrichment.String(ctx, scopeBaggageModel),
-		Operation: enrichment.String(ctx, scopeBaggageOperation),
-		Purpose:   enrichment.String(ctx, scopeBaggagePurpose),
-	})
+	if scope.Provider == "" {
+		scope.Provider = enrichment.String(ctx, scopeBaggageProvider)
+	}
+	if scope.Model == "" {
+		scope.Model = enrichment.String(ctx, scopeBaggageModel)
+	}
+	if scope.Operation == "" {
+		scope.Operation = enrichment.String(ctx, scopeBaggageOperation)
+	}
+	if scope.Purpose == "" {
+		scope.Purpose = enrichment.String(ctx, scopeBaggagePurpose)
+	}
 	return scope, scope != (Scope{}) //nolint:exhaustruct_v5 // Empty sentinel means no defaults.
 }
 

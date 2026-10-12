@@ -1,0 +1,31 @@
+cwd: /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/metry
+command: ['go', 'test', '-count=1', './...']
+ok  	github.com/skosovsky/metry	0.652s
+ok  	github.com/skosovsky/metry/diagnostic	0.422s
+?   	github.com/skosovsky/metry/examples/agent_workflow	[no test files]
+?   	github.com/skosovsky/metry/examples/async_handle	[no test files]
+?   	github.com/skosovsky/metry/examples/enrich	[no test files]
+?   	github.com/skosovsky/metry/examples/executor	[no test files]
+ok  	github.com/skosovsky/metry/examples/genai_recorder	0.392s
+?   	github.com/skosovsky/metry/examples/genai_standalone	[no test files]
+?   	github.com/skosovsky/metry/examples/metrics_registry	[no test files]
+ok  	github.com/skosovsky/metry/examples/observation_mapping	0.421s
+?   	github.com/skosovsky/metry/examples/propagation_map	[no test files]
+?   	github.com/skosovsky/metry/examples/scope	[no test files]
+ok  	github.com/skosovsky/metry/genai	0.566s
+ok  	github.com/skosovsky/metry/internal/async	0.393s
+?   	github.com/skosovsky/metry/internal/attrconv	[no test files]
+ok  	github.com/skosovsky/metry/internal/baggageutil	0.866s
+ok  	github.com/skosovsky/metry/internal/enrichment	0.831s
+ok  	github.com/skosovsky/metry/internal/genai	0.877s
+?   	github.com/skosovsky/metry/internal/genaiwire	[no test files]
+?   	github.com/skosovsky/metry/internal/linkedspan	[no test files]
+?   	github.com/skosovsky/metry/internal/metrytestwire	[no test files]
+ok  	github.com/skosovsky/metry/internal/traceutil	0.380s
+ok  	github.com/skosovsky/metry/metrytest	0.470s
+ok  	github.com/skosovsky/metry/propagation	0.414s
+ok  	github.com/skosovsky/metry/scripts	54.501s
+ok  	github.com/skosovsky/metry/security	0.402s
+ok  	github.com/skosovsky/metry/testutil	0.441s
+
+EXIT_CODE=0

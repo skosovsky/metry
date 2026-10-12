@@ -65,7 +65,7 @@ func (h HistogramMetric) Record(ctx context.Context, value float64, labels Label
 	if h.hist == nil {
 		return
 	}
-	attrs := labelsToAttributes(copyLabels(labels))
+	attrs := labelsToAttributes(labels)
 	h.hist.Record(ctx, value, metric.WithAttributes(attrs...))
 }
 
@@ -84,7 +84,7 @@ func (c CounterMetric) Add(ctx context.Context, value int64, labels Labels) {
 	if c.cnt == nil {
 		return
 	}
-	attrs := labelsToAttributes(copyLabels(labels))
+	attrs := labelsToAttributes(labels)
 	c.cnt.Add(ctx, value, metric.WithAttributes(attrs...))
 }
 
@@ -103,7 +103,7 @@ func (g GaugeMetric) Record(ctx context.Context, value float64, labels Labels) {
 	if g.gauge == nil {
 		return
 	}
-	attrs := labelsToAttributes(copyLabels(labels))
+	attrs := labelsToAttributes(labels)
 	g.gauge.Record(ctx, value, metric.WithAttributes(attrs...))
 }
 
@@ -165,6 +165,8 @@ func (r *MetricsRegistry) NewGauge(name string) (GaugeMetric, error) {
 	return GaugeMetric{gauge: gauge}, nil
 }
 
+// labelsToAttributes owns its result; subsequent caller map mutation is safe.
+// Concurrent mutation of labels during conversion is not supported.
 func labelsToAttributes(labels Labels) []attribute.KeyValue {
 	if len(labels) == 0 {
 		return nil

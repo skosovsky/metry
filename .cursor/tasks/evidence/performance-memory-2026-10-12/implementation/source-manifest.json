@@ -1,0 +1,18 @@
+{
+  "baseline": "215af3ee33bcc4b58f0b532da1b1958c3990bb8a",
+  "files": {
+    "internal/enrichment/context.go": "9defdc1dfaf740352601ff76d74546414bc4a1ebc8060845a395f66c8ff289f4",
+    "internal/enrichment/context_test.go": "50d2434729fe2ce88551b16e69fa353b54504c72693b3cde3f48f56861e35df6",
+    "genai/scope_context.go": "e33454702b14e569824614a3bce27eab1d3be4f8ada585b22322a957d46a9640",
+    "genai/performance_test.go": "4e767ab962c921f6121d63bc6e91601e3e14ef74aaf00d588616a35659b66b3c",
+    "metrics_registry.go": "949a7b2898185c478d6fac46a3eede08f4731fe173b879f6e34c0ec515df9f27",
+    "metrics_performance_test.go": "104a7549df2d5542411b9dff98a9c70af93fd0df47a590fbc9ab417b86f9aa12",
+    "labels.go": "825e235133ffe717a3a11bcdad2fb2524eecc798fc49153e1254d45712456daf",
+    "labels_test.go": "e4c55e9dfd618c1408895dac4f08330ce0bd32d9d0d410b6b7c3a525484d430d",
+    "README.md": "2eb9d923e85311bf3fd37e34044e7faa245ef0e6ce96bd17dc4d7d29cd8f04f8"
+  },
+  "identical_benchmark_fixtures": {
+    "genai/performance_test.go": true,
+    "metrics_performance_test.go": true
+  }
+}

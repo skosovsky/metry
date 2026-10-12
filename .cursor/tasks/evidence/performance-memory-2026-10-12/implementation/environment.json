@@ -1,0 +1,114 @@
+{
+  "baseline": "215af3ee33bcc4b58f0b532da1b1958c3990bb8a",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "go": "go version go1.27.1 darwin/arm64",
+  "environment": {
+    "GOWORK": "off",
+    "GOCACHE": "/tmp/metry-performance-cache"
+  },
+  "commands": [
+    {
+      "name": "root-tests",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+      "args": [
+        "go",
+        "test",
+        "./..."
+      ],
+      "exit": 0
+    },
+    {
+      "name": "root-race",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+      "args": [
+        "go",
+        "test",
+        "-race",
+        "./..."
+      ],
+      "exit": 0
+    },
+    {
+      "name": "grpc-tests",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry/middleware/grpc",
+      "args": [
+        "go",
+        "test",
+        "./..."
+      ],
+      "exit": 0
+    },
+    {
+      "name": "grpc-race",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry/middleware/grpc",
+      "args": [
+        "go",
+        "test",
+        "-race",
+        "./..."
+      ],
+      "exit": 0
+    },
+    {
+      "name": "otlp-tests",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry/integration/otlp",
+      "args": [
+        "go",
+        "test",
+        "-tags=integration",
+        "./..."
+      ],
+      "exit": 0
+    },
+    {
+      "name": "otlp-race",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry/integration/otlp",
+      "args": [
+        "go",
+        "test",
+        "-race",
+        "-tags=integration",
+        "./..."
+      ],
+      "exit": 0
+    },
+    {
+      "name": "baseline-bench",
+      "cwd": "/tmp/metry-performance-baseline",
+      "args": [
+        "go",
+        "test",
+        ".",
+        "./genai",
+        "-run",
+        "^$",
+        "-bench",
+        "^BenchmarkPerformance",
+        "-benchmem",
+        "-benchtime=200ms",
+        "-count=5"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "candidate-bench",
+      "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+      "args": [
+        "go",
+        "test",
+        ".",
+        "./genai",
+        "-run",
+        "^$",
+        "-bench",
+        "^BenchmarkPerformance",
+        "-benchmem",
+        "-benchtime=200ms",
+        "-count=5"
+      ],
+      "exit": 0
+    }
+  ],
+  "cpu": "Apple M1 Max",
+  "benchmark_default_cpu_count": 10
+}

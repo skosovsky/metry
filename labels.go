@@ -17,17 +17,3 @@ func LabelsOf(src map[string]string) Labels {
 	}
 	return out
 }
-
-func copyLabels(labels Labels) Labels {
-	if len(labels) == 0 {
-		return nil
-	}
-	out := make(Labels, len(labels))
-	for k, v := range labels {
-		if k == "" || v == "" {
-			continue
-		}
-		out[k] = v
-	}
-	return out
-}

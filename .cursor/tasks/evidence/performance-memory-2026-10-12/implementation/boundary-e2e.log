@@ -1,0 +1,12 @@
+cwd: /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/metry
+command: ['go', 'test', '-race', '-count=1', '-tags=e2e', '-run', '^(TestE2EGenAIScope|TestE2EMetricsRegistry|TestE2EPropagation)', '-v', '.']
+=== RUN   TestE2EGenAIScope_TraceSnapshotWorkerFlow
+--- PASS: TestE2EGenAIScope_TraceSnapshotWorkerFlow (0.01s)
+=== RUN   TestE2EMetricsRegistry_TraceSnapshotWorkerFlow
+--- PASS: TestE2EMetricsRegistry_TraceSnapshotWorkerFlow (0.00s)
+=== RUN   TestE2EPropagation_ProtocolCarrierBoundary
+--- PASS: TestE2EPropagation_ProtocolCarrierBoundary (0.00s)
+PASS
+ok  	github.com/skosovsky/metry	1.517s
+
+EXIT_CODE=0

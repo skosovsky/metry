@@ -17,8 +17,7 @@ type contextKey struct{}
 
 // Values returns a detached snapshot of trusted context values.
 func Values(ctx context.Context) []Value {
-	values, _ := ctx.Value(contextKey{}).([]Value)
-	return append([]Value(nil), values...)
+	return append([]Value(nil), readValues(ctx)...)
 }
 
 // Put returns a context copy. Remote values never replace local values.
@@ -43,8 +42,17 @@ func Put(ctx context.Context, incoming ...Value) context.Context {
 	return context.WithValue(ctx, contextKey{}, values)
 }
 
+// readValues is confined to this package. Published ledgers are immutable; callers
+// must not mutate or expose this slice. Values is the detached snapshot API.
+func readValues(ctx context.Context) []Value {
+	values, _ := ctx.Value(contextKey{}).([]Value)
+	return values
+}
+
+// String reads a trusted string by value without copying the immutable ledger.
+// Non-string typed values and transport-only baggage are never coerced.
 func String(ctx context.Context, key string) string {
-	for _, v := range Values(ctx) {
+	for _, v := range readValues(ctx) {
 		if v.Key == key && v.Type == "string" {
 			return v.Text
 		}

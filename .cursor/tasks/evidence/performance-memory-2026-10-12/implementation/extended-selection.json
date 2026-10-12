@@ -1,0 +1,6 @@
+{
+  "rule": "All failing ratio-of-median-ns cases; append 10 pairs at1s; retain every initial sample in final gate",
+  "selected": [
+    "BenchmarkPerformanceRecording/memory/histogram/64"
+  ]
+}

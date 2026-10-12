@@ -23,19 +23,6 @@ func TestLabelsOf_SkipsEmptyKeyAndValue(t *testing.T) {
 	assert.Equal(t, "yes", labels["ok"])
 }
 
-func TestCopyLabels_SkipsEmptyKeyAndValue(t *testing.T) {
-	copied := copyLabels(Labels{"": "x", "status": "", "ok": "yes"})
-	require.Len(t, copied, 1)
-	assert.Equal(t, "yes", copied["ok"])
-}
-
-func TestCopyLabels_DefensiveCopy(t *testing.T) {
-	src := Labels{"status": "ok"}
-	copied := copyLabels(src)
-	copied["status"] = "mutated"
-	assert.Equal(t, "ok", src["status"])
-}
-
 func TestHistogramMetric_Record_LabelMutationDoesNotAffectRecordedAttrs(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

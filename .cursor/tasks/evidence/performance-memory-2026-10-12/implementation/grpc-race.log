@@ -1,0 +1,5 @@
+cwd: /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/metry/middleware/grpc
+command: ['go', 'test', '-race', './...']
+ok  	github.com/skosovsky/metry/middleware/grpc	1.529s
+
+EXIT_CODE=0

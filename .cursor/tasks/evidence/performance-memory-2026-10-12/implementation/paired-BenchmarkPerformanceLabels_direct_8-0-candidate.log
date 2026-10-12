@@ -1,0 +1,11 @@
+cwd: /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/metry
+command: ['go', 'test', '.', '-run', '^$', '-bench', '^BenchmarkPerformanceLabels$/^direct$/^8$', '-benchmem', '-benchtime=500ms', '-count=1']
+goos: darwin
+goarch: arm64
+pkg: github.com/skosovsky/metry
+cpu: Apple M1 Max
+BenchmarkPerformanceLabels/direct/8-10         	 2986587	       204.9 ns/op	     512 B/op	       1 allocs/op
+PASS
+ok  	github.com/skosovsky/metry	0.836s
+
+EXIT_CODE=0

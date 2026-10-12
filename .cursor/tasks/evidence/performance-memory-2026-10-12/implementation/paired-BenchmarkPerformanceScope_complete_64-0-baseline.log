@@ -1,0 +1,11 @@
+cwd: /tmp/metry-performance-baseline
+command: ['go', 'test', './genai', '-run', '^$', '-bench', '^BenchmarkPerformanceScope$/^complete$/^64$', '-benchmem', '-benchtime=500ms', '-count=1']
+goos: darwin
+goarch: arm64
+pkg: github.com/skosovsky/metry/genai
+cpu: Apple M1 Max
+BenchmarkPerformanceScope/complete/64-10         	  157095	      3915 ns/op	   16384 B/op	       4 allocs/op
+PASS
+ok  	github.com/skosovsky/metry/genai	0.815s
+
+EXIT_CODE=0

@@ -1,0 +1,11 @@
+cwd: /tmp/metry-performance-baseline
+command: ['go', 'test', '.', '-run', '^$', '-bench', '^BenchmarkPerformanceRecording$/^disabled$/^gauge$/^256$', '-benchmem', '-benchtime=500ms', '-count=1']
+goos: darwin
+goarch: arm64
+pkg: github.com/skosovsky/metry
+cpu: Apple M1 Max
+BenchmarkPerformanceRecording/disabled/gauge/256-10         	210510681	         2.846 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/skosovsky/metry	0.830s
+
+EXIT_CODE=0

@@ -1,0 +1,5 @@
+cwd: /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/metry/integration/otlp
+command: ['go', 'test', '-race', '-tags=integration', './...']
+ok  	github.com/skosovsky/metry/integration/otlp	1.555s
+
+EXIT_CODE=0

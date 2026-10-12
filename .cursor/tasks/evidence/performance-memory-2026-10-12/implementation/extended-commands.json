@@ -1,0 +1,402 @@
+[
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 0,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-0-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 0,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-0-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 1,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-1-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 1,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-1-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 2,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-2-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 2,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-2-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 3,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-3-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 3,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-3-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 4,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-4-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 4,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-4-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 5,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-5-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 5,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-5-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 6,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-6-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 6,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-6-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 7,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-7-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 7,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-7-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 8,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-8-baseline.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 8,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-8-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 9,
+    "revision": "candidate",
+    "cwd": "/Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/Projects/ai/metry",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-9-candidate.log"
+  },
+  {
+    "name": "BenchmarkPerformanceRecording/memory/histogram/64",
+    "pair": 9,
+    "revision": "baseline",
+    "cwd": "/tmp/metry-performance-baseline",
+    "args": [
+      "go",
+      "test",
+      ".",
+      "-run",
+      "^$",
+      "-bench",
+      "^BenchmarkPerformanceRecording$/^memory$/^histogram$/^64$",
+      "-benchmem",
+      "-benchtime=1s",
+      "-count=1"
+    ],
+    "exit": 0,
+    "log": "extended-BenchmarkPerformanceRecording_memory_histogram_64-9-baseline.log"
+  }
+]

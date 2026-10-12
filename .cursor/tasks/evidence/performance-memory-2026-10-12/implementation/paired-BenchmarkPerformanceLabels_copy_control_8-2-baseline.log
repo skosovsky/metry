@@ -1,0 +1,11 @@
+cwd: /tmp/metry-performance-baseline
+command: ['go', 'test', '.', '-run', '^$', '-bench', '^BenchmarkPerformanceLabels$/^copy_control$/^8$', '-benchmem', '-benchtime=500ms', '-count=1']
+goos: darwin
+goarch: arm64
+pkg: github.com/skosovsky/metry
+cpu: Apple M1 Max
+BenchmarkPerformanceLabels/copy_control/8-10         	 1000000	      1023 ns/op	     512 B/op	       1 allocs/op
+PASS
+ok  	github.com/skosovsky/metry	1.254s
+
+EXIT_CODE=0

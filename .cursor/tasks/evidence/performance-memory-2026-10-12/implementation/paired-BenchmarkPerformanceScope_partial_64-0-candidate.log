@@ -1,0 +1,11 @@
+cwd: /Users/skosovsky/Library/Mobile Documents/com~apple~CloudDocs/Загрузки/Projects/ai/metry
+command: ['go', 'test', './genai', '-run', '^$', '-bench', '^BenchmarkPerformanceScope$/^partial$/^64$', '-benchmem', '-benchtime=500ms', '-count=1']
+goos: darwin
+goarch: arm64
+pkg: github.com/skosovsky/metry/genai
+cpu: Apple M1 Max
+BenchmarkPerformanceScope/partial/64-10         	 4649727	       129.4 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/skosovsky/metry/genai	0.804s
+
+EXIT_CODE=0

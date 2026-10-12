@@ -1,0 +1,3 @@
+ok  	github.com/skosovsky/metry	0.491s
+ok  	github.com/skosovsky/metry/genai	0.797s
+ok  	github.com/skosovsky/metry/internal/enrichment	0.367s
