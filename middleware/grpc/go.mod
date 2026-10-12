@@ -3,7 +3,7 @@ module github.com/skosovsky/metry/middleware/grpc
 go 1.27.1
 
 require (
-	github.com/skosovsky/metry v0.0.0
+	github.com/skosovsky/metry v0.10.2
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0
 	go.uber.org/goleak v1.3.0
@@ -31,5 +31,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
-
-replace github.com/skosovsky/metry => ../..

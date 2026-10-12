@@ -3,7 +3,7 @@ module github.com/skosovsky/metry/integration/otlp
 go 1.27.1
 
 require (
-	github.com/skosovsky/metry v0.0.0
+	github.com/skosovsky/metry v0.10.2
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
@@ -36,6 +36,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 )
-
-// Development tests use the local root; release candidates use the matching module version.
-replace github.com/skosovsky/metry => ../..
