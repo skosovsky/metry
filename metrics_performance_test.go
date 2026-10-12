@@ -3,6 +3,7 @@ package metry
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -12,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
+//nolint:gochecknoglobals // Benchmark sink prevents attribute storage from being optimized away.
 var performanceAttributesSink []attribute.KeyValue
 
 func performanceLabels(n int) Labels {
@@ -24,7 +26,7 @@ func performanceLabels(n int) Labels {
 
 func TestMetricAllocationBudgets(t *testing.T) {
 	for _, n := range []int{0, 8, 64, 256} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			// Arrange.
 			labels := performanceLabels(n)
 			ctx := context.Background()
@@ -47,6 +49,7 @@ func TestMetricAllocationBudgets(t *testing.T) {
 	}
 }
 
+//nolint:cyclop,gocognit // Keep the AAA recording and ownership assertions for all instrument types together.
 func TestMetricRecordingOwnsAttributes(t *testing.T) {
 	// Arrange.
 	ctx := context.Background()
@@ -96,7 +99,8 @@ func TestMetricRecordingOwnsAttributes(t *testing.T) {
 					t.Fatal("missing counter timestamps")
 				}
 			case metricdata.Histogram[float64]:
-				if len(data.DataPoints) != 1 || data.DataPoints[0].Sum != 1.5 || data.DataPoints[0].Count != 1 || len(data.DataPoints[0].Bounds) != 2 {
+				if len(data.DataPoints) != 1 || data.DataPoints[0].Sum != 1.5 || data.DataPoints[0].Count != 1 ||
+					len(data.DataPoints[0].Bounds) != 2 {
 					t.Fatalf("histogram=%v", data)
 				}
 				set = data.DataPoints[0].Attributes
@@ -145,6 +149,7 @@ func BenchmarkPerformanceLabels(b *testing.B) {
 	}
 }
 
+//nolint:gocognit // Run the same recording matrix and setup on baseline and candidate.
 func BenchmarkPerformanceRecording(b *testing.B) {
 	for _, backend := range []string{"noop", "memory", "disabled"} {
 		for _, kind := range []string{"counter", "histogram", "gauge"} {

@@ -3,6 +3,7 @@ package genai
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -10,13 +11,19 @@ import (
 	"github.com/skosovsky/metry/internal/enrichment"
 )
 
+//nolint:gochecknoglobals // Benchmark sink keeps the result observable.
 var performanceScopeSink Scope
+
+//nolint:gochecknoglobals // Benchmark sink keeps the result observable.
 var performanceStringSink string
 
 func performanceScopeContext(n int, complete bool) context.Context {
-	values := make([]enrichment.Value, n)
-	for i := range values {
-		values[i] = enrichment.Value{Key: fmt.Sprintf("unrelated%d", i), Text: "value", Type: "string", Local: true}
+	values := make([]enrichment.Value, 0, n+4)
+	for i := range n {
+		values = append(
+			values,
+			enrichment.Value{Key: fmt.Sprintf("unrelated%d", i), Text: "value", Type: "string", Local: true},
+		)
 	}
 	if !complete {
 		values = append(values,
@@ -28,7 +35,12 @@ func performanceScopeContext(n int, complete bool) context.Context {
 	ctx := enrichment.Put(context.Background(), values...)
 	scope := Scope{Provider: "private-provider"}
 	if complete {
-		scope = Scope{Provider: "private-provider", Model: "private-model", Operation: "private-operation", Purpose: "private-purpose"}
+		scope = Scope{
+			Provider:  "private-provider",
+			Model:     "private-model",
+			Operation: "private-operation",
+			Purpose:   "private-purpose",
+		}
 	}
 	return WithScope(ctx, scope)
 }
@@ -39,9 +51,19 @@ func TestScopeLookupAllocationBudget(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/complete=%t", n, complete), func(t *testing.T) {
 				// Arrange.
 				ctx := performanceScopeContext(n, complete)
-				want := Scope{Provider: "private-provider", Model: "fallback-model", Operation: "fallback-operation", Purpose: "fallback-purpose"}
+				want := Scope{
+					Provider:  "private-provider",
+					Model:     "fallback-model",
+					Operation: "fallback-operation",
+					Purpose:   "fallback-purpose",
+				}
 				if complete {
-					want = Scope{Provider: "private-provider", Model: "private-model", Operation: "private-operation", Purpose: "private-purpose"}
+					want = Scope{
+						Provider:  "private-provider",
+						Model:     "private-model",
+						Operation: "private-operation",
+						Purpose:   "private-purpose",
+					}
 				}
 				// Act.
 				var got Scope
@@ -60,6 +82,7 @@ func TestScopeLookupAllocationBudget(t *testing.T) {
 // of an allocation check (a copying-free but unnecessary lookup would pass it).
 type performanceLookupContext struct {
 	context.Context
+
 	ledgerReads int
 }
 
@@ -93,11 +116,11 @@ func TestDimensionCachePerformanceBound(t *testing.T) {
 	d := newMetricDimensions(profile)
 	d.allowed["performance"] = make(map[string]struct{})
 	for i := range 10000 {
-		d.allowed["performance"][fmt.Sprint(i)] = struct{}{}
+		d.allowed["performance"][strconv.Itoa(i)] = struct{}{}
 	}
 	// Act.
 	for i := range 10000 {
-		d.normalize(OperationDurationMetricName, []attribute.KeyValue{attribute.String("performance", fmt.Sprint(i))})
+		d.normalize(OperationDurationMetricName, []attribute.KeyValue{attribute.String("performance", strconv.Itoa(i))})
 	}
 	// Assert.
 	if got := len(d.combinations[OperationDurationMetricName]); got != 29 {

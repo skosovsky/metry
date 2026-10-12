@@ -14,17 +14,26 @@ func TestImmutableLedgerOwnership(t *testing.T) {
 	incoming[0].Text = "caller"
 	snapshot := Values(parent)
 	snapshot[0].Text = "snapshot"
-	child := Put(parent, Value{Key: "k", Text: "remote", Type: "string"}, Value{Key: "new", Text: "child", Type: "string", Local: true})
+	child := Put(
+		parent,
+		Value{Key: "k", Text: "remote", Type: "string"},
+		Value{Key: "new", Text: "child", Type: "string", Local: true},
+	)
 	replaced := Put(parent, Value{Key: "k", Text: "replacement", Type: "string", Local: true})
 	// Assert.
-	if String(parent, "k") != "parent" || String(child, "k") != "parent" || String(replaced, "k") != "replacement" || String(parent, "new") != "" {
+	if String(parent, "k") != "parent" || String(child, "k") != "parent" || String(replaced, "k") != "replacement" ||
+		String(parent, "new") != "" {
 		t.Fatal("ledger ownership or local precedence changed")
 	}
 }
 
 func TestStringTypesAndAllocations(t *testing.T) {
 	// Arrange.
-	ctx := Put(context.Background(), Value{Key: "s", Text: "text", Type: "string"}, Value{Key: "i", Text: "42", Type: "int", Local: true})
+	ctx := Put(
+		context.Background(),
+		Value{Key: "s", Text: "text", Type: "string"},
+		Value{Key: "i", Text: "42", Type: "int", Local: true},
+	)
 	// Act.
 	var got string
 	allocations := testing.AllocsPerRun(100, func() { got = String(ctx, "s") })
